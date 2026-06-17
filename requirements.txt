@@ -1,0 +1,21 @@
+# Chức năng: Khai báo các thư viện Python cần thiết cho hệ thống Pipeline sản xuất video ngắn.
+# Lý do tạo: Quản lý dependencies của dự án để cài đặt qua pip, tránh xung đột phiên bản.
+# Trích dẫn: Cấu trúc từ PLAN.md, sửa đổi để tương thích với cấu trúc import MoviePy v1.x.
+
+--extra-index-url https://download.pytorch.org/whl/cu121
+
+streamlit>=1.30.0
+requests>=2.31.0
+edge-tts>=6.1.9
+faster-whisper>=1.0.0
+diffusers>=0.26.0
+transformers>=4.38.0
+accelerate>=0.27.0
+safetensors>=0.4.0
+sentencepiece>=0.1.99
+torch>=2.2.0
+moviepy>=1.0.3,<2.0.0
+Pillow>=10.2.0
+yt-dlp>=2024.3.10
+imageio[ffmpeg]>=2.34.0
+mutagen>=1.47.0

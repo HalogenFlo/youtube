@@ -1,0 +1,67 @@
+# Chức năng: Lưu trữ toàn bộ các hằng số, cấu hình đường dẫn và các model AI của hệ thống.
+# Lý do tạo: Tách biệt cấu hình khỏi logic nghiệp vụ để dễ bảo trì và mở rộng.
+# Trích dẫn: Dựa trên sơ đồ kiến trúc và cấu trúc thư mục trong PLAN.md.
+
+import os
+import torch
+
+# --- ĐƯỜNG DẪN THƯ MỤC ---
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+TEMP_DIR = os.path.join(BASE_DIR, "temp")
+DOWNLOAD_DIR = os.path.join(TEMP_DIR, "downloads")
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+ASSETS_DIR = os.path.join(BASE_DIR, "assets")
+FONT_DIR = os.path.join(ASSETS_DIR, "fonts")
+
+# Đường dẫn font mặc định cho phụ đề
+FONT_PATH = os.path.join(FONT_DIR, "Montserrat-Bold.ttf")
+
+# Tự động tạo các thư mục nếu chưa tồn tại
+for directory in [TEMP_DIR, DOWNLOAD_DIR, OUTPUT_DIR, ASSETS_DIR, FONT_DIR]:
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+# --- CẤU HÌNH CÁC MODEL AI ---
+# Ollama Configuration
+OLLAMA_API_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL_DEFAULT = "qwen2.5:14b"
+
+# TTS Configuration (edge-tts)
+TTS_VOICES_VI = {
+    "Nữ (vi-VN-HoaiMyNeural)": "vi-VN-HoaiMyNeural",
+    "Nam (vi-VN-NamMinhNeural)": "vi-VN-NamMinhNeural"
+}
+TTS_VOICES_EN = {
+    "Nữ Mỹ (en-US-EmmaNeural)": "en-US-EmmaNeural",
+    "Nam Mỹ (en-US-BrianNeural)": "en-US-BrianNeural",
+    "Nữ Anh (en-GB-SoniaNeural)": "en-GB-SoniaNeural",
+    "Nam Anh (en-GB-RyanNeural)": "en-GB-RyanNeural"
+}
+TTS_VOICE_DEFAULT = "vi-VN-HoaiMyNeural"
+
+# Whisper Configuration
+WHISPER_MODEL_DEFAULT = "small"
+WHISPER_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+WHISPER_COMPUTE_TYPE = "float16" if torch.cuda.is_available() else "int8"
+
+# Image Generation (Stable Diffusion 1.5)
+SD_MODEL_DEFAULT = "Lykon/dreamshaper-8"
+SD_RESOLUTIONS = {
+    "vertical": (512, 768),   # width, height
+    "horizontal": (768, 512)
+}
+
+# Video Generation (Wan 2.1 1.3B)
+WAN_MODEL_DEFAULT = "Wan-AI/Wan2.1-T2V-1.3B"
+WAN_RESOLUTIONS = {
+    "vertical": (480, 848),   # width, height
+    "horizontal": (848, 480)
+}
+WAN_DEFAULT_FRAMES = 81       # 81 frames tương đương ~5 giây ở 16fps
+
+# --- CẤU HÌNH VIDEO & BIÊN TẬP ---
+DEFAULT_MAX_DURATION = 60      # Thời lượng tối đa 1 video phần (giây)
+DEFAULT_IMAGE_STYLE = "cinematic, detailed, 4k"
+DEFAULT_FPS = 30               # FPS chuẩn hóa khi render video cuối cùng
+WAN_FPS = 16                   # FPS mặc định khi sinh clip Wan 2.1

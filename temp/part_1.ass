@@ -1,0 +1,28 @@
+[Script Info]
+Title: Automated Karaoke Subtitles
+ScriptType: v4.00+
+WrapStyle: 0
+PlayResX: 1080
+PlayResY: 1920
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Default,Montserrat,72,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,5,2,5,50,50,960,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:00.00,0:00:01.32,Default,,0,0,0,,{\k22}A{\k28} tiny{\k52} hamster{\k30} stands
+Dialogue: 0,0:00:01.32,0:00:02.72,Default,,0,0,0,,{\k64}confidently{\k38} in{\k8} a{\k30} miniature
+Dialogue: 0,0:00:02.72,0:00:03.14,Default,,0,0,0,,{\k42}kitchen.
+Dialogue: 0,0:00:03.72,0:00:05.00,Default,,0,0,0,,{\k22}A{\k42} surprised{\k40} cat{\k24} looks
+Dialogue: 0,0:00:05.00,0:00:06.04,Default,,0,0,0,,{\k34}over{\k24} from{\k20} its{\k26} perch
+Dialogue: 0,0:00:06.04,0:00:06.78,Default,,0,0,0,,{\k24}on{\k24} top{\k18} of{\k8} a
+Dialogue: 0,0:00:06.78,0:00:07.14,Default,,0,0,0,,{\k36}cabinet.
+Dialogue: 0,0:00:07.73,0:00:08.83,Default,,0,0,0,,{\k20}The{\k38} hamster{\k26} pulls{\k26} out
+Dialogue: 0,0:00:08.83,0:00:09.97,Default,,0,0,0,,{\k12}a{\k28} tiny{\k34} water{\k40} pistol
+Dialogue: 0,0:00:09.97,0:00:11.03,Default,,0,0,0,,{\k28}from{\k16} its{\k26} hiding{\k36} spot.
+Dialogue: 0,0:00:11.59,0:00:12.61,Default,,0,0,0,,{\k30}With{\k12} an{\k26} evil{\k34} grin,
+Dialogue: 0,0:00:12.79,0:00:13.81,Default,,0,0,0,,{\k8}the{\k40} hamster{\k32} aims{\k22} and
+Dialogue: 0,0:00:13.81,0:00:14.13,Default,,0,0,0,,{\k32}fires.
+Dialogue: 0,0:00:14.81,0:00:15.01,Default,,0,0,0,,{\k20}The
