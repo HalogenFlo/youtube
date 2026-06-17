@@ -1,0 +1,111 @@
+[Script Info]
+Title: Bilingual Karaoke Subtitles
+ScriptType: v4.00+
+WrapStyle: 0
+PlayResX: 1080
+PlayResY: 1920
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Speaker_Narrator,Montserrat,64,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,5,2,5,50,50,0,1
+Style: Default,Montserrat,64,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,5,2,5,50,50,0,1
+Style: Vietnamese,Montserrat,40,&H60FFFFFF,&H60FFFFFF,&H00000000,&H80000000,0,1,0,0,100,100,0,0,1,3,1,5,50,50,0,1
+Style: NextLine,Montserrat,48,&H80C0C0C0,&H80C0C0C0,&H00000000,&H80000000,0,0,0,0,100,100,0,0,1,3,1,5,50,50,0,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+Dialogue: 0,0:00:01.00,0:00:02.34,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k34}Find{\k15} a{\k42} quiet{\k42} place
+Dialogue: 0,0:00:01.00,0:00:02.34,Vietnamese,,0,0,0,,{\pos(540,980)}Tìm một nơi yên tĩnh
+Dialogue: 0,0:00:01.00,0:00:02.34,NextLine,,0,0,0,,{\pos(540,1080)}and sit comfortably.
+Dialogue: 0,0:00:02.34,0:00:03.87,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k25}and{\k25} sit{\k102} comfortably.
+Dialogue: 0,0:00:02.34,0:00:03.87,Vietnamese,,0,0,0,,{\pos(540,980)}và ngồi thoải mái.
+Dialogue: 0,0:00:02.34,0:00:03.87,NextLine,,0,0,0,,{\pos(540,1080)}Close your eyes and
+Dialogue: 0,0:00:04.80,0:00:06.40,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k50}Close{\k40} your{\k40} eyes{\k30} and
+Dialogue: 0,0:00:04.80,0:00:06.40,Vietnamese,,0,0,0,,{\pos(540,980)}Đóng mắt lại
+Dialogue: 0,0:00:04.80,0:00:06.40,NextLine,,0,0,0,,{\pos(540,1080)}take a deep breath
+Dialogue: 0,0:00:06.40,0:00:07.95,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k40}take{\k15} a{\k40} deep{\k60} breath
+Dialogue: 0,0:00:06.40,0:00:07.95,Vietnamese,,0,0,0,,{\pos(540,980)}và hít thở
+Dialogue: 0,0:00:06.40,0:00:07.95,NextLine,,0,0,0,,{\pos(540,1080)}in...
+Dialogue: 0,0:00:07.95,0:00:08.45,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k50}in...
+Dialogue: 0,0:00:07.95,0:00:08.45,Vietnamese,,0,0,0,,{\pos(540,980)}thật sâu vào...
+Dialogue: 0,0:00:07.95,0:00:08.45,NextLine,,0,0,0,,{\pos(540,1080)}...and let it out
+Dialogue: 0,0:00:09.40,0:00:10.73,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k57}...and{\k29} let{\k19} it{\k29} out
+Dialogue: 0,0:00:09.40,0:00:10.73,Vietnamese,,0,0,0,,{\pos(540,980)}...rồi từ
+Dialogue: 0,0:00:09.40,0:00:10.73,NextLine,,0,0,0,,{\pos(540,1080)}slowly.
+Dialogue: 0,0:00:10.73,0:00:11.40,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k67}slowly.
+Dialogue: 0,0:00:10.73,0:00:11.40,Vietnamese,,0,0,0,,{\pos(540,980)}từ thở ra.
+Dialogue: 0,0:00:10.73,0:00:11.40,NextLine,,0,0,0,,{\pos(540,1080)}Allow your body to
+Dialogue: 0,0:00:12.40,0:00:13.69,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k43}Allow{\k34} your{\k34} body{\k17} to
+Dialogue: 0,0:00:12.40,0:00:13.69,Vietnamese,,0,0,0,,{\pos(540,980)}Hãy cho phép cơ thể
+Dialogue: 0,0:00:12.40,0:00:13.69,NextLine,,0,0,0,,{\pos(540,1080)}relax fully...
+Dialogue: 0,0:00:13.69,0:00:14.80,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k43}relax{\k69} fully...
+Dialogue: 0,0:00:13.69,0:00:14.80,Vietnamese,,0,0,0,,{\pos(540,980)}bạn hoàn toàn thư giãn...
+Dialogue: 0,0:00:13.69,0:00:14.80,NextLine,,0,0,0,,{\pos(540,1080)}...let go of any
+Dialogue: 0,0:00:15.80,0:00:16.87,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k49}...let{\k16} go{\k16} of{\k25} any
+Dialogue: 0,0:00:15.80,0:00:16.87,Vietnamese,,0,0,0,,{\pos(540,980)}...hãy buông bỏ bất kỳ căng
+Dialogue: 0,0:00:15.80,0:00:16.87,NextLine,,0,0,0,,{\pos(540,1080)}tension you're holding.
+Dialogue: 0,0:00:16.87,0:00:18.60,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k58}tension{\k49} you're{\k66} holding.
+Dialogue: 0,0:00:16.87,0:00:18.60,Vietnamese,,0,0,0,,{\pos(540,980)}thẳng nào bạn đang giữ lại.
+Dialogue: 0,0:00:16.87,0:00:18.60,NextLine,,0,0,0,,{\pos(540,1080)}Focus on the present
+Dialogue: 0,0:00:19.60,0:00:20.91,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k38}Focus{\k15} on{\k23} the{\k54} present
+Dialogue: 0,0:00:19.60,0:00:20.91,Vietnamese,,0,0,0,,{\pos(540,980)}Chú tâm vào
+Dialogue: 0,0:00:19.60,0:00:20.91,NextLine,,0,0,0,,{\pos(540,1080)}moment...
+Dialogue: 0,0:00:20.91,0:00:21.60,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k69}moment...
+Dialogue: 0,0:00:20.91,0:00:21.60,Vietnamese,,0,0,0,,{\pos(540,980)}khoảnh khắc hiện tại...
+Dialogue: 0,0:00:20.91,0:00:21.60,NextLine,,0,0,0,,{\pos(540,1080)}...let go of thoughts
+Dialogue: 0,0:00:22.60,0:00:24.26,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k55}...let{\k18} go{\k18} of{\k74} thoughts
+Dialogue: 0,0:00:22.60,0:00:24.26,Vietnamese,,0,0,0,,{\pos(540,980)}...hãy buông bỏ những
+Dialogue: 0,0:00:22.60,0:00:24.26,NextLine,,0,0,0,,{\pos(540,1080)}about the past or
+Dialogue: 0,0:00:24.26,0:00:25.55,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k46}about{\k28} the{\k37} past{\k18} or
+Dialogue: 0,0:00:24.26,0:00:25.55,Vietnamese,,0,0,0,,{\pos(540,980)}suy nghĩ về quá
+Dialogue: 0,0:00:24.26,0:00:25.55,NextLine,,0,0,0,,{\pos(540,1080)}future.
+Dialogue: 0,0:00:25.55,0:00:26.20,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k65}future.
+Dialogue: 0,0:00:25.55,0:00:26.20,Vietnamese,,0,0,0,,{\pos(540,980)}khứ hoặc tương lai.
+Dialogue: 0,0:00:25.55,0:00:26.20,NextLine,,0,0,0,,{\pos(540,1080)}Breathe deeply and slowly...
+Dialogue: 0,0:00:27.20,0:00:28.80,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k45}Breathe{\k38} deeply{\k19} and{\k58} slowly...
+Dialogue: 0,0:00:27.20,0:00:28.80,Vietnamese,,0,0,0,,{\pos(540,980)}Hít thở sâu và chậm rãi...
+Dialogue: 0,0:00:27.20,0:00:28.80,NextLine,,0,0,0,,{\pos(540,1080)}...let your breath guide
+Dialogue: 0,0:00:29.80,0:00:31.48,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k48}...let{\k32} your{\k48} breath{\k40} guide
+Dialogue: 0,0:00:29.80,0:00:31.48,Vietnamese,,0,0,0,,{\pos(540,980)}...hãy
+Dialogue: 0,0:00:29.80,0:00:31.48,NextLine,,0,0,0,,{\pos(540,1080)}you.
+Dialogue: 0,0:00:31.48,0:00:31.80,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k32}you.
+Dialogue: 0,0:00:31.48,0:00:31.80,Vietnamese,,0,0,0,,{\pos(540,980)}để hơi thở dẫn dắt bạn.
+Dialogue: 0,0:00:31.48,0:00:31.80,NextLine,,0,0,0,,{\pos(540,1080)}Feel the peace and
+Dialogue: 0,0:00:32.80,0:00:34.20,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k37}Feel{\k28} the{\k47} peace{\k28} and
+Dialogue: 0,0:00:32.80,0:00:34.20,Vietnamese,,0,0,0,,{\pos(540,980)}Cảm nhận sự bình yên
+Dialogue: 0,0:00:32.80,0:00:34.20,NextLine,,0,0,0,,{\pos(540,1080)}calm of nature...
+Dialogue: 0,0:00:34.20,0:00:35.60,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k37}calm{\k19} of{\k84} nature...
+Dialogue: 0,0:00:34.20,0:00:35.60,Vietnamese,,0,0,0,,{\pos(540,980)}và thanh thản của thiên nhiên...
+Dialogue: 0,0:00:34.20,0:00:35.60,NextLine,,0,0,0,,{\pos(540,1080)}...and let it fill
+Dialogue: 0,0:00:36.60,0:00:38.31,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k69}...and{\k34} let{\k23} it{\k46} fill
+Dialogue: 0,0:00:36.60,0:00:38.31,Vietnamese,,0,0,0,,{\pos(540,980)}...và hãy
+Dialogue: 0,0:00:36.60,0:00:38.31,NextLine,,0,0,0,,{\pos(540,1080)}you up.
+Dialogue: 0,0:00:38.31,0:00:39.00,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k34}you{\k34} up.
+Dialogue: 0,0:00:38.31,0:00:39.00,Vietnamese,,0,0,0,,{\pos(540,980)}để nó tràn đầy trong bạn.
+Dialogue: 0,0:00:38.31,0:00:39.00,NextLine,,0,0,0,,{\pos(540,1080)}Imagine a sense of
+Dialogue: 0,0:00:40.00,0:00:41.23,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k54}Imagine{\k15} a{\k38} sense{\k15} of
+Dialogue: 0,0:00:40.00,0:00:41.23,Vietnamese,,0,0,0,,{\pos(540,980)}Tưởng tượng cảm
+Dialogue: 0,0:00:40.00,0:00:41.23,NextLine,,0,0,0,,{\pos(540,1080)}serenity...
+Dialogue: 0,0:00:41.23,0:00:42.07,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k85}serenity...
+Dialogue: 0,0:00:41.23,0:00:42.07,Vietnamese,,0,0,0,,{\pos(540,980)}giác bình yên...
+Dialogue: 0,0:00:41.23,0:00:42.07,NextLine,,0,0,0,,{\pos(540,1080)}...and let it wash
+Dialogue: 0,0:00:43.00,0:00:44.56,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k63}...and{\k31} let{\k21} it{\k42} wash
+Dialogue: 0,0:00:43.00,0:00:44.56,Vietnamese,,0,0,0,,{\pos(540,980)}...và hãy
+Dialogue: 0,0:00:43.00,0:00:44.56,NextLine,,0,0,0,,{\pos(540,1080)}over you.
+Dialogue: 0,0:00:44.56,0:00:45.40,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k42}over{\k42} you.
+Dialogue: 0,0:00:44.56,0:00:45.40,Vietnamese,,0,0,0,,{\pos(540,980)}để nó tràn ngập bạn.
+Dialogue: 0,0:00:44.56,0:00:45.40,NextLine,,0,0,0,,{\pos(540,1080)}When your meditation ends,
+Dialogue: 0,0:00:46.40,0:00:48.16,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k31}When{\k31} your{\k77} meditation{\k38} ends,
+Dialogue: 0,0:00:46.40,0:00:48.16,NextLine,,0,0,0,,{\pos(540,1080)}take one more deep
+Dialogue: 0,0:00:48.16,0:00:49.31,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k31}take{\k23} one{\k31} more{\k31} deep
+Dialogue: 0,0:00:48.16,0:00:49.31,Vietnamese,,0,0,0,,{\pos(540,980)}Khi thiền kết thúc,
+Dialogue: 0,0:00:48.16,0:00:49.31,NextLine,,0,0,0,,{\pos(540,1080)}breath...
+Dialogue: 0,0:00:49.31,0:00:50.00,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k69}breath...
+Dialogue: 0,0:00:49.31,0:00:50.00,Vietnamese,,0,0,0,,{\pos(540,980)}hãy hít thở thật sâu một lần nữa...
+Dialogue: 0,0:00:49.31,0:00:50.00,NextLine,,0,0,0,,{\pos(540,1080)}...and open your eyes
+Dialogue: 0,0:00:51.00,0:00:52.44,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k48}...and{\k32} open{\k32} your{\k32} eyes
+Dialogue: 0,0:00:51.00,0:00:52.44,Vietnamese,,0,0,0,,{\pos(540,980)}...và từ từ
+Dialogue: 0,0:00:51.00,0:00:52.44,NextLine,,0,0,0,,{\pos(540,1080)}slowly.
+Dialogue: 0,0:00:52.44,0:00:53.00,Speaker_Narrator,,0,0,0,,{\pos(540,900)}{\k56}slowly.
+Dialogue: 0,0:00:52.44,0:00:53.00,Vietnamese,,0,0,0,,{\pos(540,980)}mở mắt ra.

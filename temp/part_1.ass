@@ -12,17 +12,8 @@ Style: Default,Montserrat,72,&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-Dialogue: 0,0:00:00.00,0:00:01.32,Default,,0,0,0,,{\k22}A{\k28} tiny{\k52} hamster{\k30} stands
-Dialogue: 0,0:00:01.32,0:00:02.72,Default,,0,0,0,,{\k64}confidently{\k38} in{\k8} a{\k30} miniature
-Dialogue: 0,0:00:02.72,0:00:03.14,Default,,0,0,0,,{\k42}kitchen.
-Dialogue: 0,0:00:03.72,0:00:05.00,Default,,0,0,0,,{\k22}A{\k42} surprised{\k40} cat{\k24} looks
-Dialogue: 0,0:00:05.00,0:00:06.04,Default,,0,0,0,,{\k34}over{\k24} from{\k20} its{\k26} perch
-Dialogue: 0,0:00:06.04,0:00:06.78,Default,,0,0,0,,{\k24}on{\k24} top{\k18} of{\k8} a
-Dialogue: 0,0:00:06.78,0:00:07.14,Default,,0,0,0,,{\k36}cabinet.
-Dialogue: 0,0:00:07.73,0:00:08.83,Default,,0,0,0,,{\k20}The{\k38} hamster{\k26} pulls{\k26} out
-Dialogue: 0,0:00:08.83,0:00:09.97,Default,,0,0,0,,{\k12}a{\k28} tiny{\k34} water{\k40} pistol
-Dialogue: 0,0:00:09.97,0:00:11.03,Default,,0,0,0,,{\k28}from{\k16} its{\k26} hiding{\k36} spot.
-Dialogue: 0,0:00:11.59,0:00:12.61,Default,,0,0,0,,{\k30}With{\k12} an{\k26} evil{\k34} grin,
-Dialogue: 0,0:00:12.79,0:00:13.81,Default,,0,0,0,,{\k8}the{\k40} hamster{\k32} aims{\k22} and
-Dialogue: 0,0:00:13.81,0:00:14.13,Default,,0,0,0,,{\k32}fires.
-Dialogue: 0,0:00:14.81,0:00:15.01,Default,,0,0,0,,{\k20}The
+Dialogue: 0,0:00:00.00,0:00:01.14,Default,,0,0,0,,{\k30}Xin{\k38} chào{\k26} mọi{\k20} người!
+Dialogue: 0,0:00:02.09,0:00:03.19,Default,,0,0,0,,{\k36}sự{\k26} thật{\k22} đầu{\k26} tiên
+Dialogue: 0,0:00:03.19,0:00:04.27,Default,,0,0,0,,{\k16}về{\k26} trái{\k16} đất,{\k50} trái
+Dialogue: 0,0:00:04.27,0:00:05.13,Default,,0,0,0,,{\k20}đất{\k12} không{\k26} hoàn{\k28} toàn
+Dialogue: 0,0:00:05.13,0:00:05.59,Default,,0,0,0,,{\k20}hình{\k26} cầu.

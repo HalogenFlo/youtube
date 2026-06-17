@@ -53,7 +53,7 @@ SD_RESOLUTIONS = {
 }
 
 # Video Generation (Wan 2.1 1.3B)
-WAN_MODEL_DEFAULT = "Wan-AI/Wan2.1-T2V-1.3B"
+WAN_MODEL_DEFAULT = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
 WAN_RESOLUTIONS = {
     "vertical": (480, 848),   # width, height
     "horizontal": (848, 480)
@@ -65,3 +65,35 @@ DEFAULT_MAX_DURATION = 60      # Thời lượng tối đa 1 video phần (giây
 DEFAULT_IMAGE_STYLE = "cinematic, detailed, 4k"
 DEFAULT_FPS = 30               # FPS chuẩn hóa khi render video cuối cùng
 WAN_FPS = 16                   # FPS mặc định khi sinh clip Wan 2.1
+
+# --- CẤU HÌNH SELF-HEAL ---
+MUSIC_DIR = os.path.join(ASSETS_DIR, "music")
+if not os.path.exists(MUSIC_DIR):
+    os.makedirs(MUSIC_DIR)
+
+BACKGROUNDS_DIR = os.path.join(ASSETS_DIR, "backgrounds")
+if not os.path.exists(BACKGROUNDS_DIR):
+    os.makedirs(BACKGROUNDS_DIR)
+
+
+DEFAULT_READING_WPM = 130
+DEFAULT_MUSIC_VOLUME = 1.0
+DEFAULT_MUSIC_VOLUME_WITH_VOICE = 0.25
+DEFAULT_MUSIC_VOLUME_SILENT_SPEAKER = 0.6
+DEFAULT_SELFHEAL_STYLE = "peaceful nature landscape, serene forest river, soft morning light, cinematic, 4k"
+DEFAULT_SELFHEAL_RATE = "-15%"
+DEFAULT_PAUSE_BEFORE_SILENT = 1.0  # Khoảng dừng (giây) trước lượt speaker không có giọng
+
+# Liên từ tiếng Việt để tách câu dịch
+VI_SPLIT_CONJUNCTIONS = ["và", "nhưng", "để", "rồi", "mà", "khi", "nếu", "vì", "nên", "hay"]
+
+# Bảng màu cho các speaker (ASS color format BGR)
+SPEAKER_COLORS = [
+    "&H0000FFFF",  # Vàng neon
+    "&H0000FF00",  # Xanh lá
+    "&H00FF9933",  # Xanh dương nhạt
+    "&H005050FF",  # Đỏ cam
+    "&H00FF00FF",  # Hồng
+    "&H0033CCFF",  # Cam
+]
+

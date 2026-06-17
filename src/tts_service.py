@@ -18,8 +18,10 @@ def generate_tts(
     Sinh file audio giọng đọc từ văn bản sử dụng CLI edge-tts qua subprocess.
     Trả về: (True, output_path) nếu thành công, (False, error_message) nếu thất bại.
     """
-    if not text.strip():
+    if not text or not str(text).strip():
         return False, "Văn bản trống, không thể sinh giọng đọc."
+    text = str(text)
+
         
     # Đảm bảo thư mục cha tồn tại
     parent_dir = os.path.dirname(output_path)

@@ -82,7 +82,7 @@ graph TD
 | Chuyển giọng nói → text | **faster-whisper** — model `small` | ~1 GB | CTranslate2, `word_timestamps=True` để lấy mốc thời gian từng từ |
 | Giọng đọc TTS | **edge-tts** | 0 | Giọng Việt: `vi-VN-HoaiMyNeural` (nữ), `vi-VN-NamMinhNeural` (nam). Điều chỉnh tốc độ qua `--rate` |
 | Sinh ảnh AI (Chế độ Nhanh) | **diffusers** — `Lykon/dreamshaper-8` (SD 1.5) | ~3.5 GB | Dọc: 512×768, Ngang: 768×512. ~2s mỗi ảnh. `enable_model_cpu_offload()` + `enable_vae_slicing()` |
-| **Sinh video AI (Chế độ Video)** | **diffusers** — `Wan-AI/Wan2.1-T2V-1.3B` | **~8-10 GB** | Dọc: 480×848, Ngang: 848×480. ~5 giây/clip. `enable_model_cpu_offload()` + VAE tiling |
+| **Sinh video AI (Chế độ Video)** | **diffusers** — `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` | **~8-10 GB** | Dọc: 480×848, Ngang: 848×480. ~5 giây/clip. `enable_model_cpu_offload()` + VAE tiling |
 | Biên tập video | **MoviePy** + **FFmpeg** | 0 | Ghép clip/ảnh, chuyển cảnh fade, burn phụ đề `.ass` bằng filter FFmpeg |
 
 ---
@@ -105,7 +105,7 @@ from diffusers import WanPipeline
 from diffusers.utils import export_to_video
 
 pipe = WanPipeline.from_pretrained(
-    "Wan-AI/Wan2.1-T2V-1.3B",
+    "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
     torch_dtype=torch.float16,
 )
 pipe.enable_model_cpu_offload()
@@ -327,7 +327,7 @@ imageio[ffmpeg]
 ollama pull qwen2.5:7b-instruct
 
 # Model Wan 2.1 (~5 GB, tự động tải khi chạy lần đầu)
-python -c "from diffusers import WanPipeline; WanPipeline.from_pretrained('Wan-AI/Wan2.1-T2V-1.3B')"
+python -c "from diffusers import WanPipeline; WanPipeline.from_pretrained('Wan-AI/Wan2.1-T2V-1.3B-Diffusers')"
 
 # Model Stable Diffusion (~2 GB, tự động tải khi chạy lần đầu)
 python -c "from diffusers import StableDiffusionPipeline; StableDiffusionPipeline.from_pretrained('Lykon/dreamshaper-8')"
@@ -386,3 +386,59 @@ streamlit run src/app.py        # Terminal 2
 **Kịch bản 4 — Kết hợp Ảnh + Video AI:**
 1. Tạo video 60s, 2 phân cảnh dùng Video AI, còn lại dùng Ảnh AI.
 2. Kiểm tra: Ghép mượt mà giữa clip động và ảnh Ken Burns.
+
+---
+
+## 11. Tính năng Học Tiếng Anh Self-heal (Mới)
+
+Tính năng **Học Tiếng Anh Self-heal** là một luồng sản xuất video riêng biệt, được thiết kế để tạo ra các video học tiếng Anh tương tác hoặc thiền định với hình nền thiên nhiên thanh bình và phụ đề song ngữ thông minh.
+
+### 11.1 Điểm đặc trưng
+- **Cấu hình giọng đọc theo từng Speaker**: Trong một kịch bản, mỗi nhân vật (Speaker) có thể được cấu hình có giọng đọc TTS (Text-to-Speech) hoặc im lặng (Silent) để người xem tự đóng vai (Role-play).
+- **Phụ đề Karaoke song ngữ**: 
+  - Tiếng Anh hiển thị dạng Karaoke chạy từng từ. Nếu speaker có giọng đọc, karaoke chạy khớp với giọng đọc qua Whisper. Nếu speaker im lặng, karaoke chạy tự động theo tốc độ đọc thiết lập (WPM - Words Per Minute).
+  - Tiếng Việt (bản dịch) hiển thị dạng chữ tĩnh, mờ hơn ở bên dưới để người dùng tham khảo, được cắt ngắn map 1:1 với dòng tiếng Anh.
+- **Xử lý âm thanh thông minh**:
+  - Nhạc nền chill/thiền định tự động nhỏ đi (25%) khi có speaker nói và lớn lên (60%) trong các khoảng im lặng hoặc lượt của speaker im lặng.
+  - Có khoảng dừng ngắn (ví dụ: 1s) trước các phân cảnh im lặng để người dùng chuẩn bị đọc.
+- **Tải nhạc nền trực tiếp**: Hỗ trợ nhập link (YouTube, SoundCloud...) và tải nhạc nền trực tiếp về thư mục lưu trữ qua UI Streamlit.
+
+### 11.2 Các Preset cấu hình phổ biến
+- **Meditation (Thiền định)**: 1 Narrator đọc chậm kèm nhạc thiền nền.
+- **Silent Reading (Đọc thầm)**: Chỉ chạy chữ karaoke theo tốc độ WPM + nhạc chill (tất cả speaker tắt giọng đọc).
+- **Interview Role-play**: Interviewer nói (bật TTS), Guest im lặng để người xem tự trả lời (tắt TTS).
+- **Conversation (Hội thoại)**: Cả hai speaker đều bật TTS để người xem nghe hội thoại tự nhiên giữa các nhân vật.
+
+### 11.3 Sơ đồ Timeline âm thanh & phụ đề (Ví dụ: Role-play)
+```
+Thời gian:  0s          3.2s    4.2s          8.8s   9.8s         13s
+            ├───────────┤├──────┤├────────────┤├──────┤├───────────┤
+Audio:      │ TTS ♪     ││pause ││ silence    ││pause ││ TTS ♪    │
+            │Interviewer││ 1s   ││            ││ 1s   ││Interviewer│
+            ├───────────┤├──────┤├────────────┤├──────┤├───────────┤
+Chữ EN:     │ Hi! What's││      ││ My name is ││      ││Where are │
+(karaoke)   │ your name?││      ││ Sarah. 📖  ││      ││you from? │
+            │ (vàng) 🟡 ││      ││ (xanh) 🟢   ││      ││(vàng) 🟡  │
+            ├───────────┤├──────┤├────────────┤├──────┤├───────────┤
+Chữ VI:     │Tên bạn là ││      ││Tôi là Sarah││      ││Bạn từ đâu│
+(tĩnh, mờ)  │gì?        ││      ││            ││      ││đến?      │
+            ├───────────┤├──────┤├────────────┤├──────┤├───────────┤
+Nhạc nền:   │  vol 25%  ││ 60%  ││   vol 60%  ││ 60%  ││ vol 25%  │
+```
+
+### 11.4 Các tính năng tối ưu hóa & UX mới cập nhật
+
+- **Hỗ trợ 1 Video/Ảnh Nền Chung (Single Background Video/Image):**
+  - Cho phép người dùng bật tùy chọn "Sử dụng 1 video/ảnh nền duy nhất" ở Sidebar.
+  - Hỗ trợ chọn file nền từ thư viện, tải video từ URL bằng `yt-dlp` lưu vào thư mục `assets/backgrounds/`, hoặc **sinh video bằng AI (Wan 2.1)** / **sinh ảnh bằng AI (Stable Diffusion)**.
+  - Khi chọn nguồn sinh bằng AI, hệ thống sẽ tự động gọi Wan 2.1 (đối với video) hoặc Stable Diffusion (đối với ảnh) để sinh duy nhất 1 tệp nền chung từ prompt cấu hình nền chung (lưu vào thư mục backgrounds) khi chạy sinh tài nguyên tự động, thay vì sinh nhiều tài nguyên cho từng phân cảnh.
+  - Thay vì chạy GPU Stable Diffusion/Wan 2.1 sinh hình ảnh/video riêng lẻ cho từng phân cảnh, hệ thống sử dụng FFmpeg CLI để resize, crop, loop vô hạn (đối với video) hoặc lặp hình ảnh tĩnh (đối với ảnh) và mux trực tiếp với audio track đã mix. Quá trình render video thô hoàn thành trong vài giây và tiết kiệm 99% tài nguyên.
+- **Sidebar cấu hình động (Dynamic Settings):**
+  - Di chuyển selectbox chọn chế độ hoạt động lên đầu Sidebar.
+  - Khi chọn tính năng nào, chỉ hiển thị cấu hình tương ứng của tính năng đó (ẩn/hiện thông minh). Nếu dùng video nền chung trong Self-heal, tự động ẩn cấu hình Stable Diffusion và Wan 2.1 của từng scene để giao diện tối giản nhất.
+- **Góp ý kịch bản thông minh (Advanced Feedback):**
+  - Tại Bước 1, thay vì chỉ có nút "Viết lại kịch bản hoàn toàn mới từ đầu", bổ sung tùy chọn "Góp ý bổ sung". AI (Ollama) sẽ phân tích kịch bản JSON hiện tại và chỉ chỉnh sửa/cập nhật phân cảnh tương ứng theo góp ý của bạn mà vẫn giữ nguyên cấu trúc cũ.
+- **Hướng video & Thời lượng tối đa cho Self-heal:**
+  - Hỗ trợ đầy đủ thiết lập Hướng video (Ngang/Dọc) và Thời lượng tối đa mỗi phần cho Self-heal để tự động phân tách video thành Part 1, Part 2... khi render.
+
+

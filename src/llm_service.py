@@ -102,3 +102,124 @@ def remake_script(
         "và mô tả cảnh theo đúng yêu cầu chỉnh sửa của người dùng. Xuất ra định dạng JSON quy định."
     )
     return call_ollama(user_prompt, get_system_prompt(language), model)
+
+def get_selfheal_system_prompt(script_type: str) -> str:
+    """Trả về prompt hệ thống định nghĩa nhiệm vụ của LLM đối với tính năng Học Tiếng Anh Self-heal."""
+    type_instructions = ""
+    if script_type == "meditation":
+        type_instructions = (
+            "- Thể loại: Thiền định, tự chữa lành (Self-heal), châm ngôn cuộc sống.\n"
+            "- Cấu trúc speaker: Chỉ có 1 speaker duy nhất tên là 'Narrator'.\n"
+            "- Nội dung: Những lời khuyên nhẹ nhàng, suy tư sâu sắc về cuộc sống, sự bình yên."
+        )
+    elif script_type == "interview":
+        type_instructions = (
+            "- Thể loại: Phỏng vấn, hỏi đáp học tiếng Anh giao tiếp.\n"
+            "- Cấu trúc speaker: Có ít nhất 2 speaker, ví dụ 'Interviewer' và 'Guest' (hoặc 'You').\n"
+            "- Nội dung: Các câu hỏi phỏng vấn phổ biến và câu trả lời tương ứng ngắn gọn, dễ học."
+        )
+    elif script_type == "conversation":
+        type_instructions = (
+            "- Thể loại: Hội thoại giao tiếp tiếng Anh hàng ngày.\n"
+            "- Cấu trúc speaker: Có ít nhất 2 speaker, đối thoại qua lại tự nhiên.\n"
+            "- Nội dung: Các tình huống giao tiếp thông thường trong cuộc sống, công việc."
+        )
+    else:  # custom
+        type_instructions = (
+            "- Thể loại: Tùy chỉnh theo yêu cầu của người dùng.\n"
+            "- Cấu trúc speaker: Xác định linh hoạt các nhân vật dựa trên nội dung."
+        )
+
+    return (
+        "Bạn là một chuyên gia biên kịch video học tiếng Anh Self-heal chuyên nghiệp.\n"
+        "Nhiệm vụ của bạn là tạo ra một kịch bản hấp dẫn, phù hợp cho việc tự học và chữa lành.\n"
+        f"Yêu cầu thể loại kịch bản:\n{type_instructions}\n\n"
+        "Quy tắc kịch bản:\n"
+        "1. Kịch bản được chia thành các phân cảnh tuần tự (mỗi phân cảnh dài khoảng 5 giây).\n"
+        "2. Nền video BẮT BUỘC phải là các cảnh thiên nhiên thanh bình, êm dịu, không có text trên hình ảnh.\n"
+        "3. Lời thoại 'narration' BẮT BUỘC viết bằng tiếng Anh (English).\n"
+        "4. Bản dịch 'translation' BẮT BUỘC viết bằng tiếng Việt (Vietnamese) tương ứng sát nghĩa.\n"
+        "5. Phải chỉ định rõ 'speaker' cho từng phân cảnh.\n\n"
+        "Đầu ra BẮT BUỘC phải là một đối tượng JSON hợp lệ duy nhất có cấu trúc chính xác như sau:\n"
+        "{\n"
+        "  \"speakers\": [\"Speaker A\", \"Speaker B\"],\n"
+        "  \"scenes\": [\n"
+        "    {\n"
+        "      \"scene_num\": 1,\n"
+        "      \"speaker\": \"Speaker A\",\n"
+        "      \"narration\": \"Hi! How are you doing today?\",\n"
+        "      \"translation\": \"Xin chào! Hôm nay bạn thế nào rồi?\",\n"
+        "      \"video_prompt\": \"A peaceful green forest path with sunlight filtering through leaves, gentle morning light, cinematic, 4k\"\n"
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "Lưu ý quan trọng:\n"
+        "1. Trả về đúng định dạng JSON, không giải thích thêm trước hoặc sau khối JSON. Chỉ trả về chuỗi JSON thô.\n"
+        "2. Trường 'video_prompt' mô tả chi tiết hình ảnh thiên nhiên, ánh sáng, góc máy bằng tiếng Anh."
+    )
+
+def generate_selfheal_script(
+    topic: str,
+    script_type: str = "meditation",
+    target_scenes: int = 10,
+    model: str = OLLAMA_MODEL_DEFAULT
+) -> Tuple[bool, Any]:
+    """
+    Sinh kịch bản Học Tiếng Anh Self-heal từ chủ đề/ý tưởng và thể loại kịch bản.
+    """
+    user_prompt = (
+        f"Hãy viết kịch bản tiếng Anh Self-heal theo chủ đề/ý tưởng sau: \"{topic}\".\n"
+        f"Thể loại kịch bản: {script_type}.\n"
+        f"YÊU CẦU BẮT BUỘC VỀ SỐ PHÂN CẢNH: Hãy viết chính xác đúng {target_scenes} phân cảnh (scenes từ 1 đến {target_scenes}).\n"
+        "Hãy thiết kế các phân cảnh tuần tự với hình ảnh thiên nhiên phù hợp nhất.\n"
+        "Lưu ý quan trọng: Nếu trong chủ đề của người dùng có chứa các yêu cầu cụ thể về đóng vai (roles), nhân vật (speakers), bối cảnh cuộc thoại hoặc lời khuyên chi tiết, "
+        "bạn BẮT BUỘC phải tuân thủ và triển khai đầy đủ các yêu cầu đó trong kịch bản JSON đầu ra."
+    )
+    system_prompt = get_selfheal_system_prompt(script_type)
+    return call_ollama(user_prompt, system_prompt, model)
+
+
+def feedback_script(
+    current_script: List[Dict[str, Any]],
+    feedback: str,
+    style_preset: str = "cinematic, detailed, 4k",
+    language: str = "vi",
+    model: str = OLLAMA_MODEL_DEFAULT
+) -> Tuple[bool, Any]:
+    """
+    Góp ý bổ sung cho kịch bản Video Ngắn hiện tại.
+    AI sẽ giữ lại cấu trúc cũ và cập nhật/chỉnh sửa các scene dựa trên phản hồi.
+    """
+    user_prompt = (
+        "Dưới đây là kịch bản phân cảnh hiện tại dưới dạng JSON:\n"
+        f"\"\"\"{json.dumps(current_script, ensure_ascii=False)}\"\"\"\n\n"
+        "Yêu cầu góp ý chỉnh sửa bổ sung từ người dùng:\n"
+        f"\"\"\"{feedback}\"\"\"\n\n"
+        f"Phong cách hình ảnh yêu cầu cho các video prompt: \"{style_preset}\".\n"
+        "Hãy cập nhật lại kịch bản JSON theo góp ý trên. Giữ nguyên định dạng và nội dung các phân cảnh không bị yêu cầu sửa đổi."
+    )
+    return call_ollama(user_prompt, get_system_prompt(language), model)
+
+
+def feedback_selfheal_script(
+    current_script: List[Dict[str, Any]],
+    feedback: str,
+    script_type: str = "interview",
+    target_scenes: int = 10,
+    model: str = OLLAMA_MODEL_DEFAULT
+) -> Tuple[bool, Any]:
+    """
+    Góp ý bổ sung cho kịch bản Self-heal hiện tại.
+    AI sẽ giữ lại các phân cảnh cũ và chỉ cập nhật/chỉnh sửa theo phản hồi của người dùng.
+    """
+    user_prompt = (
+        "Dưới đây là kịch bản Self-heal hiện tại dưới dạng JSON:\n"
+        f"\"\"\"{json.dumps(current_script, ensure_ascii=False)}\"\"\"\n\n"
+        "Yêu cầu góp ý chỉnh sửa bổ sung từ người dùng:\n"
+        f"\"\"\"{feedback}\"\"\"\n\n"
+        f"YÊU CẦU SỐ PHÂN CẢNH MỤC TIÊU: Kịch bản cập nhật nên có khoảng {target_scenes} phân cảnh.\n"
+        "Hãy cập nhật lại kịch bản JSON theo góp ý trên. Giữ nguyên định dạng, danh sách speakers và nội dung các phân cảnh không liên quan.\n"
+        "Nếu người dùng muốn mở rộng, kéo dài kịch bản để video dài hơn, hãy sinh thêm các phân cảnh mới tiếp nối một cách hợp lý."
+    )
+    return call_ollama(user_prompt, get_selfheal_system_prompt(script_type), model)
+
