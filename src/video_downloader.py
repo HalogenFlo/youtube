@@ -59,7 +59,10 @@ def download_and_extract(url: str) -> Tuple[bool, str, str, str]:
         'outtmpl': os.path.join(DOWNLOAD_DIR, '%(id)s.%(ext)s'),
         'quiet': True,
         'no_warnings': True,
+        'nocheckcertificate': True,
+        'cookiesfrombrowser': ('chrome', 'edge'),
     }
+
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -97,3 +100,65 @@ def download_and_extract(url: str) -> Tuple[bool, str, str, str]:
         return False, "", "", f"Lỗi tải video từ yt-dlp: {str(e)}"
     except Exception as e:
         return False, "", "", f"Lỗi không xác định khi tải video: {str(e)}"
+
+def download_douyin_video(url: str, output_dir: str = DOWNLOAD_DIR) -> Tuple[bool, str, str, str]:
+    """
+    Tải video Douyin/TikTok sử dụng cookie trình duyệt tự động và User-Agent máy tính để bypass chặn.
+    Trả về: (Success, video_path, audio_path, error_message)
+    """
+    ydl_opts = {
+        'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+        'outtmpl': os.path.join(output_dir, '%(id)s.%(ext)s'),
+        'quiet': True,
+        'no_warnings': True,
+        'nocheckcertificate': True,
+        # Trích xuất cookie từ Chrome và Edge đã cài đặt trên máy người dùng để vượt qua xác thực
+        'cookiesfrombrowser': ('chrome', 'edge'),
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+            'Referer': 'https://www.douyin.com/',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7',
+        }
+    }
+    
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info_dict = ydl.extract_info(url, download=True)
+            video_path = ydl.prepare_filename(info_dict)
+            
+            if not os.path.exists(video_path):
+                base_name = os.path.splitext(video_path)[0]
+                for f in os.listdir(output_dir):
+                    full_f = os.path.join(output_dir, f)
+                    if full_f.startswith(base_name) and os.path.isfile(full_f):
+                        video_path = full_f
+                        break
+            
+            if not os.path.exists(video_path):
+                return False, "", "", "Tải video Douyin thành công nhưng không tìm thấy file."
+                
+            video_dir, video_file = os.path.split(video_path)
+            video_name, _ = os.path.splitext(video_file)
+            audio_path = os.path.join(video_dir, f"{video_name}.wav")
+            
+            success, audio_err = extract_audio(video_path, audio_path)
+            if not success:
+                return False, video_path, "", f"Tải video thành công nhưng không thể tách audio: {audio_err}"
+                
+            return True, video_path, audio_path, ""
+            
+    except yt_dlp.utils.DownloadError as e:
+        err_msg = str(e)
+        return False, "", "", (
+            f"Không thể tải video từ link Douyin/TikTok do cơ chế chặn của nền tảng.\n"
+            f"Chi tiết lỗi: {err_msg}\n\n"
+            f"💡 Gợi ý:\n"
+            f"1. Hãy đảm bảo bạn đã đăng nhập Douyin/TikTok trên một trong các trình duyệt (Chrome, Edge, Firefox) trên máy tính này.\n"
+            f"2. Bạn cũng có thể nâng cấp thư viện tải bằng lệnh: pip install -U yt-dlp\n"
+            f"3. Nếu vẫn không được, hãy tải thủ công video về máy và chọn tính năng 'Upload file từ máy tính' trên giao diện."
+        )
+    except Exception as e:
+        return False, "", "", f"Lỗi không xác định khi tải video Douyin: {str(e)}"
+
+

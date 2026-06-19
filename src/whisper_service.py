@@ -106,3 +106,39 @@ def get_word_timestamps(
         gc.collect()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+
+def transcribe_with_segments(
+    audio_path: str,
+    model_size: str = WHISPER_MODEL_DEFAULT
+) -> Tuple[bool, List[Dict[str, Any]], str]:
+    """
+    Transcribe âm thanh mà không truyền trước ngôn ngữ để Whisper tự phát hiện (auto-detect).
+    Trả về: (success, segments_list, detected_language)
+    Trong đó segments_list là list các dict: {"text": "...", "start": float, "end": float}
+    """
+    model = None
+    try:
+        model = _load_model(model_size)
+        # Không truyền language để kích hoạt auto-detect
+        segments, info = model.transcribe(audio_path, beam_size=5)
+        
+        detected_language = info.language
+        
+        segments_list = []
+        for segment in segments:
+            segments_list.append({
+                "text": segment.text.strip(),
+                "start": round(segment.start, 3),
+                "end": round(segment.end, 3)
+            })
+            
+        return True, segments_list, detected_language
+    except Exception as e:
+        return False, [], f"Lỗi transcribe segments: {str(e)}"
+    finally:
+        if model is not None:
+            del model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+

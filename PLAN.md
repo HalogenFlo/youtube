@@ -441,4 +441,71 @@ Nhạc nền:   │  vol 25%  ││ 60%  ││   vol 60%  ││ 60%  ││ v
 - **Hướng video & Thời lượng tối đa cho Self-heal:**
   - Hỗ trợ đầy đủ thiết lập Hướng video (Ngang/Dọc) và Thời lượng tối đa mỗi phần cho Self-heal để tự động phân tách video thành Part 1, Part 2... khi render.
 
+---
 
+## 12. Tính năng Dịch & Lồng tiếng Video Douyin (AI Local)
+
+Tính năng này giúp người dùng **tải video từ link Douyin/TikTok/YouTube** hoặc **upload file video trực tiếp từ máy tính**, cho phép cắt xén thời gian (Trim) và vùng hình ảnh (Crop), tự động nhận diện ngôn ngữ gốc (bao gồm tiếng Trung), dịch lời thoại sang tiếng Anh hoặc tiếng Việt, và lồng tiếng (TTS) khớp với video gốc kèm phụ đề mới.
+
+### 12.1 Sơ đồ kiến trúc & Luồng xử lý
+
+```mermaid
+graph TD
+    subgraph "ĐẦU VÀO"
+        A1["Dán link Douyin/TikTok/YouTube"]
+        A2["Upload file video từ máy tính"]
+        A1 --> B["yt-dlp: Tải video"]
+        A2 --> C["Lưu file upload vào temp/dubbing/"]
+        B --> D["Video nguồn (.mp4)"]
+        C --> D
+    end
+
+    subgraph "BƯỚC 1: CẮT XÉN"
+        D --> E["FFprobe: Lấy metadata (resolution, duration, fps)"]
+        E --> F["Giao diện Trim (start/end giây) + Crop (Sliders)"]
+        F --> G["FFmpeg: crop & trim → video đã cắt"]
+    end
+
+    subgraph "BƯỚC 2: TRANSCRIBE & DỊCH"
+        G --> H["FFmpeg: Tách audio 16kHz mono"]
+        H --> I["Faster-Whisper: Transcribe → segments + auto-detect language"]
+        I --> J["Ollama LLM: Dịch từng segment sang ngôn ngữ đích"]
+        J --> K["Bảng chỉnh sửa: Thời gian | Thoại gốc | Thoại dịch"]
+    end
+
+    subgraph "BƯỚC 3: LỒNG TIẾNG & RENDER"
+        K --> L["edge-tts: Sinh TTS cho từng câu dịch"]
+        L --> M["FFmpeg atempo: Đồng bộ tốc độ TTS với timing gốc"]
+        M --> N["FFmpeg amix: Mix TTS + audio gốc giảm volume"]
+        N --> O["subtitle_builder: Tạo ASS phụ đề"]
+        O --> P["FFmpeg: Burn phụ đề lên video → Thành phẩm"]
+    end
+```
+
+### 12.2 Chi tiết thiết kế các thành phần
+
+#### 1. UI Lồng tiếng (`app_dubbing.py`)
+- **Sidebar cấu hình:**
+  - Ngôn ngữ dịch đích: `["Tiếng Anh (English)", "Tiếng Việt"]`
+  - Giọng đọc lồng tiếng: Lấy từ cấu hình `config.py`
+  - Tốc độ đọc TTS: slider `rate` (-30% → +30%)
+  - Chế độ âm thanh nền gốc: `["Giữ nhỏ (10-15%)", "Tắt hoàn toàn"]`
+  - Chế độ phụ đề: `["Song ngữ gốc-dịch", "Chỉ ngôn ngữ dịch", "Không phụ đề"]`
+- **Bước 1 — Tải/Upload & Cắt xén:**
+  - `st.radio` chọn nguồn đầu vào.
+  - Trim và Crop (sử dụng FFmpeg preview qua hình ảnh thumbnail).
+- **Bước 2 — Transcribe & Dịch thuật:**
+  - Sử dụng Whisper auto-detect ngôn ngữ gốc.
+  - Sử dụng Ollama (Local LLM) để dịch các đoạn thoại và hiển thị qua `st.data_editor`.
+- **Bước 3 — Lồng tiếng & Render:**
+  - Thực hiện chạy tuần tự sinh giọng đọc, chỉnh tốc độ khớp với mốc thời gian, mix nhạc nền, tạo phụ đề và burn lên video.
+
+#### 2. Dịch vụ lồng tiếng (`dubbing_service.py`)
+- Cung cấp các pure function tương tác với FFmpeg và điều khiển luồng ghép nối:
+  - `get_video_info(path)`: lấy metadata.
+  - `get_video_frame(path, time_sec, output_img)`: chụp thumbnail preview.
+  - `crop_and_trim_video(...)`: xử lý FFmpeg crop/trim.
+  - `save_uploaded_video(...)`: lưu trữ file upload tạm thời.
+  - `adjust_tts_speed(tts_path, target_duration, output_path)`: co giãn âm thanh qua `atempo`.
+  - `mix_dubbed_audio(...)`: trộn âm thanh đã dịch với âm thanh nền.
+  - `compile_dubbed_video(...)`: mux video + audio + burn subtitle ASS.

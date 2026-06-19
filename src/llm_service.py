@@ -223,3 +223,92 @@ def feedback_selfheal_script(
     )
     return call_ollama(user_prompt, get_selfheal_system_prompt(script_type), model)
 
+
+def get_translation_system_prompt(source_lang: str, target_lang: str) -> str:
+    """Trả về prompt hệ thống cho nhiệm vụ dịch thuật thoại video."""
+    return (
+        f"Bạn là một chuyên gia dịch thuật phim và video chuyên nghiệp.\n"
+        f"Nhiệm vụ của bạn là dịch các câu thoại từ ngôn ngữ gốc ({source_lang}) sang ngôn ngữ đích ({target_lang}).\n"
+        f"Quy tắc dịch:\n"
+        f"1. Dịch chính xác, tự nhiên, trôi chảy, phù hợp ngữ cảnh nói của video.\n"
+        f"2. Câu dịch ngắn gọn, súc tích để khi lồng tiếng (TTS) khớp với khoảng thời gian (timing) gốc.\n"
+        f"3. Đầu ra BẮT BUỘC là một mảng JSON chứa các câu đã dịch theo đúng thứ tự của mảng đầu vào.\n"
+        f"Ví dụ định dạng đầu ra:\n"
+        f"[\n"
+        f"  \"câu dịch 1\",\n"
+        f"  \"câu dịch 2\"\n"
+        f"]\n"
+        f"Chỉ trả về chuỗi JSON thô của mảng, không có bất kỳ giải thích nào bên ngoài."
+    )
+
+
+def translate_segments_batch(
+    segments: List[Dict[str, Any]],
+    source_lang: str,
+    target_lang: str,
+    model: str = OLLAMA_MODEL_DEFAULT
+) -> List[Dict[str, Any]]:
+    """
+    Dịch hàng loạt các đoạn thoại video trong 1 lần gọi Ollama để tối ưu hiệu năng.
+    Mỗi segment: {"text": "...", "start": 0.0, "end": 3.0}
+    Trả về danh sách segment đã bổ sung trường "translated_text".
+    """
+    if not segments:
+        return []
+        
+    texts_to_translate = [seg["text"] for seg in segments]
+    
+    # Map tên ngôn ngữ hiển thị
+    lang_map = {
+        "zh": "Tiếng Trung (Chinese)",
+        "en": "Tiếng Anh (English)",
+        "vi": "Tiếng Việt (Vietnamese)"
+    }
+    src_display = lang_map.get(source_lang, source_lang)
+    tgt_display = lang_map.get(target_lang, target_lang)
+    
+    system_prompt = get_translation_system_prompt(src_display, tgt_display)
+    user_prompt = f"Hãy dịch mảng các câu thoại sau đây:\n{json.dumps(texts_to_translate, ensure_ascii=False)}"
+    
+    payload = {
+        "model": model,
+        "prompt": f"System:\n{system_prompt}\n\nUser:\n{user_prompt}",
+        "format": "json",
+        "stream": False,
+        "options": {
+            "temperature": 0.3, # Đặt nhiệt độ thấp để dịch chính xác hơn
+            "num_predict": 2048
+        }
+    }
+    
+    try:
+        response = requests.post(OLLAMA_API_URL, json=payload, timeout=60)
+        if response.status_code == 200:
+            result = response.json()
+            response_text = result.get("response", "").strip()
+            translated_list = json.loads(response_text)
+            
+            if isinstance(translated_list, list) and len(translated_list) == len(segments):
+                # Gán bản dịch vào từng segment tương ứng
+                updated_segments = []
+                for idx, seg in enumerate(segments):
+                    updated_seg = seg.copy()
+                    updated_seg["translated_text"] = str(translated_list[idx]).strip()
+                    updated_segments.append(updated_seg)
+                return updated_segments
+            else:
+                print(f"Kích thước mảng dịch không khớp: nhận được {len(translated_list)} thay vì {len(segments)}.")
+        else:
+            print(f"Ollama trả về mã lỗi HTTP: {response.status_code}")
+    except Exception as e:
+        print(f"Lỗi khi gọi batch dịch qua Ollama: {str(e)}")
+        
+    # Fallback: Nếu lỗi hoặc không khớp số lượng, gán translated_text = text gốc
+    updated_segments = []
+    for seg in segments:
+        updated_seg = seg.copy()
+        updated_seg["translated_text"] = seg["text"]
+        updated_segments.append(updated_seg)
+    return updated_segments
+
+

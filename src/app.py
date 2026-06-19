@@ -165,10 +165,9 @@ if "style_preset" not in st.session_state:
 if "final_videos" not in st.session_state:
     st.session_state.final_videos = []
 
-# --- SIDEBAR CHỌN TÍNH NĂNG ---
 feature_mode = st.sidebar.selectbox(
     "🎯 Chọn tính năng chính",
-    ["🎬 Sản xuất Video Ngắn", "🧘 Học Tiếng Anh Self-heal"],
+    ["🎬 Sản xuất Video Ngắn", "🧘 Học Tiếng Anh Self-heal", "🎙️ Dịch & Lồng tiếng Video"],
     key="feature_mode"
 )
 
@@ -176,6 +175,12 @@ if feature_mode == "🧘 Học Tiếng Anh Self-heal":
     from src.app_selfheal import run_selfheal_ui
     run_selfheal_ui()
     st.stop()
+
+if feature_mode == "🎙️ Dịch & Lồng tiếng Video":
+    from src.app_dubbing import run_dubbing_ui
+    run_dubbing_ui()
+    st.stop()
+
 
 # --- SIDEBAR CẤU HÌNH ---
 st.sidebar.markdown("### ⚙️ Cấu hình Hệ thống")

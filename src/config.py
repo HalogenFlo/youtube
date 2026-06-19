@@ -22,6 +22,16 @@ for directory in [TEMP_DIR, DOWNLOAD_DIR, OUTPUT_DIR, ASSETS_DIR, FONT_DIR]:
     if not os.path.exists(directory):
         os.makedirs(directory)
 
+# --- CẤU HÌNH DUBBING (LỒNG TIẾNG) ---
+DUBBING_DIR = os.path.join(TEMP_DIR, "dubbing")
+DUBBING_UPLOAD_DIR = os.path.join(DUBBING_DIR, "uploads")
+for directory in [DUBBING_DIR, DUBBING_UPLOAD_DIR]:
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+DUBBING_BG_VOLUME_LOW = 0.12
+
+
 # --- CẤU HÌNH CÁC MODEL AI ---
 # Ollama Configuration
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
