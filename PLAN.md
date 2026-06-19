@@ -161,6 +161,29 @@ LLM tự động chia thành 6 phân cảnh liền mạch:
 
 > **Lưu ý**: Có thể **kết hợp cả hai chế độ** — chọn Video AI cho phân cảnh mở đầu và cao trào, Ảnh AI cho phần còn lại.
 
+### 3.4 Cấu hình chất lượng/tốc độ & Tự động ước tính thời gian sinh thực tế
+
+Để tối ưu hóa giữa chất lượng video và tốc độ sinh, hệ thống tích hợp tính năng cho phép cấu hình số bước lập (Inference Steps) và thuật toán ước tính thời gian chạy dựa trên phần cứng và đo đạc thực tế:
+
+1. **Cấu hình chất lượng sinh video (Presets):**
+   - **Tốc độ (Speed)**: 20 steps — Sinh cực nhanh, phù hợp để test preview.
+   - **Cân bằng (Balanced)**: 35 steps — Đạt sự cân bằng tốt giữa thời gian sinh và chất lượng chi tiết.
+   - **Chất lượng (Quality)**: 50 steps — Chất lượng tối đa, độ nét cao (mặc định).
+   - **Tùy chỉnh (Custom)**: Cho phép kéo thanh trượt từ 10 đến 100 steps.
+
+2. **Cơ chế ước tính thời gian thông minh (Hardware-Aware & Measured):**
+   - **Bước 1: Nhận diện GPU & Cài đặt hệ số ban đầu**:
+     Hệ thống sử dụng PyTorch để truy vấn trực tiếp tên card đồ họa đang hoạt động (`torch.cuda.get_device_name(0)`). Sau đó ánh xạ tên GPU sang hệ số giây/step mặc định cho Wan 2.1:
+     - *Dòng siêu mạnh (RTX 4090, A100, H100...)*: ~1.5 giây / step.
+     - *Dòng cao cấp (RTX 3090, 4080...)*: ~3.0 giây / step.
+     - *Dòng trung-cao (RTX 3080, 4070...)*: ~5.0 giây / step.
+     - *Dòng trung cấp (RTX 3060, 4060...)*: ~9.5 giây / step.
+     - *Dòng cũ/yếu (RTX 1660, 2060, T4...)*: ~14.0 giây / step.
+     - *Chạy trên CPU*: ~100.0 giây / step (Kèm theo cảnh báo đỏ trên UI).
+   - **Bước 2: Hiệu chỉnh tự động dựa trên thực tế**:
+     Sau khi clip đầu tiên được sinh thành công, hệ thống đo thời gian thực tế chạy để tính ra tốc độ thực: `tốc độ thực tế (sec/step) = thời gian trôi qua / số bước`.
+     Ước lượng thời gian cho toàn bộ các clip tiếp theo hoặc trong các lần tạo lại sau sẽ sử dụng 100% tốc độ thực tế đo được này. Điều này phản ánh chính xác nhất hiệu năng máy của người dùng (tải CPU/GPU, nhiệt độ, VRAM trống).
+
 ---
 
 ## 4. Thiết kế giao diện Streamlit

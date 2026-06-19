@@ -69,6 +69,40 @@ WAN_RESOLUTIONS = {
     "horizontal": (848, 480)
 }
 WAN_DEFAULT_FRAMES = 81       # 81 frames tương đương ~5 giây ở 16fps
+WAN_DEFAULT_STEPS = 50        # Số bước lập mặc định để sinh video
+
+def get_gpu_benchmark_sec_per_step() -> float:
+    """
+    Xác định hiệu năng GPU hiện tại để ước lượng thời gian sinh video bằng Wan 2.1.
+    Trả về số giây trên mỗi inference step (sec/step).
+    """
+    if not torch.cuda.is_available():
+        return 100.0
+    
+    try:
+        gpu_name = torch.cuda.get_device_name(0).upper()
+        
+        # RTX 4090, A100, H100
+        if any(x in gpu_name for x in ["4090", "A100", "H100", "A800", "H800"]):
+            return 1.5
+        # RTX 3090, 4080
+        if any(x in gpu_name for x in ["3090", "4080"]):
+            return 3.0
+        # RTX 3080, 4070
+        if any(x in gpu_name for x in ["3080", "4070"]):
+            return 5.0
+        # RTX 3060, 4060, A10, A30, A40
+        if any(x in gpu_name for x in ["3060", "4060", "A10", "A30"]):
+            return 9.5
+        # RTX 1660, 2060, T4, P100
+        if any(x in gpu_name for x in ["1660", "2060", "2070", "2080", "T4"]):
+            return 14.0
+            
+        # Các GPU khác mặc định
+        return 10.0
+    except Exception:
+        return 10.0
+
 
 # --- CẤU HÌNH VIDEO & BIÊN TẬP ---
 DEFAULT_MAX_DURATION = 60      # Thời lượng tối đa 1 video phần (giây)

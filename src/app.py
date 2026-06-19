@@ -19,7 +19,8 @@ except ImportError:
 
 from src.config import (
     TTS_VOICES_VI, TTS_VOICES_EN, TTS_VOICE_DEFAULT, SD_MODEL_DEFAULT, WAN_MODEL_DEFAULT,
-    DEFAULT_MAX_DURATION, DEFAULT_IMAGE_STYLE, TEMP_DIR, OUTPUT_DIR
+    DEFAULT_MAX_DURATION, DEFAULT_IMAGE_STYLE, TEMP_DIR, OUTPUT_DIR, WAN_DEFAULT_STEPS,
+    get_gpu_benchmark_sec_per_step
 )
 from src.llm_service import generate_script, remake_script
 from src.tts_service import generate_tts
@@ -164,6 +165,10 @@ if "style_preset" not in st.session_state:
     st.session_state.style_preset = DEFAULT_IMAGE_STYLE
 if "final_videos" not in st.session_state:
     st.session_state.final_videos = []
+if "wan_steps" not in st.session_state:
+    st.session_state.wan_steps = WAN_DEFAULT_STEPS
+if "wan_measured_sec_per_step" not in st.session_state:
+    st.session_state.wan_measured_sec_per_step = get_gpu_benchmark_sec_per_step()
 
 feature_mode = st.sidebar.selectbox(
     "🎯 Chọn tính năng chính",
@@ -219,6 +224,53 @@ st.session_state.image_mode = st.sidebar.radio(
     ["Nhanh (Ảnh AI)", "Video AI (Wan 2.1)"],
     index=0 if st.session_state.image_mode == "Nhanh (Ảnh AI)" else 1
 )
+
+# Cấu hình chất lượng sinh video (chỉ hiện khi chọn Video AI)
+if st.session_state.image_mode == "Video AI (Wan 2.1)":
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("🎬 **Cấu hình Sinh Video (Wan 2.1)**")
+    
+    # Xác định index mặc định cho preset
+    default_preset_idx = 2
+    if st.session_state.wan_steps == 20:
+        default_preset_idx = 0
+    elif st.session_state.wan_steps == 35:
+        default_preset_idx = 1
+    elif st.session_state.wan_steps == 50:
+        default_preset_idx = 2
+    else:
+        default_preset_idx = 3
+
+    preset_opt = st.sidebar.selectbox(
+        "Lựa chọn Chất lượng/Tốc độ",
+        ["Tốc độ (20 steps)", "Cân bằng (35 steps)", "Chất lượng (50 steps)", "Tùy chỉnh"],
+        index=default_preset_idx
+    )
+    
+    if preset_opt == "Tốc độ (20 steps)":
+        st.session_state.wan_steps = 20
+    elif preset_opt == "Cân bằng (35 steps)":
+        st.session_state.wan_steps = 35
+    elif preset_opt == "Chất lượng (50 steps)":
+        st.session_state.wan_steps = 50
+    else:
+        st.session_state.wan_steps = st.sidebar.slider(
+            "Số bước lập (Inference Steps)",
+            min_value=10,
+            max_value=100,
+            value=int(st.session_state.wan_steps),
+            step=5
+        )
+        
+    sec_per_step = st.session_state.wan_measured_sec_per_step
+    estimated_sec = sec_per_step * st.session_state.wan_steps
+    
+    st.sidebar.info(
+        f"⏱️ **Ước tính thời gian:**\n"
+        f"- Mỗi clip (~5s): ~{estimated_sec:.1f} giây ({estimated_sec/60:.1f} phút)\n"
+        f"- Tốc độ hiện tại: {sec_per_step:.2f} s/step\n"
+        f"*(Dự tính dựa trên phần cứng thực tế)*"
+    )
 
 # Giọng đọc TTS
 voice_display = st.sidebar.selectbox(
@@ -496,11 +548,15 @@ elif st.session_state.step == 2:
             status_text.text("Đang sinh video AI bằng Wan 2.1 (Quá trình này tốn nhiều thời gian)...")
             # Unload Ollama trước khi chạy Wan để giải phóng VRAM
             wan_raw_scenes = [s[1] for s in wan_scenes]
-            success, paths = generate_batch_videos(
+            success, paths, elapsed = generate_batch_videos(
                 scenes=wan_raw_scenes,
                 temp_dir=TEMP_DIR,
-                orientation=st.session_state.orientation
+                orientation=st.session_state.orientation,
+                num_inference_steps=st.session_state.wan_steps
             )
+            if success and paths and elapsed > 0:
+                total_steps = len(wan_raw_scenes) * st.session_state.wan_steps
+                st.session_state.wan_measured_sec_per_step = elapsed / total_steps
             if success:
                 for idx, (original_idx, scene) in enumerate(wan_scenes):
                     scene["video_path"] = paths[idx]
@@ -584,11 +640,14 @@ elif st.session_state.step == 2:
                     
                 if st.button("🎥 Tạo lại clip Video AI", key=f"btn_vid_{i}"):
                     with st.spinner("Đang chạy Wan 2.1 sinh video (~15 phút)..."):
-                        success, path = generate_single_video(
+                        success, path, elapsed = generate_single_video(
                             prompt=scene["video_prompt"],
                             output_path=scene["video_path"],
-                            orientation=st.session_state.orientation
+                            orientation=st.session_state.orientation,
+                            num_inference_steps=st.session_state.wan_steps
                         )
+                        if success and elapsed > 0:
+                            st.session_state.wan_measured_sec_per_step = elapsed / st.session_state.wan_steps
                         if success:
                             st.success("Sinh video thành công!")
                             st.rerun()

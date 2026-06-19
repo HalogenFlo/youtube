@@ -4,12 +4,13 @@
 
 import os
 import gc
+import time
 import torch
 import requests
 from typing import Tuple, List, Dict, Any
 from diffusers import WanPipeline
 from diffusers.utils import export_to_video
-from src.config import WAN_MODEL_DEFAULT, WAN_RESOLUTIONS, WAN_DEFAULT_FRAMES, OLLAMA_API_URL, OLLAMA_MODEL_DEFAULT
+from src.config import WAN_MODEL_DEFAULT, WAN_RESOLUTIONS, WAN_DEFAULT_FRAMES, WAN_DEFAULT_STEPS, OLLAMA_API_URL, OLLAMA_MODEL_DEFAULT
 
 def unload_ollama_vram() -> None:
     """
@@ -59,13 +60,16 @@ def generate_single_video(
     output_path: str, 
     orientation: str = "vertical",
     num_frames: int = WAN_DEFAULT_FRAMES,
+    num_inference_steps: int = WAN_DEFAULT_STEPS,
     model_id: str = WAN_MODEL_DEFAULT
-) -> Tuple[bool, str]:
+) -> Tuple[bool, str, float]:
     """
     Sinh một clip video đơn lẻ dài ~5 giây từ prompt và lưu vào output_path.
     Dành cho việc tạo lại clip cho riêng một phân cảnh cụ thể trên UI.
+    Trả về Tuple[thành_công, đường_dẫn_hoặc_thông_báo_lỗi, thời_gian_chạy_giây].
     """
     pipe = None
+    start_time = time.time()
     try:
         parent_dir = os.path.dirname(output_path)
         if parent_dir and not os.path.exists(parent_dir):
@@ -74,21 +78,24 @@ def generate_single_video(
         width, height = WAN_RESOLUTIONS.get(orientation, (480, 848))
         pipe = _setup_pipeline(model_id)
         
-        print(f"Đang sinh clip video: \"{prompt}\" ({width}x{height}, {num_frames} frames)...")
+        print(f"Đang sinh clip video: \"{prompt}\" ({width}x{height}, {num_frames} frames, {num_inference_steps} steps)...")
         video_frames = pipe(
             prompt=prompt,
             num_frames=num_frames,
             height=height,
             width=width,
+            num_inference_steps=num_inference_steps,
             guidance_scale=5.0
         ).frames[0]
         
         # Lưu clip video với tốc độ 16fps mặc định của Wan
         export_to_video(video_frames, output_path, fps=16)
-        return True, output_path
+        elapsed = time.time() - start_time
+        return True, output_path, elapsed
         
     except Exception as e:
-        return False, f"Lỗi sinh video Wan 2.1: {str(e)}"
+        elapsed = time.time() - start_time
+        return False, f"Lỗi sinh video Wan 2.1: {str(e)}", elapsed
     finally:
         # Giải phóng VRAM toàn bộ
         if pipe is not None:
@@ -102,14 +109,17 @@ def generate_batch_videos(
     temp_dir: str,
     orientation: str = "vertical",
     num_frames: int = WAN_DEFAULT_FRAMES,
+    num_inference_steps: int = WAN_DEFAULT_STEPS,
     model_id: str = WAN_MODEL_DEFAULT
-) -> Tuple[bool, List[str]]:
+) -> Tuple[bool, Any, float]:
     """
     Sinh hàng loạt clip video cho các phân cảnh.
     Mỗi phân cảnh sẽ lưu thành scene_001.mp4, scene_002.mp4... trong temp_dir.
+    Trả về Tuple[thành_công, danh_sách_đường_dẫn_hoặc_thông_báo_lỗi, thời_gian_chạy_giây].
     """
     pipe = None
     generated_paths = []
+    start_time = time.time()
     try:
         if not os.path.exists(temp_dir):
             os.makedirs(temp_dir)
@@ -121,22 +131,25 @@ def generate_batch_videos(
             prompt = scene.get("video_prompt", "")
             output_path = os.path.join(temp_dir, f"scene_{i+1:03d}.mp4")
             
-            print(f"[{i+1}/{len(scenes)}] Đang sinh clip video: \"{prompt}\"...")
+            print(f"[{i+1}/{len(scenes)}] Đang sinh clip video: \"{prompt}\" (steps={num_inference_steps})...")
             video_frames = pipe(
                 prompt=prompt,
                 num_frames=num_frames,
                 height=height,
                 width=width,
+                num_inference_steps=num_inference_steps,
                 guidance_scale=5.0
             ).frames[0]
             
             export_to_video(video_frames, output_path, fps=16)
             generated_paths.append(output_path)
             
-        return True, generated_paths
+        elapsed = time.time() - start_time
+        return True, generated_paths, elapsed
         
     except Exception as e:
-        return False, f"Lỗi sinh video loạt Wan 2.1: {str(e)}"
+        elapsed = time.time() - start_time
+        return False, f"Lỗi sinh video loạt Wan 2.1: {str(e)}", elapsed
     finally:
         # Giải phóng VRAM toàn bộ sau khi chạy xong loạt
         if pipe is not None:

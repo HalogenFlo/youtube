@@ -8,7 +8,7 @@ import pandas as pd
 from src.config import (
     TTS_VOICES_EN, TEMP_DIR, OUTPUT_DIR, SPEAKER_COLORS,
     DEFAULT_READING_WPM, DEFAULT_PAUSE_BEFORE_SILENT, DEFAULT_SELFHEAL_STYLE,
-    BACKGROUNDS_DIR
+    BACKGROUNDS_DIR, WAN_DEFAULT_STEPS, get_gpu_benchmark_sec_per_step
 )
 from src.llm_service import generate_selfheal_script, feedback_selfheal_script
 from src.tts_service import generate_tts
@@ -81,6 +81,10 @@ def run_selfheal_ui():
         st.session_state.sh_max_duration = 60.0
     if "sh_target_scenes" not in st.session_state:
         st.session_state.sh_target_scenes = 12
+    if "sh_wan_steps" not in st.session_state:
+        st.session_state.sh_wan_steps = WAN_DEFAULT_STEPS
+    if "sh_wan_measured_sec_per_step" not in st.session_state:
+        st.session_state.sh_wan_measured_sec_per_step = get_gpu_benchmark_sec_per_step()
 
     # --- SIDEBAR CẤU HÌNH SELF-HEAL ---
     st.sidebar.markdown("### 🧘 Cấu hình Self-heal")
@@ -201,11 +205,14 @@ def run_selfheal_ui():
                     bg_name = f"ai_bg_{int(time.time())}.mp4"
                     output_path = os.path.join(BACKGROUNDS_DIR, bg_name)
                     with st.sidebar.spinner("Đang khởi động Wan 2.1 và sinh video nền (~15 phút)..."):
-                        success, path = generate_single_video(
+                        success, path, elapsed = generate_single_video(
                             prompt=ai_bg_prompt,
                             output_path=output_path,
-                            orientation=st.session_state.sh_orientation
+                            orientation=st.session_state.sh_orientation,
+                            num_inference_steps=st.session_state.sh_wan_steps
                         )
+                        if success and elapsed > 0:
+                            st.session_state.sh_wan_measured_sec_per_step = elapsed / st.session_state.sh_wan_steps
                         if success:
                             st.sidebar.success(f"Sinh thành công video nền AI: {os.path.basename(path)}")
                             st.session_state.sh_bg_video_file = os.path.basename(path)
@@ -305,6 +312,65 @@ def run_selfheal_ui():
         index=0 if st.session_state.sh_orientation == "vertical" else 1
     )
     st.session_state.sh_orientation = "vertical" if orientation_sel.startswith("Dọc") else "horizontal"
+
+    # Cấu hình chất lượng sinh video Wan 2.1 cho Self-heal
+    # Chỉ hiển thị nếu không dùng single bg và chế độ hình ảnh là Video AI, hoặc nếu dùng single bg nhưng nguồn là Sinh video AI
+    show_wan_config = False
+    if not st.session_state.sh_use_single_bg and st.session_state.sh_image_mode == "Video AI (Wan 2.1)":
+        show_wan_config = True
+    elif st.session_state.sh_use_single_bg and st.session_state.get("sh_bg_source") == "Sinh video bằng AI (Wan 2.1)":
+        show_wan_config = True
+
+    if show_wan_config:
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("🎬 **Cấu hình Sinh Video (Wan 2.1)**")
+        
+        default_sh_preset_idx = 2
+        if st.session_state.sh_wan_steps == 20:
+            default_sh_preset_idx = 0
+        elif st.session_state.sh_wan_steps == 35:
+            default_sh_preset_idx = 1
+        elif st.session_state.sh_wan_steps == 50:
+            default_sh_preset_idx = 2
+        else:
+            default_sh_preset_idx = 3
+
+        sh_preset_opt = st.sidebar.selectbox(
+            "Lựa chọn Chất lượng/Tốc độ (Self-heal)",
+            ["Tốc độ (20 steps)", "Cân bằng (35 steps)", "Chất lượng (50 steps)", "Tùy chỉnh"],
+            index=default_sh_preset_idx
+        )
+        
+        if sh_preset_opt == "Tốc độ (20 steps)":
+            st.session_state.sh_wan_steps = 20
+        elif sh_preset_opt == "Cân bằng (35 steps)":
+            st.session_state.sh_wan_steps = 35
+        elif sh_preset_opt == "Chất lượng (50 steps)":
+            st.session_state.sh_wan_steps = 50
+        else:
+            st.session_state.sh_wan_steps = st.sidebar.slider(
+                "Số bước lập (Inference Steps - SH)",
+                min_value=10,
+                max_value=100,
+                value=int(st.session_state.sh_wan_steps),
+                step=5
+            )
+            
+        sh_sec_per_step = st.session_state.sh_wan_measured_sec_per_step
+        sh_estimated_sec = sh_sec_per_step * st.session_state.sh_wan_steps
+        
+        # Tính số clip cần sinh để hiển thị tổng thời gian ước tính hợp lý
+        num_clips = 1 if st.session_state.sh_use_single_bg else len(st.session_state.sh_scenes)
+        if num_clips == 0:
+            num_clips = 1
+            
+        st.sidebar.info(
+            f"⏱️ **Ước tính thời gian:**\n"
+            f"- Mỗi clip (~5s): ~{sh_estimated_sec:.1f} giây ({sh_estimated_sec/60:.1f} phút)\n"
+            f"- Tổng cộng ({num_clips} clip): ~{sh_estimated_sec * num_clips / 60:.1f} phút\n"
+            f"- Tốc độ hiện tại: {sh_sec_per_step:.2f} s/step\n"
+            f"*(Dự tính dựa trên phần cứng thực tế)*"
+        )
 
     # --- STEPPER DISPLAY ---
     step_1_active = "active" if st.session_state.sh_step == 1 else ""
@@ -626,11 +692,15 @@ def run_selfheal_ui():
                 if wan_scenes:
                     status_text.text("Đang sinh video nền thiên nhiên bằng Wan 2.1...")
                     wan_raw = [s[1] for s in wan_scenes]
-                    success, paths = generate_batch_videos(
+                    success, paths, elapsed = generate_batch_videos(
                         scenes=wan_raw,
                         temp_dir=TEMP_DIR,
-                        orientation=st.session_state.sh_orientation
+                        orientation=st.session_state.sh_orientation,
+                        num_inference_steps=st.session_state.sh_wan_steps
                     )
+                    if success and paths and elapsed > 0:
+                        total_steps = len(wan_raw) * st.session_state.sh_wan_steps
+                        st.session_state.sh_wan_measured_sec_per_step = elapsed / total_steps
                     if success:
                         for idx, (orig_idx, scene) in enumerate(wan_scenes):
                             scene["video_path"] = paths[idx]
@@ -654,11 +724,14 @@ def run_selfheal_ui():
                         output_path = os.path.join(BACKGROUNDS_DIR, bg_name)
                         
                         prompt_to_use = st.session_state.get("sh_step2_ai_bg_prompt") or st.session_state.get("sh_ai_bg_prompt") or "A peaceful serene forest river with soft sunlight"
-                        success, path = generate_single_video(
+                        success, path, elapsed = generate_single_video(
                             prompt=prompt_to_use,
                             output_path=output_path,
-                            orientation=st.session_state.sh_orientation
+                            orientation=st.session_state.sh_orientation,
+                            num_inference_steps=st.session_state.sh_wan_steps
                         )
+                        if success and elapsed > 0:
+                            st.session_state.sh_wan_measured_sec_per_step = elapsed / st.session_state.sh_wan_steps
                         if success:
                             st.session_state.sh_bg_video_file = bg_name
                             st.success(f"Đã sinh thành công video nền AI chung: {bg_name}")
@@ -729,11 +802,14 @@ def run_selfheal_ui():
                         import time
                         bg_name = f"ai_bg_{int(time.time())}.mp4"
                         output_path = os.path.join(BACKGROUNDS_DIR, bg_name)
-                        success, path = generate_single_video(
+                        success, path, elapsed = generate_single_video(
                             prompt=ai_prompt,
                             output_path=output_path,
-                            orientation=st.session_state.sh_orientation
+                            orientation=st.session_state.sh_orientation,
+                            num_inference_steps=st.session_state.sh_wan_steps
                         )
+                        if success and elapsed > 0:
+                            st.session_state.sh_wan_measured_sec_per_step = elapsed / st.session_state.sh_wan_steps
                         if success:
                             st.session_state.sh_bg_video_file = bg_name
                             st.success(f"Sinh thành công video nền AI chung: {bg_name}")
@@ -851,7 +927,14 @@ def run_selfheal_ui():
                             st.warning("Chưa sinh video nền.")
                         if st.button("🎥 Tạo lại video nền", key=f"sh_btn_vid_{i}"):
                             with st.spinner("Đang sinh video Wan 2.1..."):
-                                generate_single_video(scene["video_prompt"], scene["video_path"], st.session_state.sh_orientation)
+                                success, path, elapsed = generate_single_video(
+                                    prompt=scene["video_prompt"],
+                                    output_path=scene["video_path"],
+                                    orientation=st.session_state.sh_orientation,
+                                    num_inference_steps=st.session_state.sh_wan_steps
+                                )
+                                if success and elapsed > 0:
+                                    st.session_state.sh_wan_measured_sec_per_step = elapsed / st.session_state.sh_wan_steps
                                 st.rerun()
                     else:
                         img_path = scene["image_path"]
