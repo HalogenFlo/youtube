@@ -4,13 +4,23 @@ Docker giúp bạn mang tool sang **bất kỳ máy tính nào (Windows, macOS, 
 
 ---
 
-## 🚀 Cách 1: Copy Thư Mục Sang Máy Mới (Đơn giản nhất)
+### 🚀 1. Chạy Nhanh Từ Docker Hub (Trên Bất Kỳ Máy Tính / VPS Nào)
 
-1. Copy toàn bộ thư mục `youtube` này sang máy tính mới hoặc VPS.
-2. Trên máy mới (đã cài Docker):
-   - **Chạy Giao diện Web UI**:
-     - *Trên Windows*: Click đúp `docker_run_ui.bat` (hoặc gõ `docker compose up booster-ui`).
-     - Mở trình duyệt vào: `http://localhost:8501`.
+Bạn không cần build hay cài đặt Python/Chrome, chỉ cần máy có cài Docker:
+
+### 🌐 Chế độ Web UI (Xem giao diện & theo dõi trực tiếp):
+```bash
+docker run -d -p 8501:8501 --name yt-booster halogenbrom/yt-booster:latest
+```
+👉 Mở trình duyệt truy cập: `http://localhost:8501` (hoặc `http://<ip-vps>:8501`).
+
+---
+
+### ⚡ Chế độ CLI Chạy Ngầm 24/7 (Treo máy nhẹ nhất):
+```bash
+docker run -d --name yt-booster-cli --restart unless-stopped halogenbrom/yt-booster:cli
+```
+.
    - **Chạy Ngầm 24/7 (Treo VPS)**:
      - *Trên Windows*: Click đúp `docker_run_headless.bat` (hoặc gõ `docker compose up -d booster-cli`).
      - *Trên Linux/VPS*: Gõ `./run_docker.sh cli`.
