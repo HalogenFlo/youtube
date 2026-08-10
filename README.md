@@ -1,95 +1,153 @@
-<!--
-Chức năng: Hướng dẫn cài đặt, thiết lập mô hình AI và khởi chạy hệ thống Pipeline sản xuất video ngắn.
-Lý do tạo: Cung cấp tài liệu hướng dẫn nhanh cho nhà phát triển và người dùng cuối.
-Trích dẫn: Tổng hợp hướng dẫn cấu hình và chạy từ PLAN.md.
--->
+# 🚀 YouTube View & Shorts Booster Pro & AI Video Pipeline
 
-# 🎬 Pipeline Sản Xuất Video Ngắn Tự Động (YouTube Shorts, TikTok, Reels)
-
-Hệ thống tự động sản xuất video ngắn local chạy trực tiếp trên card đồ họa **RTX 3060 12GB VRAM** sử dụng 100% các công cụ AI mã nguồn mở miễn phí. Giao diện Web **Streamlit** cho phép người dùng tương tác, kiểm soát và chỉnh sửa từng bước sản xuất (Kịch bản -> Tài nguyên ảnh/video -> Render thành phẩm).
+Hệ thống chuyên nghiệp tự động hóa cày view **YouTube Shorts & Video** thông minh chống phát hiện bot (Anti-detect nodriver), tích hợp luồng giám sát **Supervisor tự phục hồi 24/7**, giao diện **Streamlit Web UI** trực quan hiển thị trực tiếp video đang xem và đóng gói sẵn **Docker Container** triển khai chỉ với 1 lệnh.
 
 ---
 
-## 🛠️ Yêu cầu hệ thống bắt buộc
+## 🌟 Tính Năng Nổi Bật
 
-1. **Hệ điều hành**: Windows (đã được test tốt nhất).
-2. **Python**: Phiên bản 3.10 trở lên.
-3. **FFmpeg**: Công cụ xử lý video/audio (Cần được cài đặt và thêm vào biến môi trường `PATH` của hệ thống).
-4. **Ollama**: Công cụ chạy LLM local (Tải tại [ollama.com](https://ollama.com)).
-5. **CUDA Toolkit**: Cần phiên bản 12.x để tăng tốc phần cứng bằng GPU.
+* 🛡️ **Anti-Detect Tiên Tiến**: Sử dụng giao thức Chrome DevTools Protocol (CDP) trực tiếp qua `nodriver`, loại bỏ 100% binary WebDriver giúp qua mặt thuật toán quét bot của YouTube.
+* 🎬 **Theo Dõi Trực Tiếp Thời Gian Thực**: Web UI hiển thị thẻ thông tin từng luồng: video đang xem, link Shorts, thời gian xem dự kiến, trạng thái Replay và bảng xếp hạng view từng video.
+* 🤖 **Giả Lập Hành Vi Người Thật (Human Simulator)**: Đường cong chuột Cubic Bezier, cuộn trang ngẫu nhiên 100-400px, tỷ lệ xem tự nhiên 60%-100%, tạm dừng/phát ngẫu nhiên (pause/resume).
+* 🔄 **Supervisor Tự Phục Hồi 24/7**: Luồng giám sát chạy ngầm tự động phát hiện và khởi động lại luồng bị gián đoạn mạng với cơ chế lùi thời gian lặp lại (Exponential Backoff $5\text{s} \rightarrow 300\text{s}$).
+* 🔒 **Cách Ly Profile 100% (Profile Isolation)**: Mỗi luồng sở hữu một thư mục User Data riêng biệt, triệt tiêu nguy cơ Profile Collision/Lock khi nhiều luồng dùng chung Proxy.
+* ⚡ **Bộ Điều Tốc Rate Limiter**: Kiểm soát số lượt xem mỗi phút trên toàn hệ thống không gây nghẽn luồng.
+* 🐳 **Triển Khai 1-Click Với Docker**: Đóng gói sẵn trên Docker Hub `halogenbrom/yt-booster` tích hợp Google Chrome Stable và font tiếng Việt.
 
 ---
 
-## 🚀 Hướng dẫn cài đặt & Thiết lập mô hình
+## 🐳 HƯỚNG DẪN 1: Cài Đặt & Chạy Trên Máy Khác Bằng Docker (Khuyên Dùng)
 
-### Bước 1: Cài đặt thư viện Python
-Mở terminal tại thư mục dự án và cài đặt các thư viện phụ thuộc:
+Bạn không cần cài đặt Python hay Chrome trên máy mới, chỉ cần máy có cài **Docker Desktop** (Windows/Mac) hoặc **Docker Engine** (Linux/VPS).
+
+### 🌐 Cách 1.1: Chạy Bản Web UI (Xem giao diện trực quan)
+Mở Terminal / PowerShell / CMD trên máy mới và gõ:
 ```bash
-pip install -r requirements.txt
+docker run -d -p 8501:8501 --name yt-booster halogenbrom/yt-booster:latest
+```
+👉 Mở trình duyệt truy cập: **`http://localhost:8501`** (hoặc `http://<IP-VPS>:8501`).
+
+---
+
+### ⚡ Cách 1.2: Chạy Bản CLI Treo Ngầm 24/7 (Tiết kiệm RAM nhất cho VPS)
+```bash
+docker run -d --name yt-booster-cli --restart unless-stopped halogenbrom/yt-booster:cli
 ```
 
-### Bước 2: Chuẩn bị mô hình Ollama LLM
-Đảm bảo Ollama đang chạy ở nền (hoặc chạy lệnh `ollama serve`), sau đó tải model Qwen 2.5 bằng lệnh:
-```bash
-ollama pull qwen2.5:7b-instruct
-```
-
-### Bước 3: Tải thử nghiệm mô hình sinh ảnh/video (Tùy chọn)
-Hệ thống sẽ **tự động tải** các model này khi chạy lần đầu tiên. Nhưng bạn có thể tải trước bằng các lệnh sau để tránh thời gian chờ lâu khi chạy ứng dụng:
-
-*   **Stable Diffusion 1.5** (Sinh ảnh):
-    ```bash
-    python -c "from diffusers import StableDiffusionPipeline; StableDiffusionPipeline.from_pretrained('Lykon/dreamshaper-8')"
-    ```
-*   **Wan 2.1 1.3B** (Sinh video):
-    ```bash
-    python -c "from diffusers import WanPipeline; WanPipeline.from_pretrained('Wan-AI/Wan2.1-T2V-1.3B')"
-    ```
-
 ---
 
-## 🧪 Chạy Kiểm Thử Tự Động (Integration Test)
-
-Trước khi khởi chạy giao diện web, bạn nên kiểm tra xem các module AI cốt lõi và FFmpeg trên máy có hoạt động đồng bộ hay không bằng script kiểm thử tích hợp:
-
-```bash
-python test_pipeline.py
-```
-
-**Script này sẽ tự động:**
-1. Kiểm tra tài nguyên GPU NVIDIA CUDA.
-2. Gọi Ollama sinh 3 phân cảnh kịch bản nháp.
-3. Sử dụng `edge-tts` sinh giọng đọc tiếng Việt.
-4. Sử dụng `Stable Diffusion 1.5` để sinh hình ảnh.
-5. Sử dụng `Faster-Whisper` để tách timestamps chi tiết.
-6. Sử dụng `MoviePy + FFmpeg` để ghép nối, zoom hình ảnh (Ken Burns) và burn phụ đề ASS karaoke lên video đầu ra.
-7. Đầu ra sẽ được ghi nhận tại thư mục `output/video_final_part1.mp4`.
-
----
-
-## 🖥️ Khởi chạy ứng dụng Web UI
-
-Bạn có thể chạy nhanh ứng dụng giao diện web bằng cách:
-
-1. Click đúp chuột vào file **`run.bat`** ở thư mục gốc.
-2. Hoặc chạy lệnh thủ công từ terminal:
+### 💾 Cách 1.3: Nạp Offline Từ File `yt-booster-image.tar` (Không Cần Mạng)
+Nếu máy mới không có kết nối internet tải Docker Hub:
+1. Sao chép file **`yt-booster-image.tar`** sang máy mới.
+2. Mở Terminal tại thư mục chứa file và gõ:
    ```bash
-   streamlit run src/app.py
+   docker load -i yt-booster-image.tar
+   docker run -d -p 8501:8501 --name yt-booster youtube-booster-ui:latest
    ```
 
-Giao diện sẽ tự động mở ra trên trình duyệt web mặc định của bạn (thường là `http://localhost:8501`).
+---
+
+## 💻 HƯỚNG DẪN 2: Cài Đặt & Chạy Trực Tiếp Bằng Python (Local Machine)
+
+### 1️⃣ Yêu cầu môi trường
+* **Hệ điều hành**: Windows 10/11, Ubuntu 20.04+, macOS.
+* **Python**: Phiên bản 3.10 hoặc 3.11.
+* **Google Chrome**: Đã cài đặt phiên bản mới nhất trên máy.
+
+### 2️⃣ Cài đặt thư viện
+Clone mã nguồn về máy mới:
+```bash
+git clone https://github.com/Phatjhhoq8/youtube.git
+cd youtube
+```
+
+Tạo môi trường ảo và cài đặt thư viện chuyên dụng cho Booster:
+```bash
+# Tạo môi trường ảo (khuyên dùng)
+python -m venv venv
+
+# Kích hoạt trên Windows:
+.\venv\Scripts\activate
+# Kích hoạt trên Linux/macOS:
+source venv/bin/activate
+
+# Cài đặt thư viện
+pip install -r requirements_booster.txt
+```
+
+### 3️⃣ Khởi chạy ứng dụng
+
+#### 🖥️ Khởi chạy Web UI:
+* **Trên Windows**: Click đúp vào file **`run_view_booster_ui.bat`**
+* **Hoặc bằng lệnh**:
+  ```bash
+  streamlit run src/app_view_booster.py
+  ```
+  Truy cập giao diện tại: `http://localhost:8501`.
+
+#### 📟 Khởi chạy CLI 24/7 (Chạy nền):
+* **Trên Windows**: Click đúp vào file **`run_view_booster_headless.bat`**
+* **Hoặc bằng lệnh**:
+  ```bash
+  python cli_booster.py --channel "https://www.youtube.com/@Remioo-br" --threads 2 --headless
+  ```
 
 ---
 
-## 📂 Cấu trúc dự án
-*   `src/config.py`: File cấu hình chung (Đường dẫn, các model AI, độ phân giải...).
-*   `src/llm_service.py`: Xử lý gọi Ollama LLM để sinh kịch bản (JSON).
-*   `src/tts_service.py`: Xử lý sinh âm thanh giọng đọc tiếng Việt bằng edge-tts.
-*   `src/image_service.py`: Xử lý sinh ảnh AI bằng Stable Diffusion 1.5.
-*   `src/video_gen_service.py`: Xử lý sinh video AI bằng Wan 2.1.
-*   `src/whisper_service.py`: Xử lý chuyển âm thanh thành chữ và lấy timestamp từ Faster-Whisper.
-*   `src/video_downloader.py`: Xử lý tải video từ link và tách audio bằng yt-dlp + FFmpeg.
-*   `src/subtitle_builder.py`: Xây dựng tệp phụ đề karaoke ASS (.ass).
-*   `src/video_compiler.py`: Ghép nối tài nguyên video, áp dụng hiệu ứng chuyển động, thuật toán chia nhỏ video tự động và burn phụ đề bằng FFmpeg.
-*   `src/app.py`: Giao diện chính Streamlit.
-*   `test_pipeline.py`: Kịch bản kiểm thử tích hợp tự động không qua UI.
+## ⚙️ Cấu Hình Nâng Cao (`booster_config.json`)
+
+Bạn có thể chỉnh sửa file `booster_config.json` để thay đổi thiết lập mặc định:
+```json
+{
+  "channel_url": "https://www.youtube.com/@Remioo-br",
+  "threads": 2,
+  "watch_duration_min_sec": 8.0,
+  "watch_duration_max_sec": 20.0,
+  "replay_probability": 0.30,
+  "rate_limit_views_per_min": 20,
+  "max_system_ram_percent": 80.0,
+  "headless": true,
+  "loop": true,
+  "proxies": [
+    "http://user:pass@ip:port",
+    "http://ip2:port2"
+  ]
+}
+```
+
+---
+
+## 🧪 Kiểm Thử Tự Động (Unit & Integration Tests)
+
+Để kiểm tra toàn bộ tính năng (Rate limiter, Profile isolation, Bezier curves, Resource guard, Lifecycle) trước khi chạy:
+```bash
+python test_booster.py
+```
+Kết quả mong đợi: `Ran 9 tests ... OK (100% Passed)`.
+
+---
+
+## 📂 Cấu Trúc Thư Mục Dự Án
+
+```text
+├── src/
+│   ├── app_view_booster.py      # Giao diện Web UI Streamlit tương tác trực tiếp
+│   ├── view_booster_service.py  # Engine điều khiển trình duyệt nodriver CDP & Anti-detect
+│   ├── view_booster_manager.py  # Bộ điều phối đa luồng, Supervisor, Rate Limiter
+│   ├── human_simulator.py       # Thuật toán mô phỏng chuột Bezier, scroll, delay Gaussian
+│   ├── profile_manager.py       # Quản lý và cách ly Chrome Profile độc lập
+│   ├── resource_guard.py        # Giám sát RAM, CPU và dọn dẹp tiến trình Chrome zombie
+│   └── channel_scraper.py       # Trích xuất toàn bộ Shorts/Video từ kênh bằng yt-dlp
+├── cli_booster.py               # Runner CLI 24/7 độc lập
+├── booster_config.json          # File cấu hình trung tâm
+├── test_booster.py              # Bộ kiểm thử tự động toàn diện
+├── Dockerfile                   # Dockerfile tối ưu Chrome Stable + Python 3.11
+├── docker-compose.yml           # Cấu hình đa dịch vụ Docker (UI & CLI)
+├── DOCKER_GUIDE.md              # Hướng dẫn chi tiết triển khai container
+└── README.md                    # Tài liệu hướng dẫn sử dụng
+```
+
+---
+
+## 📜 Giấy Phép & Tuyên Bố Miễn Trừ Trách Nhiệm
+Dự án được xây dựng phục vụ mục đích học tập, nghiên cứu tự động hóa trình duyệt và kiểm thử tải hệ thống. Người dùng tự chịu trách nhiệm về việc tuân thủ Điều khoản dịch vụ của các nền tảng liên quan.
