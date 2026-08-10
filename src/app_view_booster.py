@@ -136,6 +136,13 @@ with tab1:
             if not st.session_state.scraped_videos:
                 st.error("Chưa có danh sách video Shorts. Hãy quét kênh trước!")
             else:
+                if st.session_state.manager:
+                    try:
+                        st.session_state.manager.stop()
+                    except Exception:
+                        pass
+                    st.session_state.manager = None
+
                 st.session_state.is_running = True
                 add_log("Bắt đầu khởi chạy hệ thống cày Shorts...")
                 

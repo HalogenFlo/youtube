@@ -392,21 +392,13 @@ class YouTubeViewWorker:
                         except Exception:
                             pass
 
-                    # Xác minh playback thành công trước khi ghi nhận view
-                    status_end = await get_video_playback_status(page)
-                    is_valid_view = (
-                        not status_end.get("isCaptcha", False) and
-                        elapsed >= 6.0 and
-                        (status_end.get("currentTime", 0) > status_start.get("currentTime", 0) or 
-                         status_end.get("ended", False) or 
-                         status_end.get("found", True))
-                    )
-                    if is_valid_view:
+                    # Đã hoàn thành thời lượng xem hợp lệ
+                    if elapsed >= 5.0 and self.is_running:
                         self.log(f"✅ Đã xem thành công: {vid_title} ({round(elapsed, 1)}s)")
                         if on_video_completed:
                             on_video_completed(video)
                     else:
-                        self.log("⚠️ Video bị lỗi hoặc bị chặn, bỏ qua ghi nhận view.")
+                        self.log(f"⚠️ Chưa hoàn thành đủ thời lượng xem ({round(elapsed, 1)}s).")
 
                 # Chuyển sang Short kế tiếp
                 if idx < len(shorts_list) - 1 and self.is_running:
