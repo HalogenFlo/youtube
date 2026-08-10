@@ -141,3 +141,8 @@ SPEAKER_COLORS = [
     "&H0033CCFF",  # Cam
 ]
 
+# --- CẤU HÌNH EDUCATIONAL (BÀI DẠY AI SLIDESHOW) ---
+DEFAULT_EDUCATIONAL_STYLE = "modern tech illustration, flat design, clean UI, soft gradient background, 4k"
+DEFAULT_EDUCATIONAL_SCENES = 8
+
+

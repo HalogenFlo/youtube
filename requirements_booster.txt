@@ -1,0 +1,7 @@
+# Dependencies tối ưu gọn nhẹ cho YouTube View Booster (Docker & Server)
+streamlit>=1.30.0
+requests>=2.31.0
+yt-dlp>=2024.3.10
+nodriver>=0.38
+fake-useragent>=1.4.0
+psutil>=5.9.0

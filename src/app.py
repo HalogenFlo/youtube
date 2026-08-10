@@ -172,7 +172,7 @@ if "wan_measured_sec_per_step" not in st.session_state:
 
 feature_mode = st.sidebar.selectbox(
     "🎯 Chọn tính năng chính",
-    ["🎬 Sản xuất Video Ngắn", "🧘 Học Tiếng Anh Self-heal", "🎙️ Dịch & Lồng tiếng Video"],
+    ["🎬 Sản xuất Video Ngắn", "🧘 Học Tiếng Anh Self-heal", "🎙️ Dịch & Lồng tiếng Video", "📚 Bài dạy AI Slideshow"],
     key="feature_mode"
 )
 
@@ -184,6 +184,11 @@ if feature_mode == "🧘 Học Tiếng Anh Self-heal":
 if feature_mode == "🎙️ Dịch & Lồng tiếng Video":
     from src.app_dubbing import run_dubbing_ui
     run_dubbing_ui()
+    st.stop()
+
+if feature_mode == "📚 Bài dạy AI Slideshow":
+    from src.app_educational import run_educational_ui
+    run_educational_ui()
     st.stop()
 
 

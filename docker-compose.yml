@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  booster-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yt-booster-ui
+    environment:
+      - MODE=ui
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./booster_config.json:/app/booster_config.json
+      - ./temp/profiles:/app/temp/profiles
+      - ./output:/app/output
+    shm_size: '2gb'
+    restart: unless-stopped
+
+  booster-cli:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: yt-booster-cli
+    environment:
+      - MODE=cli
+    volumes:
+      - ./booster_config.json:/app/booster_config.json
+      - ./temp/profiles:/app/temp/profiles
+      - ./output:/app/output
+    shm_size: '2gb'
+    restart: unless-stopped

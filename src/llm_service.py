@@ -312,3 +312,100 @@ def translate_segments_batch(
     return updated_segments
 
 
+def get_educational_system_prompt(language: str = "vi") -> str:
+    """Trả về prompt hệ thống định nghĩa nhiệm vụ tạo kịch bản bài dạy/slideshow."""
+    lang_name = "tiếng Việt" if language == "vi" else "tiếng Anh (English)"
+    lang_instruction = (
+        "Lời thoại giảng giải bằng tiếng Việt rõ ràng, ngắn gọn và súc tích như một giảng viên công nghệ."
+        if language == "vi"
+        else "Educational narration text in English. Clear, educational, short, and natural."
+    )
+    return (
+        "Bạn là một giảng viên công nghệ và chuyên gia biên soạn bài giảng điện tử chuyên nghiệp.\n"
+        "Nhiệm vụ của bạn là tạo ra một kịch bản bài dạy dạng slideshow (AI Slideshow Video) sinh động, dễ hiểu.\n"
+        "Kịch bản phải được chia thành các phân cảnh tuần tự liền mạch (mỗi cảnh dài khoảng 5-7 giây).\n"
+        "Đầu ra BẮT BUỘC phải là một đối tượng JSON hợp lệ duy nhất có cấu trúc như sau:\n"
+        "{\n"
+        "  \"scenes\": [\n"
+        "    {\n"
+        "      \"scene_num\": 1,\n"
+        "      \"narration\": \"" + lang_instruction + "\",\n"
+        "      \"video_prompt\": \"English description of a technical/infographic slide. E.g., 'A modern infographic diagram showing Docker architecture with client, host and registry, clean flat vector design, high tech illustration, soft blue gradient background, 4k'\"\n"
+        "    }\n"
+        "  ]\n"
+        "}\n"
+        "Lưu ý quan trọng:\n"
+        f"1. Lời thoại 'narration' viết hoàn toàn bằng {lang_name}.\n"
+        "2. Trường 'video_prompt' viết hoàn toàn bằng tiếng Anh để dùng cho Stable Diffusion/Wan 2.1. Phải mô tả dạng hình minh họa công nghệ (tech illustration), đồ họa phẳng (flat design), sơ đồ (diagram, infographic), giao diện sạch sẽ (clean UI/UX), tránh vẽ chữ viết ngoằn ngoèo không đọc được. Không vẽ cảnh phim cinematic thông thường trừ khi chủ đề yêu cầu.\n"
+        "3. Không thêm bất kỳ văn bản giải thích nào ngoài khối JSON. Chỉ trả về chuỗi JSON thô."
+    )
+
+
+def generate_educational_script(
+    topic: str,
+    style_preset: str = "modern tech illustration, flat design, clean UI, soft gradient background, 4k",
+    language: str = "vi",
+    target_scenes: int = 8,
+    model: str = OLLAMA_MODEL_DEFAULT
+) -> Tuple[bool, Any]:
+    """
+    Tạo kịch bản bài dạy AI Slideshow từ một từ khóa/chủ đề.
+    """
+    user_prompt = (
+        f"Hãy viết một kịch bản bài dạy/slideshow cho chủ đề: \"{topic}\".\n"
+        f"Phong cách hình ảnh slide yêu cầu cho các video prompt: \"{style_preset}\".\n"
+        f"YÊU CẦU SỐ PHÂN CẢNH: Hãy viết chính xác đúng {target_scenes} phân cảnh (scenes từ 1 đến {target_scenes}).\n"
+        "Đảm bảo cấu trúc bài giảng rõ ràng:\n"
+        "- Cảnh đầu: Đặt vấn đề hoặc giới thiệu lôi cuốn.\n"
+        "- Các cảnh giữa: Giải thích chi tiết khái niệm, tính năng, ví dụ minh họa hoặc mẹo thực tế.\n"
+        "- Cảnh cuối: Tóm tắt bài học và kêu gọi hành động (CTA).\n"
+        "Hãy viết nội dung giảng giải sinh động, có cấu trúc và đúng định dạng JSON yêu cầu."
+    )
+    return call_ollama(user_prompt, get_educational_system_prompt(language), model)
+
+
+def generate_script_from_doc(
+    doc_content: str,
+    style_preset: str = "modern tech illustration, flat design, clean UI, soft gradient background, 4k",
+    language: str = "vi",
+    target_scenes: int = 8,
+    model: str = OLLAMA_MODEL_DEFAULT
+) -> Tuple[bool, Any]:
+    """
+    Phân tích và chuyển đổi nội dung tài liệu dán trực tiếp thành kịch bản bài dạy AI Slideshow.
+    """
+    user_prompt = (
+        "Dưới đây là nội dung tài liệu học tập/hướng dẫn kỹ thuật:\n"
+        f"\"\"\"{doc_content}\"\"\"\n\n"
+        "Yêu cầu:\n"
+        f"1. Hãy phân tích và chắt lọc nội dung tài liệu trên để viết thành một kịch bản bài giảng/slideshow hoàn chỉnh.\n"
+        f"2. Phong cách hình ảnh slide yêu cầu cho các video prompt: \"{style_preset}\".\n"
+        f"3. YÊU CẦU SỐ PHÂN CẢNH: Hãy viết chính xác đúng {target_scenes} phân cảnh (scenes từ 1 đến {target_scenes}).\n"
+        "Đảm bảo các phân cảnh tóm gọn chuẩn xác các ý chính của tài liệu, truyền tải lời giảng hấp dẫn, dễ hiểu và đúng định dạng JSON yêu cầu."
+    )
+    return call_ollama(user_prompt, get_educational_system_prompt(language), model)
+
+
+def feedback_educational_script(
+    current_script: List[Dict[str, Any]],
+    feedback: str,
+    style_preset: str = "modern tech illustration, flat design, clean UI, soft gradient background, 4k",
+    language: str = "vi",
+    model: str = OLLAMA_MODEL_DEFAULT
+) -> Tuple[bool, Any]:
+    """
+    Góp ý chỉnh sửa kịch bản bài dạy hiện tại dựa trên góp ý của người dùng.
+    AI sẽ giữ lại cấu trúc cũ và cập nhật/chỉnh sửa các phân cảnh tương ứng.
+    """
+    user_prompt = (
+        "Dưới đây là kịch bản bài giảng/slideshow hiện tại dưới dạng JSON:\n"
+        f"\"\"\"{json.dumps(current_script, ensure_ascii=False)}\"\"\"\n\n"
+        "Yêu cầu góp ý chỉnh sửa bổ sung từ người dùng:\n"
+        f"\"\"\"{feedback}\"\"\"\n\n"
+        f"Phong cách hình ảnh slide yêu cầu cho các video prompt: \"{style_preset}\".\n"
+        "Hãy cập nhật lại kịch bản JSON theo góp ý trên. Giữ nguyên định dạng và nội dung các phân cảnh không bị yêu cầu sửa đổi."
+    )
+    return call_ollama(user_prompt, get_educational_system_prompt(language), model)
+
+
+

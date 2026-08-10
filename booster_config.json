@@ -1,0 +1,14 @@
+{
+  "channels": [
+    "https://www.youtube.com/@Remioo-br"
+  ],
+  "threads": 2,
+  "watch_duration_min_sec": 8,
+  "watch_duration_max_sec": 20,
+  "replay_probability": 0.30,
+  "rate_limit_views_per_minute": 20,
+  "max_ram_percent": 80.0,
+  "headless": true,
+  "loop": true,
+  "proxies": []
+}
