@@ -142,6 +142,27 @@ class BoosterManager:
             with self._lock:
                 self.rate_limit_timestamps.append(time.time())
 
+    def _on_video_started(self, worker_id: int, video: Dict[str, Any], plan: Dict[str, Any]) -> None:
+        """Callback khi 1 worker bắt đầu xem 1 video cụ thể."""
+        with self._lock:
+            if "current_watching" not in self.stats:
+                self.stats["current_watching"] = {}
+            self.stats["current_watching"][worker_id] = {
+                "title": video.get("title") or "Video Short",
+                "url": video.get("url") or f"https://www.youtube.com/shorts/{video.get('id')}",
+                "watch_time": plan.get("total_watch_time", plan.get("watch_seconds", 15.0)),
+                "is_replay": plan.get("is_replay", False),
+                "is_skipped": plan.get("is_skipped", False),
+                "started_at": time.strftime("%H:%M:%S")
+            }
+            self.save_stats()
+
+        if self.on_stats_updated:
+            try:
+                self.on_stats_updated(self.stats)
+            except Exception:
+                pass
+
     def _on_video_viewed(self, video: Dict[str, Any]) -> None:
         """Callback khi 1 video được xác minh xem thành công."""
         with self._lock:
@@ -202,6 +223,7 @@ class BoosterManager:
                         min_sec=self.watch_duration_min,
                         max_sec=self.watch_duration_max,
                         replay_prob=self.replay_prob,
+                        on_video_started=self._on_video_started,
                         on_video_completed=self._on_video_viewed,
                         rate_limiter_callback=self._check_rate_limit
                     )

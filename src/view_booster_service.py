@@ -292,12 +292,13 @@ class YouTubeViewWorker:
         replay_prob: float = 0.30,
         delay_between_min: float = 4.0,
         delay_between_max: float = 10.0,
+        on_video_started: Optional[Callable[[int, Dict[str, Any], Dict[str, Any]], None]] = None,
         on_video_completed: Optional[Callable[[Dict[str, Any]], None]] = None,
         rate_limiter_callback: Optional[Callable[[], None]] = None
     ) -> None:
         """
         Chế độ lướt Shorts Feed tuần tự qua danh sách video của kênh.
-        Có rate limiter theo từng video, kiểm tra skip và xác minh playback.
+        Có rate limiter theo từng video, kiểm tra skip, cập nhật trạng thái đang xem và xác minh playback.
         """
         if not shorts_list:
             self.log("Danh sách Shorts trống.")
@@ -334,6 +335,8 @@ class YouTubeViewWorker:
                 # Kiểm tra skip ngẫu nhiên (5-8% người dùng lướt nhanh)
                 if idx > 0 and should_skip(skip_prob=0.06):
                     self.log("Mô phỏng người dùng lướt nhanh qua Short này (Không tính view)...")
+                    if on_video_started:
+                        on_video_started(self.worker_id, video, {"watch_seconds": 2.0, "is_replay": False, "is_skipped": True})
                     await async_random_sleep(1.5, 3.0)
                 else:
                     dur = video.get('duration', 0)
@@ -341,6 +344,9 @@ class YouTubeViewWorker:
                     watch_sec = plan["total_watch_time"]
                     
                     self.log(f"Thời gian xem: {watch_sec}s (Replay: {plan['is_replay']})")
+                    
+                    if on_video_started:
+                        on_video_started(self.worker_id, video, plan)
                     
                     elapsed = 0.0
                     step = 4.0

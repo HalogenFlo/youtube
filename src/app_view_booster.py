@@ -167,20 +167,48 @@ with tab1:
 
     st.divider()
     if st.session_state.is_running and st.session_state.manager:
-        st.success("🟢 **HỆ THỐNG ĐANG HOẠT ĐỘNG CÀY VIEW TỰ ĐỘNG**")
-        st.info("💡 **Ghi chú**: Nếu bạn đang bật *Chạy Ẩn Danh (Headless)* ở Sidebar bên trái, trình duyệt đang chạy ngầm dưới nền. Để nhìn thấy tận mắt cửa sổ Chrome tự phát, hãy dừng lại và **bỏ tích chọn Chạy Ẩn Danh**.")
+        st.success("🟢 **HỆ THỐNG ĐANG CÀY VIEW TỰ ĐỘNG**")
         
         col_st1, col_st2, col_st3 = st.columns(3)
-        col_st1.metric("Tổng Lượt Xem", f"{st.session_state.manager.stats['total_views']} 👁️")
+        col_st1.metric("Tổng Lượt Xem Đã Đạt", f"{st.session_state.manager.stats['total_views']} 👁️")
         col_st2.metric("Số Luồng Đang Chạy", f"{len(st.session_state.manager.workers)} / {threads} Luồng")
         col_st3.metric("RAM Hệ Thống", f"{st.session_state.manager.stats.get('ram_percent', 0)}%")
         
-        st.write("📜 **Nhật ký hoạt động gần nhất:**")
+        # Hiển thị các video đang xem trực tiếp theo từng luồng
+        current_watching = st.session_state.manager.stats.get("current_watching", {})
+        if current_watching:
+            st.subheader("🎬 Video Đang Được Xem Trực Tiếp:")
+            cols_w = st.columns(min(len(current_watching), 3) if len(current_watching) > 0 else 1)
+            for i, (wid, w_info) in enumerate(current_watching.items()):
+                with cols_w[i % len(cols_w)]:
+                    replay_badge = " 🔁 Replay" if w_info.get("is_replay") else ""
+                    st.markdown(
+                        f"""
+                        <div style="border:1px solid #ff4b4b; border-radius:8px; padding:12px; background-color:#1e1e1e; margin-bottom:10px;">
+                            <b style="color:#ff4b4b;">🟢 Luồng #{wid}</b>{replay_badge}<br/>
+                            <div style="margin:6px 0; font-weight:500;">📺 <a href="{w_info.get('url')}" target="_blank" style="color:#58a6ff; text-decoration:none;">{w_info.get('title')}</a></div>
+                            <small style="color:#aaa;">⏱️ Thời gian xem: <b>{w_info.get('watch_time')}s</b> | Bắt đầu lúc: <b>{w_info.get('started_at')}</b></small>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+
+        # Hiển thị bảng tổng hợp lượt xem theo từng video
+        views_by_video = st.session_state.manager.stats.get("views_by_video", {})
+        if views_by_video:
+            with st.expander("📊 Thống kê lượt xem đã cày cho từng video", expanded=False):
+                table_rows = [
+                    {"Video ID / Link": k, "Số Lượt Xem Thành Công": f"{v} views 👁️"}
+                    for k, v in sorted(views_by_video.items(), key=lambda x: x[1], reverse=True)
+                ]
+                st.dataframe(table_rows, use_container_width=True)
+
+        st.write("📜 **Nhật ký hoạt động (Live Console Log):**")
         recent_logs = "\n".join(st.session_state.logs[-8:]) if st.session_state.logs else "Đang kết nối tới các luồng Chrome..."
         st.code(recent_logs, language="bash")
         
-        # Tự động refresh sau vài giây để cập nhật số liệu
-        time.sleep(3)
+        # Tự động refresh sau 2 giây để cập nhật tiến trình trực tiếp
+        time.sleep(2)
         st.rerun()
 
 
