@@ -148,6 +148,7 @@ with tab1:
                     watch_duration_max=watch_max,
                     replay_prob=replay_prob,
                     rate_limit_views_per_min=rate_limit,
+                    max_ram_pct=92.0,
                     headless=headless,
                     loop=loop_mode,
                     on_log=add_log

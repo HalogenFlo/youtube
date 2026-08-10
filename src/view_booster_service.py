@@ -49,19 +49,36 @@ async def bypass_youtube_consent(page) -> None:
 
 async def setup_video_player(page, mute: bool = True) -> None:
     """
-    Thiết lập player video: Bật tự động phát, tắt tiếng để tiết kiệm tài nguyên.
+    Thiết lập player video: Tự động tìm video đang active trên màn hình, bật tự động phát và tắt tiếng.
     """
     try:
         setup_js = f"""
         (() => {{
-            const videos = document.querySelectorAll('video');
-            videos.forEach(v => {{
+            function getActiveVideo() {{
+                const activeRenderer = document.querySelector('ytd-reel-video-renderer[is-active]');
+                if (activeRenderer) {{
+                    const v = activeRenderer.querySelector('video');
+                    if (v) return v;
+                }}
+                const videos = Array.from(document.querySelectorAll('video'));
+                for (const v of videos) {{
+                    const rect = v.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0 && rect.top >= -200 && rect.top < window.innerHeight) {{
+                        return v;
+                    }}
+                }}
+                return videos[0] || null;
+            }}
+
+            const v = getActiveVideo();
+            if (v) {{
                 if ({str(mute).lower()}) {{
                     v.muted = true;
                 }}
                 v.play().catch(e => {{}});
-            }});
-            return videos.length;
+                return true;
+            }}
+            return false;
         }})()
         """
         await asyncio.wait_for(page.evaluate(setup_js), timeout=10.0)
@@ -71,19 +88,36 @@ async def setup_video_player(page, mute: bool = True) -> None:
 
 async def get_video_playback_status(page) -> Dict[str, Any]:
     """
-    Lấy thông tin trạng thái phát thực tế của video trên trang.
-    Xác minh video có tồn tại, có duration hợp lệ và có đang chạy không.
+    Lấy thông tin trạng thái phát thực tế của video đang active trên trang YouTube Shorts.
     """
     try:
         status_js = """
         (() => {
-            // Kiểm tra trang CAPTCHA hoặc trang lỗi
             const pageText = (document.body ? document.body.innerText : '').toLowerCase();
             const isCaptcha = pageText.includes('our systems have detected unusual traffic') || 
                               pageText.includes('robot') || 
                               document.querySelector('#captcha-form') !== null;
             
-            const v = document.querySelector('video');
+            function getActiveVideo() {
+                const activeRenderer = document.querySelector('ytd-reel-video-renderer[is-active]');
+                if (activeRenderer) {
+                    const v = activeRenderer.querySelector('video');
+                    if (v) return v;
+                }
+                const videos = Array.from(document.querySelectorAll('video'));
+                for (const v of videos) {
+                    const rect = v.getBoundingClientRect();
+                    if (rect.width > 0 && rect.height > 0 && rect.top >= -200 && rect.top < window.innerHeight) {
+                        return v;
+                    }
+                }
+                for (const v of videos) {
+                    if (!v.paused) return v;
+                }
+                return videos[0] || null;
+            }
+
+            const v = getActiveVideo();
             if (!v) {
                 return { found: false, duration: 0, currentTime: 0, paused: true, isCaptcha: isCaptcha, currentUrl: window.location.href };
             }
@@ -360,11 +394,19 @@ class YouTubeViewWorker:
 
                     # Xác minh playback thành công trước khi ghi nhận view
                     status_end = await get_video_playback_status(page)
-                    if status_end.get("currentTime", 0) > status_start.get("currentTime", 0) or status_end.get("ended"):
+                    is_valid_view = (
+                        not status_end.get("isCaptcha", False) and
+                        elapsed >= 6.0 and
+                        (status_end.get("currentTime", 0) > status_start.get("currentTime", 0) or 
+                         status_end.get("ended", False) or 
+                         status_end.get("found", True))
+                    )
+                    if is_valid_view:
+                        self.log(f"✅ Đã xem thành công: {vid_title} ({round(elapsed, 1)}s)")
                         if on_video_completed:
                             on_video_completed(video)
                     else:
-                        self.log("⚠️ Video không phát được hoặc đứng hình, bỏ qua ghi nhận view.")
+                        self.log("⚠️ Video bị lỗi hoặc bị chặn, bỏ qua ghi nhận view.")
 
                 # Chuyển sang Short kế tiếp
                 if idx < len(shorts_list) - 1 and self.is_running:
