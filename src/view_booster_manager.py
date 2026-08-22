@@ -49,6 +49,7 @@ class BoosterManager:
         replay_prob: float = 0.30,
         rate_limit_views_per_min: int = 20,
         max_ram_pct: float = 80.0,
+        max_cpu_pct: float = 90.0,
         headless: bool = False,
         loop: bool = True,
         on_log: Optional[Callable[[str], None]] = None,
@@ -63,6 +64,7 @@ class BoosterManager:
         self.replay_prob = replay_prob
         self.rate_limit_views_per_min = rate_limit_views_per_min
         self.max_ram_pct = max_ram_pct
+        self.max_cpu_pct = max_cpu_pct
         self.headless = headless
         self.loop = loop
         self.on_log = on_log
@@ -198,8 +200,8 @@ class BoosterManager:
                     time.sleep(2)
                     continue
 
-                if not can_spawn_worker(max_ram_pct=self.max_ram_pct):
-                    self.log(f"[Worker #{worker_id}] RAM hệ thống vượt {self.max_ram_pct}%. Tạm nghỉ 10s...")
+                if not can_spawn_worker(max_ram_pct=self.max_ram_pct, max_cpu_pct=self.max_cpu_pct):
+                    self.log(f"[Worker #{worker_id}] Hệ thống quá tải (RAM vượt {self.max_ram_pct}% hoặc CPU vượt {self.max_cpu_pct}%). Tạm nghỉ 10s...")
                     time.sleep(10)
                     continue
 
@@ -280,6 +282,22 @@ class BoosterManager:
                 active_count = len(self.workers)
                 self.stats["active_workers"] = active_count
                 self.stats["ram_percent"] = get_memory_usage_pct()
+
+            # Tự động dọn dẹp khi vượt quá max_ram_pct
+            ram_pct = self.stats["ram_percent"]
+            if ram_pct >= self.max_ram_pct:
+                self.log(f"[Supervisor] ⚠️ RAM hệ thống ({ram_pct}%) vượt quá ngưỡng cấu hình ({self.max_ram_pct}%). Đang tự động dọn dẹp Chrome zombie...")
+                active_pids = []
+                with self._lock:
+                    for worker in self.workers.values():
+                        if worker.browser and hasattr(worker.browser, "_process_pid") and worker.browser._process_pid:
+                            active_pids.append(worker.browser._process_pid)
+                
+                killed = kill_orphan_chrome_processes(exclude_pids=active_pids)
+                if killed > 0:
+                    self.log(f"[Supervisor] 🧹 Đã giải phóng RAM bằng cách tắt {killed} tiến trình Chrome zombie.")
+                else:
+                    self.log(f"[Supervisor] Không phát hiện tiến trình Chrome zombie nào.")
 
             for wid in range(1, self.threads + 1):
                 if not self.is_running:

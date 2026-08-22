@@ -110,6 +110,7 @@ def main():
         replay_prob=config.get("replay_probability", 0.15),
         rate_limit_views_per_min=config.get("rate_limit_views_per_minute", 15),
         max_ram_pct=config.get("max_ram_percent", 80.0),
+        max_cpu_pct=config.get("max_cpu_percent", 90.0),
         headless=headless,
         loop=loop
     )

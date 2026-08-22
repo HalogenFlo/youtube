@@ -36,12 +36,16 @@ def get_chrome_process_count() -> int:
     return count
 
 
-def can_spawn_worker(max_ram_pct: float = 80.0, max_chrome_procs: int = 40) -> bool:
+def can_spawn_worker(max_ram_pct: float = 80.0, max_chrome_procs: int = 40, max_cpu_pct: float = 90.0) -> bool:
     """
     Kiểm tra xem hệ thống có đủ tài nguyên để khởi chạy thêm 1 worker hay không.
     """
     current_ram = get_memory_usage_pct()
     if current_ram >= max_ram_pct:
+        return False
+    
+    current_cpu = get_cpu_usage_pct()
+    if current_cpu >= max_cpu_pct:
         return False
     
     current_procs = get_chrome_process_count()
@@ -51,19 +55,26 @@ def can_spawn_worker(max_ram_pct: float = 80.0, max_chrome_procs: int = 40) -> b
     return True
 
 
-def kill_orphan_chrome_processes(keywords: List[str] = None) -> int:
+def kill_orphan_chrome_processes(exclude_pids: List[int] = None, keywords: List[str] = None) -> int:
     """
-    Tìm và tắt các tiến trình Chrome zombie hoặc mồ côi được khởi tạo bởi automation.
+    Tìm và tắt các tiến trình Chrome zombie hoặc mồ côi được khởi tạo bởi automation,
+    ngoại trừ các PID đang hoạt động hợp lệ được truyền vào qua exclude_pids.
     """
     if keywords is None:
         keywords = ["--test-type", "--remote-debugging-port", "temp/profiles", "nodriver"]
+    if exclude_pids is None:
+        exclude_pids = []
 
     killed_count = 0
     for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
         try:
+            pid = proc.info.get('pid')
+            if pid in exclude_pids:
+                continue
             p_name = proc.info.get('name') or ""
             if 'chrome' in p_name.lower():
-                cmdline = " ".join(proc.info.get('cmdline') or [])
+                # Chuẩn hóa cmdline dấu gạch chéo ngược sang xuôi trên Windows
+                cmdline = " ".join(proc.info.get('cmdline') or []).replace("\\", "/")
                 # Nếu tiến trình chứa các cờ automation hoặc profile trong temp
                 if any(kw in cmdline for kw in keywords):
                     proc.kill()

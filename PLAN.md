@@ -532,3 +532,21 @@ graph TD
   - `adjust_tts_speed(tts_path, target_duration, output_path)`: co giãn âm thanh qua `atempo`.
   - `mix_dubbed_audio(...)`: trộn âm thanh đã dịch với âm thanh nền.
   - `compile_dubbed_video(...)`: mux video + audio + burn subtitle ASS.
+
+---
+
+## 13. Tính năng Bài dạy AI Slideshow Video (Mới)
+
+Tính năng **Bài dạy AI Slideshow Video** cho phép người dùng tạo ra các video giáo dục hoặc hướng dẫn (tutorial) chất lượng cao bằng cách nhập một từ khóa/chủ đề hoặc dán trực tiếp một tài liệu văn bản dài. LLM sẽ tự động phân tích và tạo kịch bản phân cảnh dạng giảng dạy, sau đó hệ thống sẽ sinh ảnh hoặc video AI cùng giọng đọc TTS và phụ đề tương ứng.
+
+### 13.1 Các chức năng chính
+- **Nhập từ khóa/chủ đề**: Người dùng nhập chủ đề (ví dụ: "Docker", "Git", "5 mẹo ChatGPT") và hệ thống sẽ tự viết kịch bản. Có sẵn các gợi ý nhanh để người dùng chọn.
+- **Dán tài liệu văn bản**: Cho phép dán tài liệu dài (bài báo, blog, tài liệu kỹ thuật) không giới hạn độ dài (tận dụng context 128K của model `qwen2.5:14b`) để chuyển đổi thành kịch bản bài dạy.
+- **Cấu hình số phân cảnh**: Người dùng kéo thanh trượt để chọn số phân cảnh mong muốn (từ 4 đến 20 phân cảnh, mặc định là 8).
+- **Giao diện chỉnh sửa kịch bản & Góp ý**: Tương tự như Self-heal, người dùng có thể gửi góp ý bổ sung để chỉnh sửa kịch bản hoặc chỉnh sửa trực tiếp trên bảng `st.data_editor`.
+- **Đầy đủ tuỳ chọn đầu ra**: Hỗ trợ chọn hướng video (Ngang/Dọc), chế độ hình ảnh (Ảnh AI / Video AI), tốc độ giọng đọc, thời lượng tối đa để tự động chia phần (Part 1, Part 2...).
+
+### 13.2 Cấu trúc luồng dữ liệu & Tích hợp
+- Cấu hình mặc định được lưu trữ trong `config.py` (`DEFAULT_EDUCATIONAL_STYLE`, `DEFAULT_EDUCATIONAL_SCENES`).
+- Các prompt chuyên sâu cho giảng dạy công nghệ và logic sinh kịch bản được tích hợp trong `llm_service.py`.
+- Giao diện người dùng độc lập được viết trong `app_educational.py` và liên kết với menu chính trong `app.py`.

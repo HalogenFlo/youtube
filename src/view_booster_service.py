@@ -226,14 +226,49 @@ class YouTubeViewWorker:
             )
             self.is_running = True
             self.log("Trình duyệt đã sẵn sàng.")
+
+            # Giảm độ ưu tiên của tiến trình Chrome để giảm tải CPU và tránh lag máy
+            try:
+                pid = None
+                if hasattr(self.browser, "_process") and self.browser._process:
+                    pid = self.browser._process.pid
+                elif hasattr(self.browser, "_process_pid"):
+                    pid = self.browser._process_pid
+                
+                if pid:
+                    import psutil
+                    parent = psutil.Process(pid)
+                    # Hạ độ ưu tiên của tiến trình cha
+                    if os.name == 'nt':
+                        parent.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+                    else:
+                        parent.nice(19)
+                    
+                    # Hạ độ ưu tiên của tất cả các tiến trình con hiện có
+                    for child in parent.children(recursive=True):
+                        try:
+                            if os.name == 'nt':
+                                child.nice(psutil.BELOW_NORMAL_PRIORITY_CLASS)
+                            else:
+                                child.nice(19)
+                        except Exception:
+                            pass
+                    self.log(f"Đã giảm độ ưu tiên tiến trình Chrome (PID: {pid}) xuống Below Normal để giảm lag máy.")
+            except Exception as e:
+                self.log(f"Không thể hạ độ ưu tiên Chrome: {str(e)}")
+
             return True
         except asyncio.TimeoutError:
             self.log("Lỗi: Quá thời gian khởi động trình duyệt (Timeout 30s).")
             self.is_running = False
+            # Dọn dẹp ngay lập tức nếu khởi chạy lỗi/treo
+            await self.close()
             return False
         except Exception as e:
             self.log(f"Lỗi khởi động trình duyệt: {str(e)}")
             self.is_running = False
+            # Dọn dẹp ngay lập tức nếu khởi chạy lỗi/treo
+            await self.close()
             return False
 
     async def watch_short_url(
@@ -290,14 +325,14 @@ class YouTubeViewWorker:
                 # Mô phỏng cuộn nhẹ hoặc pause/resume tự nhiên
                 if should_pause_and_resume(pause_prob=0.08):
                     try:
-                        await page.evaluate("const v = document.querySelector('video'); if (v) v.pause();")
+                        await asyncio.wait_for(page.evaluate("const v = document.querySelector('video'); if (v) v.pause();"), timeout=10.0)
                         await asyncio.sleep(random.uniform(1.0, 3.0))
-                        await page.evaluate("const v = document.querySelector('video'); if (v) v.play();")
+                        await asyncio.wait_for(page.evaluate("const v = document.querySelector('video'); if (v) v.play();"), timeout=10.0)
                     except Exception:
                         pass
                 else:
                     try:
-                        await page.evaluate(get_random_scroll_js())
+                        await asyncio.wait_for(page.evaluate(get_random_scroll_js()), timeout=10.0)
                     except Exception:
                         pass
 
@@ -388,7 +423,7 @@ class YouTubeViewWorker:
                         await asyncio.sleep(min(step, watch_sec - elapsed))
                         elapsed += step
                         try:
-                            await page.evaluate(get_random_scroll_js())
+                            await asyncio.wait_for(page.evaluate(get_random_scroll_js()), timeout=10.0)
                         except Exception:
                             pass
 
@@ -415,9 +450,36 @@ class YouTubeViewWorker:
         """Đóng trình duyệt an toàn và giải phóng tài nguyên."""
         self.is_running = False
         if self.browser:
+            pid = None
+            try:
+                if hasattr(self.browser, "_process") and self.browser._process:
+                    pid = self.browser._process.pid
+                elif hasattr(self.browser, "_process_pid"):
+                    pid = self.browser._process_pid
+            except Exception:
+                pass
+
             try:
                 self.browser.stop()
             except Exception:
                 pass
+
+            # Cưỡng chế kill tiến trình Chrome và các tiến trình con của nó ngay lập tức
+            if pid:
+                import psutil
+                try:
+                    proc = psutil.Process(pid)
+                    for child in proc.children(recursive=True):
+                        try:
+                            child.kill()
+                        except Exception:
+                            pass
+                    proc.kill()
+                    self.log(f"Đã cưỡng chế giải phóng tiến trình Chrome (PID: {pid}) thành công.")
+                except psutil.NoSuchProcess:
+                    pass
+                except Exception as e:
+                    self.log(f"Không thể cưỡng chế kill Chrome (PID: {pid}): {str(e)}")
+
             self.browser = None
         self.log("Đã đóng trình duyệt.")
