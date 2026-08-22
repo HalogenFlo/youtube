@@ -361,6 +361,7 @@ class YouTubeViewWorker:
         replay_prob: float = 0.30,
         delay_between_min: float = 4.0,
         delay_between_max: float = 10.0,
+        max_videos_per_browser: int = 15,
         on_video_started: Optional[Callable[[int, Dict[str, Any], Dict[str, Any]], None]] = None,
         on_video_completed: Optional[Callable[[Dict[str, Any]], None]] = None,
         rate_limiter_callback: Optional[Callable[[], None]] = None
@@ -378,18 +379,29 @@ class YouTubeViewWorker:
             if not success:
                 return
 
-        first_short = shorts_list[0]
-        first_url = first_short.get('url') or f"https://www.youtube.com/shorts/{first_short.get('id')}"
-        self.log(f"Bắt đầu chuỗi lướt Shorts từ: {first_short.get('title')}")
+        self.log("Bắt đầu chuỗi lướt Shorts...")
         
         try:
-            page = await asyncio.wait_for(self.browser.get(first_url), timeout=ACTION_TIMEOUT)
-            await async_random_sleep(2.5, 4.5)
-            await bypass_youtube_consent(page)
+            videos_watched_count = 0
+            needs_direct_navigation = True
+            page = None
 
             for idx, video in enumerate(shorts_list):
                 if not self.is_running:
                     break
+
+                # Tái khởi động trình duyệt sau một số lượng video nhất định để tránh ngốn RAM
+                if videos_watched_count >= max_videos_per_browser:
+                    self.log(f"Đã xem {videos_watched_count} video trên trình duyệt này. Đang khởi động lại trình duyệt mới...")
+                    await self.close()
+                    
+                    success = await self.start_browser()
+                    if not success:
+                        self.log("Không thể khởi động lại trình duyệt. Kết thúc vòng lặp.")
+                        break
+                    
+                    videos_watched_count = 0
+                    needs_direct_navigation = True
 
                 # Gọi rate limiter trước mỗi video riêng biệt
                 if rate_limiter_callback:
@@ -398,6 +410,15 @@ class YouTubeViewWorker:
                 vid_title = video.get('title', f"Short {idx+1}")
                 self.log(f"[{idx + 1}/{len(shorts_list)}] Đang xem Short: {vid_title}")
                 
+                # Mở trực tiếp nếu là video đầu tiên hoặc trình duyệt vừa được làm mới
+                if needs_direct_navigation or page is None:
+                    video_url = video.get('url') or f"https://www.youtube.com/shorts/{video.get('id')}"
+                    self.log(f"Mở trực tiếp URL video: {video_url}")
+                    page = await asyncio.wait_for(self.browser.get(video_url), timeout=ACTION_TIMEOUT)
+                    await async_random_sleep(2.5, 4.5)
+                    await bypass_youtube_consent(page)
+                    needs_direct_navigation = False
+
                 await setup_video_player(page, mute=True)
                 status_start = await get_video_playback_status(page)
                 
@@ -435,11 +456,18 @@ class YouTubeViewWorker:
                     else:
                         self.log(f"⚠️ Chưa hoàn thành đủ thời lượng xem ({round(elapsed, 1)}s).")
 
+                # Tăng số lượng video đã xem trên trình duyệt hiện tại
+                videos_watched_count += 1
+
                 # Chuyển sang Short kế tiếp
                 if idx < len(shorts_list) - 1 and self.is_running:
-                    self.log("Lướt sang Short tiếp theo...")
-                    await simulate_shorts_scroll_next(page)
-                    await async_random_sleep(delay_between_min, delay_between_max)
+                    # Nếu lượt tiếp theo sẽ tái khởi động trình duyệt, không cần lướt cuộn trên trang cũ
+                    if videos_watched_count >= max_videos_per_browser:
+                        self.log("Lượt tiếp theo sẽ tái khởi động trình duyệt, bỏ qua thao tác cuộn.")
+                    else:
+                        self.log("Lướt sang Short tiếp theo...")
+                        await simulate_shorts_scroll_next(page)
+                        await async_random_sleep(delay_between_min, delay_between_max)
 
         except asyncio.TimeoutError:
             self.log("Lỗi timeout trong quá trình lướt Shorts.")

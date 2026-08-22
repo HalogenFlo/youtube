@@ -52,6 +52,7 @@ class BoosterManager:
         max_cpu_pct: float = 90.0,
         headless: bool = False,
         loop: bool = True,
+        max_videos_per_browser: int = 15,
         on_log: Optional[Callable[[str], None]] = None,
         on_stats_updated: Optional[Callable[[Dict[str, Any]], None]] = None
     ):
@@ -67,6 +68,7 @@ class BoosterManager:
         self.max_cpu_pct = max_cpu_pct
         self.headless = headless
         self.loop = loop
+        self.max_videos_per_browser = max_videos_per_browser
         self.on_log = on_log
         self.on_stats_updated = on_stats_updated
 
@@ -225,6 +227,7 @@ class BoosterManager:
                         min_sec=self.watch_duration_min,
                         max_sec=self.watch_duration_max,
                         replay_prob=self.replay_prob,
+                        max_videos_per_browser=self.max_videos_per_browser,
                         on_video_started=self._on_video_started,
                         on_video_completed=self._on_video_viewed,
                         rate_limiter_callback=self._check_rate_limit

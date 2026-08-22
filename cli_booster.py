@@ -46,6 +46,7 @@ def main():
     parser.add_argument("--headed", action="store_true", help="Hiện cửa sổ trình duyệt (ưu tiên chống bot)")
     parser.add_argument("--loop", action="store_true", help="Lặp lại danh sách vô tận (24/7)")
     parser.add_argument("--refresh", action="store_true", help="Bắt buộc quét mới từ YouTube thay vì dùng cache")
+    parser.add_argument("--max-videos-per-browser", type=int, default=None, help="Số lượng video xem tối đa trên mỗi trình duyệt trước khi restart")
     args = parser.parse_args()
 
     config = load_config()
@@ -64,6 +65,7 @@ def main():
 
     loop = args.loop if args.loop else config.get("loop", True)
     proxies = config.get("proxies", [])
+    max_videos_per_browser = args.max_videos_per_browser if args.max_videos_per_browser is not None else config.get("max_videos_per_browser", 15)
 
     print("=" * 60)
     print("🚀 YOUTUBE VIEW & SHORTS BOOSTER - CHẾ ĐỘ CHẠY NỀN 24/7")
@@ -74,6 +76,7 @@ def main():
     print(f"📌 Chế độ lặp vô tận (Loop): {loop}")
     print(f"📌 Bắt buộc quét mới (Force Refresh): {force_refresh}")
     print(f"📌 Số lượng Proxy: {len(proxies)}")
+    print(f"📌 Restart trình duyệt sau mỗi: {max_videos_per_browser} video")
     stats = get_system_stats()
     print(f"📌 RAM máy: {stats['ram_used_gb']}/{stats['ram_total_gb']} GB ({stats['ram_percent']}%)")
     print("=" * 60)
@@ -112,7 +115,8 @@ def main():
         max_ram_pct=config.get("max_ram_percent", 80.0),
         max_cpu_pct=config.get("max_cpu_percent", 90.0),
         headless=headless,
-        loop=loop
+        loop=loop,
+        max_videos_per_browser=max_videos_per_browser
     )
 
     def handle_signal(sig, frame):
