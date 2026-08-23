@@ -203,7 +203,11 @@ class BoosterManager:
                     continue
 
                 if not can_spawn_worker(max_ram_pct=self.max_ram_pct, max_cpu_pct=self.max_cpu_pct):
-                    self.log(f"[Worker #{worker_id}] Hệ thống quá tải (RAM vượt {self.max_ram_pct}% hoặc CPU vượt {self.max_cpu_pct}%). Tạm nghỉ 10s...")
+                    self.log(f"[Worker #{worker_id}] Hệ thống quá tải (RAM vượt {self.max_ram_pct}% hoặc CPU vượt {self.max_cpu_pct}%). Đang đóng trình duyệt để giải phóng CPU và tạm nghỉ 10s...")
+                    try:
+                        loop.run_until_complete(worker.close())
+                    except Exception as e:
+                        self.log(f"[Worker #{worker_id}] Lỗi khi đóng trình duyệt giải phóng tài nguyên: {str(e)}")
                     time.sleep(10)
                     continue
 
