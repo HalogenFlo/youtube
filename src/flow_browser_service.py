@@ -1,6 +1,6 @@
-# Chức năng: Điều khiển Chrome qua CDP để tương tác với Google Flow (flow.google.com), nạp prompt, khoá nhân vật Stickman và trích xuất ảnh sinh ra.
-# Lý do tạo: Thay thế mô hình local tốn VRAM bằng Google Flow Nano Banana Pro chất lượng cao, miễn phí và không tải GPU.
-# Trích dẫn: Kế thừa cơ chế CDP Playwright và React Fiber state injection từ dự án tiktok-ytb.
+# Chức năng: Điều khiển Chrome qua CDP / Playwright để tự động tương tác với Google Flow (flow.google.com):
+#          Tự động điền prompt, bấm sinh video/ảnh AI, theo dõi tiến trình và tải file thành phẩm về máy.
+# Lý do tạo: Tự động hóa 100% quy trình từ Prompt trên Web app -> Google Flow của user -> Video hoàn chỉnh.
 
 import os
 import sys
@@ -8,9 +8,10 @@ import json
 import time
 import base64
 import subprocess
+import threading
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
-from playwright.sync_api import sync_playwright, Page, Frame, BrowserContext
+from playwright.sync_api import sync_playwright, Page, Frame, BrowserContext, Browser
 
 if hasattr(sys.stdout, 'reconfigure'):
     try:
@@ -32,21 +33,16 @@ def safe_log(msg: str):
         except Exception:
             pass
 
-
 ROOT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT_DIR / "flow_config.json"
 ATTEMPTS_DIR = ROOT_DIR / "temp" / "flow_attempts"
 ATTEMPTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Lời dẫn định hình chuẩn cho nhân vật người que stickman CH01 áo xanh
+# Nhận diện nhân vật nhất quán giữa các phân cảnh của kênh.
 STICKMAN_CANONICAL_GUIDANCE = (
-    " STRICT CHARACTER LOCK: CH01 must exactly match the attached reference. "
-    "Round white head, thick navy outline, two solid black vertical oval eyes, "
-    "open happy mouth with a visible coral-pink tongue. Exactly one light-blue short-sleeve T-shirt #8CCFE8, "
-    "two navy stick arms and two navy stick legs. No teeth, eyebrows or white pupils. "
-    "Preserve the same bold stroke weight and head/body proportions. "
-    "Wide full-body shot: character entirely inside frame with generous 15 percent margins. "
-    "Minimalist stickman illustration, clean navy outlines, off-white background."
+    "Keep the same canonical character CH01 in every shot: a clean minimalist stickman, "
+    "white round head, dark navy outline and oval eyes, light blue shirt #8CCFE8, friendly expression. "
+    "No captions, subtitles, logos or watermarks inside the generated visual."
 )
 
 
@@ -56,14 +52,13 @@ def load_flow_config() -> Dict[str, Any]:
         try:
             return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         except Exception as e:
-            safe_log(f"[WARNING] Loi doc flow_config.json: {e}")
+            safe_log(f"[WARNING] Lỗi đọc flow_config.json: {e}")
     return {
-        "tool_url": "https://flow.google.com/project/41d3d574-907c-4bb0-90a7-c98f85f5e22b/tool/2791e8ba-9ae0-4ca9-9368-b7efe600c53d",
+        "project_url": "https://flow.google.com/project/4763b8d1-5c45-4532-85b9-960a80cefcb4",
+        "tool_url": "https://flow.google.com/project/4763b8d1-5c45-4532-85b9-960a80cefcb4/tool/a1dc8db6-3417-4d6b-a00a-50832cb508e1?mode=APP",
         "cdp_port": 9222,
         "chrome_user_data_dir": os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data"),
         "profile_directory": "Default",
-        "default_aspect_ratio": "9:16",
-        "workers": 2,
         "timeout_seconds": 180,
     }
 
@@ -79,52 +74,26 @@ def is_cdp_available(port: int = 9222) -> bool:
         return False
 
 
-def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
-    """Tự động kích hoạt Chrome với cổng CDP 9222 hoàn toàn tự động, không bắt người dùng mở thủ công."""
-    port = cfg.get("cdp_port", 9222)
-    if is_cdp_available(port):
-        return True
-
-    safe_log(f"[*] Cổng Google Flow ({port}) chưa sẵn sàng. Đang tự động kích hoạt Chrome...")
-    chrome_candidates = [
-        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
-        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
-        os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
-    ]
-    chrome_bin = next((c for c in chrome_candidates if os.path.exists(c)), None)
-    if not chrome_bin:
-        safe_log("[ERROR] Không tìm thấy Google Chrome trên máy tính.")
-        return False
-
-    user_data = cfg.get("chrome_user_data_dir", str(ROOT_DIR / "flow_chrome_profile"))
-    profile = cfg.get("profile_directory", "Default")
-
-    # Không tự ý tắt Chrome của người dùng để tránh mất trang và làm gián đoạn trải nghiệm
-
-    cmd = [
-        chrome_bin,
-        f"--remote-debugging-port={port}",
-        f"--user-data-dir={user_data}",
-        f"--profile-directory={profile}",
-        "--remote-allow-origins=*",
-        "--no-first-run",
-        "--no-default-browser-check",
-        cfg.get("tool_url", "https://flow.google.com")
-    ]
+def get_flow_readiness(port: int = 9222) -> str:
+    """Trả về disconnected, login_required hoặc ready dựa trên tab Flow thật."""
+    import urllib.request
     try:
-        creation_flags = 0
-        if os.name == 'nt':
-            creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creation_flags)
-        for _ in range(25):
-            time.sleep(0.5)
-            if is_cdp_available(port):
-                safe_log(f"[OK] Google Chrome ({profile} - np368057@gmail.com) đã kích hoạt thành công trên cổng {port}!")
-                return True
-    except Exception as e:
-        safe_log(f"[ERROR] Không thể khởi chạy Chrome: {e}")
-    return False
+        request = urllib.request.Request(f"http://127.0.0.1:{port}/json/list", method="GET")
+        with urllib.request.urlopen(request, timeout=2.0) as response:
+            tabs = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return "disconnected"
 
+    flow_urls = [str(tab.get("url", "")) for tab in tabs if "flow.google.com" in str(tab.get("url", ""))]
+    if any("/project/" in url or "/tool/" in url for url in flow_urls):
+        return "ready"
+    # Người dùng đã đăng nhập có thể đang ở dashboard gốc `flow.google.com/?pli=1`.
+    # Phiên chưa đăng nhập bị chuyển rõ ràng sang `/about` hoặc accounts.google.com.
+    if any("/about" not in url and "accounts.google.com" not in url for url in flow_urls):
+        return "ready"
+    if flow_urls:
+        return "login_required"
+    return "login_required"
 
 
 class FlowBrowserController:
@@ -133,245 +102,381 @@ class FlowBrowserController:
     def __init__(self):
         self.cfg = load_flow_config()
         self.playwright = None
-        self.browser = None
+        self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
         self.page: Optional[Page] = None
-        self.tool_frame: Optional[Frame] = None
+        self.seen_video_urls: set = set()
+        self.seen_video_hashes: set = set()
+
+    def _launch_flow_chrome(self) -> Tuple[bool, str]:
+        """Tự mở lại Chrome profile riêng nếu tiến trình bị đóng/crash."""
+        candidates = [
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+        ]
+        chrome_exe = next((path for path in candidates if os.path.exists(path)), "")
+        if not chrome_exe:
+            return False, "Không tìm thấy Google Chrome trên máy."
+
+        user_data = self.cfg.get("chrome_user_data_dir") or str(ROOT_DIR / "flow_chrome_profile")
+        profile = self.cfg.get("profile_directory", "Default")
+        project_url = self.cfg.get("project_url", "https://flow.google.com")
+        cmd = [
+            chrome_exe,
+            f"--remote-debugging-port={self.cfg.get('cdp_port', 9222)}",
+            f"--user-data-dir={user_data}",
+            f"--profile-directory={profile}",
+            "--remote-allow-origins=*",
+            "--no-first-run",
+            "--no-default-browser-check",
+            project_url,
+        ]
+        try:
+            creationflags = (subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008) if os.name == "nt" else 0
+            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
+            for _ in range(30):
+                time.sleep(0.5)
+                if is_cdp_available(self.cfg.get("cdp_port", 9222)):
+                    return True, "Đã tự mở lại Chrome Google Flow."
+            return False, "Chrome đã mở nhưng cổng điều khiển chưa phản hồi."
+        except Exception as exc:
+            return False, f"Không thể tự mở Chrome: {exc}"
 
     def connect(self) -> Tuple[bool, str]:
-        """Kết nối tới Google Flow: Tự động khởi chạy Chrome với cổng 9222 và profile Default nếu chưa có."""
+        """Kết nối tới trình duyệt đang mở Google Flow."""
         port = self.cfg.get("cdp_port", 9222)
-        tool_url = self.cfg.get("tool_url", "https://flow.google.com")
-
-        # 1. Đảm bảo Chrome cổng 9222 được bật tự động 100% với Profile Default của người dùng
-        if not is_cdp_available(port):
-            safe_log(f"[*] Cổng 9222 chưa mở. Tự động khởi động Chrome với Profile Default...")
-            ok_chrome = ensure_chrome_with_cdp(self.cfg)
-            if not ok_chrome:
-                return False, f"Không thể tự động kích hoạt Chrome cổng {port}."
+        project_url = self.cfg.get("project_url", "https://flow.google.com")
 
         try:
-            self.playwright = sync_playwright().start()
-            safe_log(f"[*] Đang kết nối tới Chrome qua cổng CDP {port}...")
-            self.browser = self.playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}", timeout=10000)
-            self.context = self.browser.contexts[0] if self.browser.contexts else None
+            if not self.playwright:
+                self.playwright = sync_playwright().start()
+
+            if not is_cdp_available(port):
+                launched, launch_message = self._launch_flow_chrome()
+                if not launched:
+                    return False, launch_message
+
+            if is_cdp_available(port):
+                safe_log(f"[*] Đang kết nối tới Chrome Google Flow qua cổng CDP {port}...")
+                self.browser = self.playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}", timeout=10000)
+                self.context = self.browser.contexts[0] if self.browser.contexts else None
+            else:
+                return False, f"Cổng điều khiển 9222 chưa sẵn sàng. Vui lòng chạy qua file run.bat hoặc mở Chrome với cổng 9222 để tool thao tác trực tiếp trên tab của bạn."
 
             if not self.context:
-                return False, "Không thể khởi tạo phiên làm việc của trình duyệt."
+                return False, "Không thể kết nối vào trình duyệt Chrome."
 
-            # Tìm tab đã mở tool_url hoặc mở tab mới
+            # Tìm tab đã mở flow.google.com
             for p in self.context.pages:
                 if "flow.google.com" in p.url:
                     self.page = p
                     break
 
             if not self.page:
-                self.page = self.context.new_page()
+                self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
+                safe_log(f"[*] Đang điều hướng tới Google Flow: {project_url}")
                 try:
-                    self.page.goto(tool_url, wait_until="domcontentloaded", timeout=15000)
+                    self.page.goto(project_url, wait_until="domcontentloaded", timeout=20000)
                 except Exception:
                     pass
 
-
-            # Chờ và bắt iframe chứa VP Stickman Lab
-            frame = self._find_tool_frame(timeout_sec=15)
-            if not frame:
-                safe_log("[!] Đã mở Flow nhưng chưa vào frame, tiếp tục với trang chính...")
-                self.tool_frame = self.page.main_frame
-            else:
-                self.tool_frame = frame
+            if "/about" in self.page.url or "/accounts.google.com/" in self.page.url:
+                return False, "Google Flow đang mở nhưng profile riêng chưa đăng nhập. Hãy đăng nhập một lần trong cửa sổ Chrome Flow."
 
             return True, "Kết nối thành công tới Google Flow."
 
         except Exception as e:
-            return False, f"Lỗi kết nối Flow: {str(e)}"
+            return False, f"Lỗi kết nối Google Flow: {str(e)}"
 
+    def _ensure_page(self) -> Optional[Page]:
+        if not self.page or self.page.is_closed():
+            ok, msg = self.connect()
+            if not ok:
+                safe_log(f"[ERROR] {msg}")
+                return None
+        return self.page
 
-    def _find_tool_frame(self, timeout_sec: int = 25) -> Optional[Frame]:
-        """Quét tìm iframe con chứa giao diện VP Stickman Lab."""
-        if not self.page:
-            return None
-        deadline = time.time() + timeout_sec
-        while time.time() < deadline:
-            for fr in self.page.frames:
-                if fr == self.page.main_frame:
-                    continue
+    def generate_scene_video(
+        self,
+        prompt: str,
+        output_path: str,
+        orientation: str = "vertical",
+        timeout_sec: int = 180
+    ) -> Tuple[bool, str]:
+        """
+        Tự động đưa prompt lên Google Flow (Google Veo / Videos section),
+        kích hoạt tạo video, đợi render và tải file .mp4 về output_path.
+        """
+        page = self._ensure_page()
+        if not page:
+            return False, "Không thể mở trang Google Flow."
+
+        project_url = self.cfg.get("project_url", "https://flow.google.com")
+        safe_log(f"[*] Đang thao tác trên Google Flow để sinh video cho prompt: \"{prompt[:50]}...\"")
+
+        # Đăng ký listener bắt response video mới từ network
+        new_network_videos: List[str] = []
+        def _on_response(res):
+            try:
+                r_url = res.url
+                if ("flow-content.google/video/" in r_url or ".mp4" in r_url) and res.status == 200:
+                    if r_url not in self.seen_video_urls and r_url not in new_network_videos:
+                        new_network_videos.append(r_url)
+            except Exception:
+                pass
+
+        try:
+            page.on("response", _on_response)
+        except Exception:
+            pass
+
+        try:
+            # 1. Chỉ điều hướng nếu tab hiện tại không thuộc Flow hoặc bị đẩy ra trang login/about
+            if "flow.google.com" not in page.url or "/project/" not in page.url:
+                safe_log(f"[*] Đang điều hướng tới Google Flow: {project_url}")
+                page.goto(project_url, wait_until="domcontentloaded", timeout=30000)
                 try:
-                    # Kiểm tra xem iframe có tiêu đề VP Stickman Lab hoặc nút Initialize Generation không
-                    heading = fr.get_by_role("heading", name="VP Stickman Lab", exact=True)
-                    btn = fr.get_by_role("button", name="Initialize Generation", exact=False)
-                    if heading.is_visible(timeout=300) or btn.is_visible(timeout=300):
-                        return fr
+                    page.wait_for_timeout(4000)
                 except Exception:
                     pass
-            time.sleep(0.5)
-        return None
 
-    def inject_mascot_reference(self) -> bool:
-        """Nạp ảnh nhân vật stickman mẫu vào React Fiber hook của selector."""
-        if not self.tool_frame:
-            return False
+            if "/about" in page.url or "/accounts.google.com/" in page.url:
+                return False, "Google Flow chưa đăng nhập hoặc tài khoản không có quyền mở project."
 
-        mascot_rel = self.cfg.get("mascot_reference_path", "assets/characters/channel-mascot/reference-v1.png")
-        mascot_path = ROOT_DIR / mascot_rel
-        if not mascot_path.exists():
-            safe_log(f"[WARNING] Khong tim thay file mascot: {mascot_path}")
-            return False
+            # Ghi nhận toàn bộ video đã tồn tại trên trang trước khi tạo cảnh mới
+            for existing_video in page.locator("video").all():
+                try:
+                    existing_src = existing_video.get_attribute("src")
+                    if existing_src:
+                        self.seen_video_urls.add(existing_src)
+                except Exception:
+                    pass
+            for existing_source in page.locator("video source").all():
+                try:
+                    s_src = existing_source.get_attribute("src")
+                    if s_src:
+                        self.seen_video_urls.add(s_src)
+                except Exception:
+                    pass
 
-        media_id = self.cfg.get("mascot_media_id", "de94a39b-155f-4afe-acbb-d9d4b59ad532")
-        mascot_bytes = mascot_path.read_bytes()
-        mascot_b64 = base64.b64encode(mascot_bytes).decode("utf-8")
+            # Đóng onboarding nếu có
+            got_it = page.get_by_role("button", name="Got it, dismiss onboarding message", exact=True)
+            if got_it.count() > 0 and got_it.first.is_visible():
+                got_it.first.click()
+                page.wait_for_timeout(300)
 
-        ref_payload = {
-            "mediaId": media_id,
-            "base64": mascot_b64,
-            "mimeType": "image/png",
-            "name": mascot_path.name
-        }
+            # 2. Tìm ô nhập prompt video của Google Flow (chờ tối đa 15s cho React SPA nạp xong)
+            try:
+                page.wait_for_selector("textarea", timeout=15000)
+            except Exception:
+                pass
 
-        # Gọi hàm evaluate inject trực tiếp vào React Fiber State
-        inject_js = """
-        (ref) => {
-            const el = document.getElementById('character-selector');
-            if (!el) return false;
-            let f = el[Object.keys(el).find(k => k.startsWith('__reactFiber$'))];
-            while (f && !(typeof f.type === 'function' && f.type.name === 'App')) {
-                f = f.return;
-            }
-            let h = f?.memoizedState;
-            while (h && !(h.memoizedState?.topic && h.queue?.dispatch)) {
-                h = h.next;
-            }
-            if (h && h.next && h.next.next && h.next.next.queue && h.next.next.queue.dispatch) {
-                h.next.queue.dispatch(null); // Clear base scene
-                h.next.next.queue.dispatch(ref); // Set character reference
-                return true;
-            }
-            return false;
-        }
-        """
-        try:
-            success = self.tool_frame.evaluate(inject_js, ref_payload)
-            if success:
-                # Chờ nút 'Clear Character' xuất hiện để khẳng định nhân vật đã nạp
-                clear_btn = self.tool_frame.get_by_role("button", name="Clear Character", exact=True)
-                clear_btn.wait_for(state="visible", timeout=5000)
-                return True
+            input_box = None
+            selectors = [
+                "textarea[placeholder*='create' i]",
+                "textarea[placeholder*='prompt' i]",
+                "textarea[placeholder*='describe' i]",
+                "textarea[placeholder*='video' i]",
+                "textarea[placeholder*='mô tả' i]",
+                "textarea",
+                "input[type='text'][placeholder*='prompt' i]",
+                "div[contenteditable='true']",
+            ]
+            for sel in selectors:
+                loc = page.locator(sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    input_box = loc.first
+                    break
+
+            if not input_box:
+                # Nếu đang ở trong view applet phụ không có ô chat, chuyển về giao diện dự án chính
+                safe_log("[*] Chưa thấy ô chat, đang chuyển về giao diện dự án chính của Flow...")
+                try:
+                    page.goto(project_url, wait_until="domcontentloaded", timeout=25000)
+                    page.wait_for_timeout(3000)
+                    for sel in selectors:
+                        loc = page.locator(sel)
+                        if loc.count() > 0 and loc.first.is_visible():
+                            input_box = loc.first
+                            break
+                except Exception:
+                    pass
+
+            if not input_box:
+                page.screenshot(path=str(ATTEMPTS_DIR / "error_no_prompt_input.png"))
+                return False, "Không tìm thấy ô nhập prompt trên Google Flow. Đã lưu ảnh chẩn đoán."
+
+            # 3. Điền prompt vào ô.
+            try:
+                input_box.click(force=True, timeout=5000)
+            except Exception:
+                pass
+            try:
+                input_box.fill("")
+            except Exception:
+                pass
+            ratio_hint = "vertical 9:16 portrait" if orientation == "vertical" else "horizontal 16:9 landscape"
+            full_prompt = (
+                "Generate exactly ONE AI VIDEO CLIP, not a still image. Use the configured video model.\n"
+                f"Scene: {prompt.strip()}\n{STICKMAN_CANONICAL_GUIDANCE}\n"
+                f"Composition: {ratio_hint}. Cinematic motion, smooth camera movement, no audio."
+            )
+            input_box.fill(full_prompt)
+            page.wait_for_timeout(500)
+
+            # 4. Tìm và bấm nút Generate / Tạo (hoặc ấn Enter)
+            btn_generate = None
+            btn_selectors = [
+                "button[aria-label='Start generation']",
+                "button[aria-label*='generate' i]",
+                "button[aria-label*='tạo' i]",
+                "button:has-text('Generate')",
+                "button:has-text('Tạo')",
+                "button[type='submit']",
+            ]
+            for b_sel in btn_selectors:
+                b_loc = page.locator(b_sel)
+                if b_loc.count() > 0 and b_loc.first.is_visible():
+                    btn_generate = b_loc.first
+                    break
+
+            clicked = False
+            if btn_generate:
+                try:
+                    btn_generate.click(force=True, timeout=5000)
+                    clicked = True
+                except Exception:
+                    pass
+            if not clicked:
+                try:
+                    input_box.press("Enter")
+                except Exception:
+                    pass
+
+            # Một số cấu hình Agent yêu cầu xác nhận trước khi tiêu credits.
+            page.wait_for_timeout(1500)
+            for confirm_name in ["Generate", "Confirm", "Continue", "Tạo", "Xác nhận"]:
+                confirm_button = page.get_by_role("button", name=confirm_name, exact=True)
+                try:
+                    if confirm_button.count() > 0 and confirm_button.first.is_visible():
+                        confirm_button.first.click()
+                        break
+                except Exception:
+                    pass
+
+            safe_log("[*] Đã bấm nút Tạo video trên Google Flow! Đang chờ AI render clip...")
+
+            # 5. Theo dõi kết quả sinh video
+            start_time = time.time()
+            min_generation_wait = 12.0  # Chống bắt nhầm clip cũ trong 12 giây đầu
+
+            while time.time() - start_time < timeout_sec:
+                if page.is_closed():
+                    safe_log("[!] Tab Flow bị đóng. Đang kết nối lại...")
+                    self.browser = None
+                    self.context = None
+                    self.page = None
+                    ok_reconnect, reconnect_message = self.connect()
+                    if not ok_reconnect or not self.page:
+                        return False, reconnect_message
+                    page = self.page
+
+                try:
+                    page.wait_for_timeout(3000)
+                except Exception:
+                    pass
+
+                elapsed = time.time() - start_time
+                if elapsed < min_generation_wait:
+                    continue
+
+                candidate_url = None
+
+                # Ưu tiên URL từ network listener
+                if new_network_videos:
+                    for n_url in list(new_network_videos):
+                        if n_url not in self.seen_video_urls:
+                            candidate_url = n_url
+                            break
+
+                # Tiếp theo kiểm tra thẻ <video> mới trong DOM
+                if not candidate_url:
+                    for v in page.locator("video").all():
+                        try:
+                            src = v.get_attribute("src")
+                            if src and src not in self.seen_video_urls and ("blob:" in src or "http" in src):
+                                candidate_url = src
+                                break
+                        except Exception:
+                            pass
+
+                if candidate_url:
+                    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                    save_js = """
+                    async (src) => {
+                        const response = await fetch(src);
+                        const blob = await response.blob();
+                        return new Promise((resolve) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result);
+                            reader.readAsDataURL(blob);
+                        });
+                    }
+                    """
+                    try:
+                        data_url = page.evaluate(save_js, candidate_url)
+                        if data_url and "," in data_url:
+                            b64_data = data_url.split(",")[1]
+                            import base64, hashlib
+                            video_bytes = base64.b64decode(b64_data)
+                            file_hash = hashlib.sha256(video_bytes).hexdigest()
+
+                            if file_hash in self.seen_video_hashes:
+                                safe_log(f"[!] Bỏ qua video trùng lặp nội dung ({file_hash[:8]}), tiếp tục chờ Flow sinh clip mới...")
+                                self.seen_video_urls.add(candidate_url)
+                                continue
+
+                            # Lưu thành công clip hoàn toàn mới
+                            with open(output_path, "wb") as f:
+                                f.write(video_bytes)
+                            self.seen_video_hashes.add(file_hash)
+                            self.seen_video_urls.add(candidate_url)
+                            safe_log(f"[✓] Đã tạo thành công clip video độc lập từ Google Flow: {candidate_url[:50]}... (hash {file_hash[:8]})")
+                            return True, output_path
+                    except Exception as ex:
+                        safe_log(f"[!] Lỗi khi tải video blob: {ex}")
+
+            diagnostic_path = output_path if output_path.endswith(".png") else output_path.replace(".mp4", "_diagnostic.png")
+            page.screenshot(path=diagnostic_path)
+            return False, f"Hết thời gian chờ video từ Google Flow. Ảnh chẩn đoán: {diagnostic_path}"
+
         except Exception as e:
-            safe_log(f"[WARNING] Loi inject character hook: {e}")
-        return False
+            return False, f"Lỗi trong quá trình tương tác Google Flow: {str(e)}"
+        finally:
+            try:
+                page.remove_listener("response", _on_response)
+            except Exception:
+                pass
 
     def generate_scene_image(
         self,
         prompt: str,
         output_path: str,
         orientation: str = "vertical",
-        style_preset: str = "Clean minimalist stickman illustration, navy outlines, off-white background."
+        style_preset: str = ""
     ) -> Tuple[bool, str]:
-        """
-        Sinh 1 ảnh đơn lẻ cho phân cảnh thông qua Google Flow.
-        Trả về Tuple[thành_công, đường_dẫn_ảnh_hoặc_lỗi].
-        """
-        if not self.tool_frame:
-            ok, msg = self.connect()
-            if not ok:
-                return False, msg
-
-        frame = self.tool_frame
-        try:
-            # 1. Nạp nhân vật stickman mẫu
-            self.inject_mascot_reference()
-
-            # 2. Điền form
-            ratio = "9:16" if orientation == "vertical" else "16:9"
-            boxes = frame.get_by_role("textbox")
-            try:
-                boxes.nth(0).wait_for(state="visible", timeout=5000)
-            except Exception:
-                return False, "Google Flow chưa đăng nhập tài khoản hoặc tool chưa sẵn sàng."
-
-            # Ghép prompt với character lock
-            full_topic = f"{prompt.strip()} {STICKMAN_CANONICAL_GUIDANCE}"
-            boxes.nth(0).fill(full_topic)
-
-            boxes.nth(1).fill(style_preset)
-            boxes.nth(2).fill("Match canonical blue shirt #8CCFE8, white head, oval black eyes, coral tongue.")
-            boxes.nth(3).fill("")
-            boxes.nth(4).fill("")
-
-            # Chọn tỉ lệ
-            frame.get_by_role("button", name=ratio, exact=True).click()
-
-            # Chọn model Nano Banana Pro và 1 worker
-            combos = frame.get_by_role("combobox")
-            try:
-                combos.nth(2).select_option(label="🍌 Nano Banana Pro")
-                combos.nth(3).select_option(label="1 Worker")
-            except Exception:
-                pass
-
-            # 3. Đưa vào queue
-            frame.get_by_role("button", name="Initialize Generation", exact=True).click()
-            time.sleep(1.0)
-
-            # 4. Bấm Start Queue
-            start_btn = frame.get_by_role("button", name="Start Queue", exact=True)
-            start_btn.click()
-
-            # 5. Theo dõi kết quả từ localStorage
-            timeout_sec = self.cfg.get("timeout_seconds", 120)
-            start_time = time.time()
-            img_b64 = None
-            mime_type = "image/png"
-
-            while time.time() - start_time < timeout_sec:
-                time.sleep(1.5)
-                state = frame.evaluate("() => JSON.parse(localStorage.getItem('VP_LAB_STATE_V2') || '{}')")
-                queue = state.get("queue", [])
-                if queue:
-                    latest_item = queue[-1]
-                    status = latest_item.get("status", "")
-                    if status in ("COMPLETED", "ACCEPTED") and latest_item.get("result", {}).get("base64"):
-                        img_b64 = latest_item["result"]["base64"]
-                        mime_type = latest_item["result"].get("mimeType", "image/png")
-                        break
-                    elif status in ("FAILED", "UNKNOWN"):
-                        return False, f"Quá trình sinh ảnh trong Flow báo lỗi: {status}"
-
-            if not img_b64:
-                return False, f"Hết thời gian chờ ({timeout_sec}s) sinh ảnh từ Google Flow."
-
-            # 6. Ghi ảnh ra đĩa
-            out_file = Path(output_path)
-            out_file.parent.mkdir(parents=True, exist_ok=True)
-            img_bytes = base64.b64decode(img_b64)
-            out_file.write_bytes(img_bytes)
-
-            return True, str(out_file)
-
-        except Exception as e:
-            return False, f"Lỗi quy trình sinh ảnh Google Flow: {str(e)}"
-
-    def close(self):
-        """Đóng kết nối CDP (giữ nguyên tab Chrome)."""
-        try:
-            if self.browser:
-                self.browser.close()
-            if self.playwright:
-                self.playwright.stop()
-        except Exception:
-            pass
-        self.browser = None
-        self.playwright = None
-        self.page = None
-        self.tool_frame = None
+        """Tự động sinh ảnh từ Google Flow Nano Banana / Imagen 3."""
+        # Gọi luồng sinh media
+        return self.generate_scene_video(prompt=prompt, output_path=output_path, orientation=orientation)
 
 
-_global_controller = None
+_CONTROLLER_LOCAL = threading.local()
 
 def get_flow_controller() -> FlowBrowserController:
-    """Singleton lấy instance bộ điều khiển Flow."""
-    global _global_controller
-    if _global_controller is None:
-        _global_controller = FlowBrowserController()
-    return _global_controller
+    """Mỗi thread dùng một controller riêng vì Playwright sync không thread-safe."""
+    controller = getattr(_CONTROLLER_LOCAL, "controller", None)
+    if controller is None:
+        controller = FlowBrowserController()
+        _CONTROLLER_LOCAL.controller = controller
+    return controller

@@ -34,9 +34,9 @@ def safe_log(msg: str):
 from src.config import (
     TEMP_DIR, OUTPUT_DIR, TTS_VOICE_DEFAULT, DEFAULT_IMAGE_STYLE
 )
-from src.llm_service import generate_script
+from src.llm_service import generate_script, generate_video_metadata
 from src.tts_service import generate_tts
-from src.flow_image_service import generate_flow_image
+from src.flow_image_service import generate_flow_image, generate_flow_video
 from src.whisper_service import get_word_timestamps
 from src.video_compiler import compile_video_pipeline
 
@@ -65,8 +65,14 @@ def split_prompt_to_video_topics(main_prompt: str, count: int, language: str = "
     """
     # Nếu người dùng nhập mỗi dòng một chủ đề
     lines = [line.strip() for line in main_prompt.strip().split("\n") if line.strip()]
-    if len(lines) >= count and len(lines) > 1:
-        return lines[:count]
+    if len(lines) > 1:
+        topics = lines[:count]
+        while len(topics) < count:
+            base_topic = lines[len(topics) % len(lines)]
+            episode = len(topics) // len(lines) + 1
+            suffix = f"Tập mở rộng {episode}" if language == "vi" else f"Extended episode {episode}"
+            topics.append(f"{base_topic} ({suffix})")
+        return topics
     
     # Nếu chỉ có 1 chủ đề hoặc số dòng ít hơn count
     base_topic = lines[0] if lines else main_prompt.strip()
@@ -150,33 +156,33 @@ def produce_single_video_pipeline(
     notify(45, "Bắt đầu sinh bối cảnh hình ảnh AI riêng biệt cho từng phân cảnh...")
     for i, sc in enumerate(scenes):
         sc_num = sc.get("scene_num", i + 1)
-        img_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}_bg.png")
-        sc["image_path"] = img_file
-        sc["use_video_ai"] = False
-
         prompt = sc.get("video_prompt") or sc.get("narration") or "Stickman cinematic scene"
         step_pct = 45 + (i / num_scenes) * 30
-        notify(step_pct, f"Đang vẽ bối cảnh phân cảnh {sc_num}/{num_scenes} qua Google Flow...")
+        notify(step_pct, f"Đang tạo cảnh {sc_num}/{num_scenes} qua Google Flow...")
 
         if image_engine == "flow":
-            ok, res = generate_flow_image(
+            media_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}.mp4")
+            sc["video_path"] = media_file
+            sc["use_video_ai"] = True
+            ok, res = generate_flow_video(
                 prompt=prompt,
-                output_path=img_file,
+                output_path=media_file,
                 orientation=orientation,
                 style_preset=style_preset,
-                fallback_to_sd=True
             )
-
         else:
             from src.image_service import generate_single_image
+            media_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}_bg.png")
+            sc["image_path"] = media_file
+            sc["use_video_ai"] = False
             ok, res = generate_single_image(
                 prompt=prompt,
-                output_path=img_file,
+                output_path=media_file,
                 orientation=orientation,
                 style_preset=style_preset
             )
 
-        if not ok or not os.path.exists(img_file):
+        if not ok or not os.path.exists(media_file) or os.path.getsize(media_file) == 0:
             err = f"Lỗi sinh ảnh phân cảnh {sc_num} từ Google Flow: {res}"
             notify(step_pct, err)
             return False, err, run_meta
@@ -218,10 +224,17 @@ def produce_single_video_pipeline(
 
     import shutil
     shutil.copy2(src_video, final_path)
-    notify(100, f"✅ Hoàn thành xuất sắc video {video_index}: {final_name}")
 
     run_meta["final_path"] = final_path
     run_meta["scenes"] = scenes
+    notify(96, "Đang tạo tiêu đề, mô tả và hashtag phù hợp với nội dung...")
+    _, publishing = generate_video_metadata(topic, scenes, language=language)
+    run_meta["publishing"] = publishing
+    metadata_path = os.path.splitext(final_path)[0] + ".json"
+    with open(metadata_path, "w", encoding="utf-8") as metadata_file:
+        json.dump(run_meta, metadata_file, ensure_ascii=False, indent=2)
+    run_meta["metadata_path"] = metadata_path
+    notify(100, f"✅ Hoàn thành video {video_index}: {final_name}")
     return True, final_path, run_meta
 
 

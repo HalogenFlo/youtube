@@ -1,3 +1,19 @@
+# 🎬 Xưởng Video Kiến Thức AI — Google Flow
+
+Giao diện chính hiện là một dây chuyền sản xuất video tự động: nhập một chủ đề hoặc danh sách chủ đề, chọn số lượng video rồi để hệ thống tự viết kịch bản, tạo từng cảnh bằng Google Flow, sinh giọng đọc, dựng video và đóng gói metadata sẵn đăng.
+
+## Chạy xưởng tự động
+
+1. Chạy `run.bat`. Chrome sẽ mở với cổng điều khiển Google Flow và giao diện mở tại `http://localhost:8502`.
+2. Đăng nhập Google Flow nếu được yêu cầu và giữ cửa sổ Chrome đó hoạt động.
+3. Trong **Kho ý tưởng**, nhập chủ đề, số video, giọng đọc và khung hình.
+4. Bấm **Khởi động dây chuyền**. Có thể để máy chạy; hàng đợi được lưu tại `temp/video_factory_state.json`.
+5. Lấy video, tiêu đề, mô tả và hashtag trong tab **Kho thành phẩm**. Mỗi MP4 có một file JSON metadata cùng tên trong thư mục `output/`.
+
+Nếu ứng dụng đóng giữa chừng, công việc đang chạy sẽ trở lại hàng chờ khi mở lại. Khi Chrome/Google Flow mất kết nối, xưởng tự tạm dừng để tránh làm hỏng toàn bộ hàng đợi.
+
+---
+
 # 🚀 YouTube View & Shorts Booster Pro & AI Video Pipeline
 
 Hệ thống chuyên nghiệp tự động hóa cày view **YouTube Shorts & Video** thông minh chống phát hiện bot (Anti-detect nodriver), tích hợp luồng giám sát **Supervisor tự phục hồi 24/7**, giao diện **Streamlit Web UI** trực quan hiển thị trực tiếp video đang xem và đóng gói sẵn **Docker Container** triển khai chỉ với 1 lệnh.

@@ -3,6 +3,7 @@
 # Trích dẫn: Tuân thủ quy định API của Ollama và cấu trúc kịch bản phân cảnh trong PLAN.md.
 
 import json
+import re
 import requests
 from typing import Tuple, Dict, Any, List
 from src.config import OLLAMA_API_URL, OLLAMA_MODEL_DEFAULT
@@ -81,6 +82,71 @@ def generate_script(
         "Đảm bảo mạch câu chuyện liền mạch, hấp dẫn và cấu trúc đúng định dạng JSON."
     )
     return call_ollama(user_prompt, get_system_prompt(language), model)
+
+
+def _fallback_video_metadata(topic: str, language: str = "vi") -> Dict[str, Any]:
+    """Tạo metadata an toàn khi Ollama tạm thời không phản hồi."""
+    clean_topic = re.sub(r"\s*\((Phần|Part)\s+\d+.*?\)\s*$", "", topic, flags=re.IGNORECASE).strip()
+    clean_topic = re.sub(r"\s+", " ", clean_topic).strip(" .,:;-_")
+    if language == "vi":
+        title = f"{clean_topic}: Điều bất ngờ bạn chưa biết"
+        description = f"Khám phá kiến thức ngắn gọn, dễ hiểu và thú vị về {clean_topic}."
+        base_tags = ["#kienthuc", "#kienthucmoingay", "#shorts", "#videoAI", "#khampha"]
+    else:
+        title = f"{clean_topic}: What You Didn't Know"
+        description = f"A short, clear and surprising explanation of {clean_topic}."
+        base_tags = ["#knowledge", "#learnontiktok", "#shorts", "#AIvideo", "#facts"]
+
+    words = re.findall(r"[^\W\d_]+", clean_topic, flags=re.UNICODE)[:3]
+    topic_tag = "#" + "".join(words) if words else ""
+    hashtags = ([topic_tag] if topic_tag else []) + base_tags
+    return {
+        "title": title[:100],
+        "description": description,
+        "hashtags": hashtags[:8],
+    }
+
+
+def generate_video_metadata(
+    topic: str,
+    scenes: List[Dict[str, Any]],
+    language: str = "vi",
+    model: str = OLLAMA_MODEL_DEFAULT,
+) -> Tuple[bool, Dict[str, Any]]:
+    """Sinh tiêu đề, mô tả và hashtag sẵn sàng để đăng cùng video."""
+    narration = " ".join(str(scene.get("narration", "")) for scene in scenes)
+    lang_name = "tiếng Việt" if language == "vi" else "English"
+    system_prompt = (
+        "Bạn là chuyên gia metadata cho video kiến thức ngắn. "
+        "Chỉ trả về JSON gồm title, description và hashtags. "
+        f"Tiêu đề và mô tả viết bằng {lang_name}; title tối đa 100 ký tự, hấp dẫn nhưng không giật tít sai. "
+        "hashtags là mảng 5-8 chuỗi, mỗi chuỗi bắt đầu bằng #, không dấu cách."
+    )
+    prompt = (
+        f"Chủ đề: {topic}\n"
+        f"Nội dung lời thoại: {narration[:3500]}\n"
+        "Tạo metadata đúng trọng tâm nội dung video."
+    )
+    success, data = call_ollama(prompt, system_prompt, model)
+    if success and isinstance(data, dict):
+        title = str(data.get("title", "")).strip()
+        description = str(data.get("description", "")).strip()
+        raw_tags = data.get("hashtags", [])
+        if isinstance(raw_tags, str):
+            raw_tags = raw_tags.replace(",", " ").split()
+        hashtags = []
+        for tag in raw_tags if isinstance(raw_tags, list) else []:
+            normalized = "#" + re.sub(r"[^\w\u00C0-\u024F]", "", str(tag).lstrip("#"))
+            if len(normalized) > 1 and normalized not in hashtags:
+                hashtags.append(normalized)
+        if title and hashtags:
+            return True, {
+                "title": title[:100],
+                "description": description,
+                "hashtags": hashtags[:8],
+            }
+
+    return True, _fallback_video_metadata(topic, language)
 
 def remake_script(
     transcript: str, 
@@ -406,6 +472,5 @@ def feedback_educational_script(
         "Hãy cập nhật lại kịch bản JSON theo góp ý trên. Giữ nguyên định dạng và nội dung các phân cảnh không bị yêu cầu sửa đổi."
     )
     return call_ollama(user_prompt, get_educational_system_prompt(language), model)
-
 
 

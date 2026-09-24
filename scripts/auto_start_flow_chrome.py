@@ -48,7 +48,7 @@ def main():
         print("[!] Không tìm thấy Google Chrome trong hệ thống.")
         return 1
 
-    user_data = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
+    user_data = str(Path(__file__).resolve().parent.parent / "flow_chrome_profile")
     profile = "Default"
 
     # Kiểm tra xem Chrome có đang chạy không

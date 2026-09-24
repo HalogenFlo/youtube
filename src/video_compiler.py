@@ -6,6 +6,13 @@ import os
 import gc
 import subprocess
 from typing import List, Dict, Any, Tuple
+import PIL.Image
+if not hasattr(PIL.Image, "ANTIALIAS"):
+    try:
+        PIL.Image.ANTIALIAS = getattr(PIL.Image.Resampling, "LANCZOS", getattr(PIL.Image, "LANCZOS", None))
+    except Exception:
+        pass
+
 from moviepy.editor import ImageClip, VideoFileClip, AudioFileClip, concatenate_videoclips
 import moviepy.video.fx.all as vfx
 from src.config import TEMP_DIR, OUTPUT_DIR, DEFAULT_FPS, FONT_PATH

@@ -29,3 +29,12 @@ try:
 except Exception:
     pass
 
+try:
+    # Vá lỗi Pillow 10+ loại bỏ Image.ANTIALIAS làm sập moviepy.video.fx.resize
+    import PIL.Image
+    if not hasattr(PIL.Image, "ANTIALIAS"):
+        PIL.Image.ANTIALIAS = getattr(PIL.Image.Resampling, "LANCZOS", getattr(PIL.Image, "LANCZOS", None))
+except Exception:
+    pass
+
+

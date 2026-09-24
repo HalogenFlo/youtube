@@ -20,5 +20,6 @@ yt-dlp>=2024.3.10
 imageio[ffmpeg]>=2.34.0
 mutagen>=1.47.0
 nodriver>=0.38
+playwright>=1.48.0
 fake-useragent>=1.4.0
 psutil>=5.9.0

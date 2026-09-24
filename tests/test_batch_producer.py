@@ -3,6 +3,7 @@
 import unittest
 from unittest.mock import patch, MagicMock
 from src.batch_producer import split_prompt_to_video_topics, get_audio_duration
+from src.llm_service import generate_video_metadata
 
 
 class TestBatchProducer(unittest.TestCase):
@@ -29,6 +30,16 @@ class TestBatchProducer(unittest.TestCase):
         self.assertEqual(len(topics), 2)
         self.assertIn("Part 1", topics[0])
         self.assertIn("Part 2", topics[1])
+
+    @patch("src.llm_service.call_ollama", return_value=(False, "offline"))
+    def test_metadata_has_title_and_hashtags_when_llm_is_offline(self, _mock_call):
+        ok, metadata = generate_video_metadata(
+            "Bí ẩn về đại dương", [{"narration": "Dưới đáy biển có rất nhiều điều chưa biết."}], "vi"
+        )
+        self.assertTrue(ok)
+        self.assertTrue(metadata["title"])
+        self.assertGreaterEqual(len(metadata["hashtags"]), 5)
+        self.assertTrue(all(tag.startswith("#") for tag in metadata["hashtags"]))
 
 
 if __name__ == "__main__":

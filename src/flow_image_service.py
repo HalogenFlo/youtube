@@ -1,9 +1,9 @@
-# Chức năng: Service cấp cao điều phối sinh ảnh từ Google Flow với cơ chế Fallback sang Stable Diffusion nếu Flow không khả dụng.
-# Lý do tạo: Tích hợp liền mạch vào Web UI app.py, cho phép người dùng chọn nguồn sinh ảnh linh hoạt.
-# Trích dẫn: Gọi FlowBrowserController từ src/flow_browser_service.py.
+# Chức năng: Service điều phối sinh nội dung thật từ Google Flow (flow.google.com), loại bỏ hoàn toàn các hình ảnh giả/fallback thô sơ.
+# Lý do tạo: Đáp ứng 100% yêu cầu người dùng: Mọi hình ảnh và video phải được tạo trực tiếp từ Google Flow trên tài khoản của user.
 
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Tuple, List, Dict, Any
 
@@ -20,10 +20,10 @@ if hasattr(sys.stderr, 'reconfigure'):
 
 def safe_log(msg: str):
     try:
-        print(msg)
+        print(msg, flush=True)
     except Exception:
         try:
-            print(msg.encode('ascii', errors='replace').decode('ascii'))
+            print(msg.encode('ascii', errors='replace').decode('ascii'), flush=True)
         except Exception:
             pass
 
@@ -31,91 +31,42 @@ from src.flow_browser_service import get_flow_controller
 from src.config import DEFAULT_IMAGE_STYLE
 
 
-def generate_smart_stickman_canvas(prompt: str, output_path: str, orientation: str = "vertical") -> str:
+def generate_flow_media(
+    prompt: str,
+    output_path: str,
+    orientation: str = "vertical",
+    style_preset: str = DEFAULT_IMAGE_STYLE,
+    mode: str = "video"
+) -> Tuple[bool, str]:
     """
-    Sinh bối cảnh người que Stickman CH01 nghệ thuật bằng Pillow làm Fallback an toàn.
-    Đảm bảo 100% pipeline không bao giờ bị gián đoạn, luôn có ảnh bối cảnh sắc nét để dựng video.
+    Sinh nội dung (Video hoặc Ảnh) trực tiếp từ Google Flow theo prompt.
+    Không dùng bất kỳ hình ảnh giả hay fallback thô sơ nào.
     """
-    try:
-        from PIL import Image, ImageDraw, ImageFont
-        import hashlib
+    safe_log(f"[*] Đang đưa prompt lên Google Flow: \"{prompt[:60]}...\"")
+    controller = get_flow_controller()
 
-        width, height = (1080, 1920) if orientation == "vertical" else (1920, 1080)
-        
-        # Chọn màu nền gradient nhẹ theo hash của prompt để mỗi cảnh có sắc thái riêng
-        h_val = int(hashlib.md5(prompt.encode('utf-8')).hexdigest()[:6], 16)
-        r_base = 230 + (h_val % 20)
-        g_base = 235 + ((h_val >> 4) % 18)
-        b_base = 240 + ((h_val >> 8) % 15)
+    if mode == "video":
+        success, result_path = controller.generate_scene_video(
+            prompt=prompt,
+            output_path=output_path,
+            orientation=orientation
+        )
+    else:
+        success, result_path = controller.generate_scene_image(
+            prompt=prompt,
+            output_path=output_path,
+            orientation=orientation,
+            style_preset=style_preset
+        )
 
-        img = Image.new("RGB", (width, height), (r_base, g_base, b_base))
-        draw = ImageDraw.Draw(img)
+    if success and os.path.exists(output_path):
+        safe_log(f"[✓] Đã tạo thành công từ Google Flow: {output_path}")
+        return True, output_path
 
-        # Vẽ các vệt sáng / hình khối tối giản làm bối cảnh sâu
-        for i in range(5):
-            cx = (h_val * (i + 1) * 73) % width
-            cy = (h_val * (i + 1) * 109) % (height // 2)
-            rad = 80 + (i * 30)
-            c_fill = (r_base - 15 - i*3, g_base - 10 - i*2, b_base + 5)
-            draw.ellipse([cx - rad, cy - rad, cx + rad, cy + rad], fill=c_fill)
-
-        # Tọa độ trung tâm nhân vật Stickman CH01
-        char_x = width // 2
-        char_y = int(height * 0.58)
-
-        # 1. Vẽ bóng nhân vật dưới sàn
-        draw.ellipse([char_x - 120, char_y + 240, char_x + 120, char_y + 280], fill=(210, 215, 222))
-
-        # 2. Hai chân Stickman (Navy #1E293B)
-        navy_color = (30, 41, 59)
-        draw.line([char_x - 30, char_y + 110, char_x - 60, char_y + 250], fill=navy_color, width=14)
-        draw.line([char_x + 30, char_y + 110, char_x + 60, char_y + 250], fill=navy_color, width=14)
-
-        # 3. Thân áo xanh nhạt CH01 (#8CCFE8)
-        shirt_color = (140, 207, 232)
-        shirt_poly = [
-            (char_x - 65, char_y),
-            (char_x + 65, char_y),
-            (char_x + 75, char_y + 120),
-            (char_x - 75, char_y + 120)
-        ]
-        draw.polygon(shirt_poly, fill=shirt_color, outline=navy_color)
-
-        # 4. Hai cánh tay Stickman
-        draw.line([char_x - 65, char_y + 20, char_x - 130, char_y - 30], fill=navy_color, width=14) # Tay trái giơ lên chỉ trỏ
-        draw.line([char_x + 65, char_y + 20, char_x + 110, char_y + 80], fill=navy_color, width=14) # Tay phải
-
-        # 5. Đầu tròn người que (trắng, viền navy đậm)
-        head_r = 75
-        head_y = char_y - 85
-        draw.ellipse([char_x - head_r, head_y - head_r, char_x + head_r, head_y + head_r], fill=(255, 255, 255), outline=navy_color, width=14)
-
-        # 6. Hai mắt hình oval dọc màu đen
-        draw.ellipse([char_x - 28, head_y - 20, char_x - 12, head_y + 15], fill=navy_color)
-        draw.ellipse([char_x + 12, head_y - 20, char_x + 28, head_y + 15], fill=navy_color)
-
-        # 7. Miệng cười tươi vui với lưỡi hồng san hô
-        draw.arc([char_x - 35, head_y + 5, char_x + 35, head_y + 45], start=0, end=180, fill=navy_color, width=10)
-
-        # 8. Khung tóm tắt bối cảnh
-        box_w, box_h = int(width * 0.85), 160
-        box_x = (width - box_w) // 2
-        box_y = int(height * 0.18)
-        draw.rounded_rectangle([box_x, box_y, box_x + box_w, box_y + box_h], radius=20, fill=(255, 255, 255, 220), outline=navy_color, width=4)
-
-        # Lưu ảnh
-        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-        img.save(output_path, "PNG")
-        safe_log(f"[✓] Đã tạo bối cảnh Smart Canvas hoàn tất: {output_path}")
-        return output_path
-    except Exception as e:
-        safe_log(f"[!] Lỗi tạo smart canvas: {e}")
-        # Phương án tối thượng: tạo ảnh rỗng màu pastel
-        img = Image.new("RGB", (1080, 1920), (240, 243, 246))
-        img.save(output_path, "PNG")
-        return output_path
+    return False, f"Google Flow không thể tạo nội dung: {result_path}"
 
 
+# Tương thích ngược với các module gọi generate_flow_image
 def generate_flow_image(
     prompt: str,
     output_path: str,
@@ -123,32 +74,29 @@ def generate_flow_image(
     style_preset: str = DEFAULT_IMAGE_STYLE,
     fallback_to_sd: bool = False
 ) -> Tuple[bool, str]:
-    """
-    Sinh 1 ảnh phân cảnh bằng Google Flow (Nano Banana Pro).
-    Nếu gặp lỗi, tự động chuyển sang Fallback an toàn (Smart Canvas / SD) để đảm bảo 100% video hoàn thành.
-    """
-    safe_log(f"[*] Dang yeu cau Google Flow sinh anh: \"{prompt[:60]}...\"")
-    controller = get_flow_controller()
-    success, result_or_err = controller.generate_scene_image(
+    return generate_flow_media(
         prompt=prompt,
         output_path=output_path,
         orientation=orientation,
-        style_preset=style_preset
+        style_preset=style_preset,
+        mode="image"
     )
 
-    if success and os.path.exists(output_path):
-        return True, result_or_err
 
-    safe_log(f"[!] Google Flow gap su co ({result_or_err}). Chuyen sang Fallback Smart Canvas...")
-    try:
-        fallback_path = generate_smart_stickman_canvas(
-            prompt=prompt,
-            output_path=output_path,
-            orientation=orientation
-        )
-        return True, fallback_path
-    except Exception as ex:
-        return False, f"Lỗi sinh bối cảnh: {ex}"
+def generate_flow_video(
+    prompt: str,
+    output_path: str,
+    orientation: str = "vertical",
+    style_preset: str = DEFAULT_IMAGE_STYLE,
+) -> Tuple[bool, str]:
+    """Sinh clip MP4 thật từ Google Flow cho một phân cảnh."""
+    return generate_flow_media(
+        prompt=prompt,
+        output_path=output_path,
+        orientation=orientation,
+        style_preset=style_preset,
+        mode="video",
+    )
 
 
 def generate_flow_batch(
@@ -158,14 +106,11 @@ def generate_flow_batch(
     style_preset: str = DEFAULT_IMAGE_STYLE,
     fallback_to_sd: bool = False
 ) -> Tuple[bool, List[str]]:
-    """
-    Sinh hàng loạt ảnh cho các phân cảnh trong kịch bản.
-    """
+    """Sinh hàng loạt nội dung cho các cảnh từ Google Flow."""
     image_paths = []
     for i, sc in enumerate(scenes):
         out_path = os.path.join(temp_dir, f"scene_flow_{i+1}.png")
-        prompt = sc.get("video_prompt") or sc.get("narration") or "Stickman scene"
-        
+        prompt = sc.get("video_prompt") or sc.get("narration") or "Cinematic scene"
         ok, res = generate_flow_image(
             prompt=prompt,
             output_path=out_path,
@@ -176,5 +121,4 @@ def generate_flow_batch(
         if not ok:
             return False, [f"Lỗi ở cảnh {i+1}: {res}"]
         image_paths.append(res)
-
     return True, image_paths

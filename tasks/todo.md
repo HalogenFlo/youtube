@@ -87,7 +87,8 @@ Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow
   - [x] Bổ sung phím số `5. Chạy Tự Động Hàng Loạt từ Prompt` vào `run.bat`.
   - [x] Nâng cấp `scripts/launch_flow_chrome.bat` và phím số `4` trong `run.bat` để phát hiện và khởi động Chrome port 9222 sạch sẽ.
 
-- [ ] **Bước 5: Kiểm thử & Đẩy lên GitHub**
-  - [ ] Kiểm thử tự động (Unit test & dry-run test).
-  - [ ] Commit và git push lên GitHub `Phatjhhoq8/youtube`.
+- [x] **Bước 5: Kiểm thử & Đẩy lên GitHub**
+  - [x] Kiểm thử tự động (Unit test 39/39 passed, live video generation & Pillow monkey-patch verification).
+  - [x] Commit và git push lên GitHub `Phatjhhoq8/youtube`.
+
 

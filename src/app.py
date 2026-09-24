@@ -46,10 +46,10 @@ from src.video_compiler import compile_video_pipeline
 
 # --- THIẾT LẬP TRANG STREAMLIT ---
 st.set_page_config(
-    page_title="AI Video Producer - Antigravity",
+    page_title="Xưởng Video Kiến Thức AI",
     page_icon="🎬",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
 

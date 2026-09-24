@@ -23,3 +23,11 @@ ENV/
 Thumbs.db
 .vscode/
 .idea/
+
+# Chrome automation profile & debug artifacts
+flow_chrome_profile/
+scratch/
+flow_screen.png
+flow_after_click.png
+debug_*.png
+
