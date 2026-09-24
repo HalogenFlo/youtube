@@ -55,11 +55,23 @@ def apply_visual_beat_motion(
     base_clip = base_clip.resize(newsize=(target_w, target_h))
 
     if not beats:
-        beats = calculate_visual_beats(duration, num_beats=2)
+        # Chuyển động điện ảnh một chiều: zoom cực chậm từ 1.00 đến 1.03
+        # Giúp khung hình sống động tự nhiên nhưng không làm giật lắc bối cảnh
+        def subtle_zoom(t: float) -> float:
+            progress = min(1.0, max(0.0, t / max(duration, 0.001)))
+            return 1.0 + 0.03 * progress
 
-    # Hàm nội suy scale theo thời gian t dựa trên các beats
+        zoomed_clip = base_clip.resize(subtle_zoom)
+        final_clip = zoomed_clip.crop(
+            x_center=zoomed_clip.w / 2,
+            y_center=zoomed_clip.h / 2,
+            width=target_w,
+            height=target_h
+        )
+        return final_clip
+
+    # Trường hợp có custom beats chỉ định
     def dynamic_zoom(t: float) -> float:
-        # Tìm beat hiện tại
         current_beat = beats[0]
         for b in beats:
             if t >= b["at"]:
@@ -74,7 +86,7 @@ def apply_visual_beat_motion(
         # Smooth interpolation bằng hàm Cosine (Ease-in-out)
         smooth_progress = 0.5 * (1.0 - math.cos(progress * math.pi))
         
-        s_min, s_max = current_beat.get("scale_range", (1.0, 1.08))
+        s_min, s_max = current_beat.get("scale_range", (1.0, 1.03))
         return s_min + (s_max - s_min) * smooth_progress
 
     # Áp dụng zoom động
@@ -89,3 +101,4 @@ def apply_visual_beat_motion(
     )
 
     return final_clip
+

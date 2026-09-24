@@ -53,6 +53,41 @@ Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow
   - [ ] Di chuyển `launch_flow_chrome.bat`, `run_view_booster_ui.bat`, `run_view_booster_headless.bat` vào `scripts/`.
   - [ ] Nâng cấp `run.bat` tại gốc thành Launcher Menu thông minh 1-click cho người dùng.
 
-- [ ] **Bước 5: Kiểm chứng toàn diện (Verification)**
-  - [ ] Chạy lại toàn bộ test suite trong `tests/`.
-  - [ ] Kiểm tra tính toàn vẹn của tiến trình đang chạy và cập nhật sơ đồ README.md.
+- [x] **Bước 5: Kiểm chứng toàn diện (Verification)**
+  - [x] Chạy lại toàn bộ test suite trong `tests/`.
+  - [x] Kiểm tra tính toàn vẹn của tiến trình đang chạy và cập nhật sơ đồ README.md.
+
+---
+
+## 4. Kế Hoạch: Auto Batch Video Pipeline (Tự Động Sinh Kịch Bản & Tạo Nhiều Video Lặp Lại)
+
+- [x] **Bước 1: Nâng cấp Động cơ Chuyển động & Chuyển cảnh (`src/visual_beats.py` & `src/video_compiler.py`)**
+  - [x] Bỏ hiệu ứng zoom breathing co giãn giật cục ("di chuyển tào lao").
+  - [x] Đổi sang chuyển cảnh tự nhiên, dứt khoát giữa các phân cảnh độc lập (Cut / Subtle Cinematic Zoom 1 chiều).
+  - [x] Đảm bảo mỗi phân cảnh mang bối cảnh hình ảnh riêng biệt, hiển thị phụ đề sắc nét, rõ ràng.
+
+- [x] **Bước 2: Xây dựng Module Sản xuất Hàng loạt Tự động (`src/batch_producer.py`)**
+  - [x] Hỗ trợ nhận 1 Prompt lớn chia thành N video HOẶC danh sách nhiều prompts (mỗi dòng 1 video).
+  - [x] Vòng lặp tự động (End-to-End Batch Loop):
+    1. Sinh kịch bản phân cảnh với LLM (Ollama).
+    2. Sinh audio TTS từng phân cảnh.
+    3. Gửi từng phân cảnh sang Google Flow để vẽ bối cảnh AI riêng biệt.
+    4. Trích xuất phụ đề timestamps (Whisper).
+    5. Biên tập và render video hoàn chỉnh (`output/batch_video_*.mp4`).
+    6. Tự động lặp lại cho toàn bộ danh sách video.
+
+- [x] **Bước 3: Tích hợp Giao diện Web UI (`src/app.py` & `src/app_batch.py`)**
+  - [x] Thêm chế độ chính "⚡ Tự Động Hàng Loạt (Auto Batch)" ngay trên giao diện Streamlit (mặc định mở đầu tiên).
+  - [x] Giao diện trực quan 1-Click: Nhập Prompt -> Chọn số video -> Bắt đầu.
+  - [x] Trực quan hóa tiến độ theo thời gian thực (Video X/N, đang làm bước gì).
+  - [x] Hiển thị danh mục video thành phẩm để xem và tải về.
+
+- [x] **Bước 4: Nâng cấp Tiện ích Chrome CDP & CLI (`run.bat` & `scripts/batch_video_producer.py`)**
+  - [x] Tạo script CLI độc lập `scripts/batch_video_producer.py`.
+  - [x] Bổ sung phím số `5. Chạy Tự Động Hàng Loạt từ Prompt` vào `run.bat`.
+  - [x] Nâng cấp `scripts/launch_flow_chrome.bat` và phím số `4` trong `run.bat` để phát hiện và khởi động Chrome port 9222 sạch sẽ.
+
+- [ ] **Bước 5: Kiểm thử & Đẩy lên GitHub**
+  - [ ] Kiểm thử tự động (Unit test & dry-run test).
+  - [ ] Commit và git push lên GitHub `Phatjhhoq8/youtube`.
+
