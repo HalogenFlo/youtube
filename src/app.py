@@ -184,37 +184,11 @@ if "wan_steps" not in st.session_state:
 if "wan_measured_sec_per_step" not in st.session_state:
     st.session_state.wan_measured_sec_per_step = get_gpu_benchmark_sec_per_step()
 
-feature_mode = st.sidebar.selectbox(
-    "🎯 Chọn tính năng chính",
-    [
-        "⚡ Tự Động Hàng Loạt (Auto Batch)",
-        "🎬 Sản xuất Thủ công Từng bước",
-        "🧘 Học Tiếng Anh Self-heal",
-        "🎙️ Dịch & Lồng tiếng Video",
-        "📚 Bài dạy AI Slideshow"
-    ],
-    key="feature_mode"
-)
+# --- CHỨC NĂNG DUY NHẤT: TỰ ĐỘNG SẢN XUẤT VIDEO HÀNG LOẠT (AUTO BATCH LOOP) ---
+from src.app_batch import run_batch_ui
+run_batch_ui()
+st.stop()
 
-if feature_mode == "⚡ Tự Động Hàng Loạt (Auto Batch)":
-    from src.app_batch import run_batch_ui
-    run_batch_ui()
-    st.stop()
-
-if feature_mode == "🧘 Học Tiếng Anh Self-heal":
-    from src.app_selfheal import run_selfheal_ui
-    run_selfheal_ui()
-    st.stop()
-
-if feature_mode == "🎙️ Dịch & Lồng tiếng Video":
-    from src.app_dubbing import run_dubbing_ui
-    run_dubbing_ui()
-    st.stop()
-
-if feature_mode == "📚 Bài dạy AI Slideshow":
-    from src.app_educational import run_educational_ui
-    run_educational_ui()
-    st.stop()
 
 
 

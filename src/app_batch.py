@@ -125,8 +125,14 @@ def run_batch_ui():
             return
 
         if image_engine == "flow" and not is_cdp_connected:
-            st.error("❌ Không thể chạy Google Flow vì Chrome port 9222 chưa mở! Hãy chạy file `scripts/launch_flow_chrome.bat` (hoặc phím [4] trong `run.bat`) rồi bấm lại.")
-            return
+            with st.spinner("Đang tự động kích hoạt Google Chrome và kết nối cổng 9222..."):
+                controller = get_flow_controller()
+                ok, err = controller.connect()
+                if not ok:
+                    st.error(f"❌ Không thể tự động kết nối Google Flow: {err}")
+                    return
+                is_cdp_connected = True
+
 
         st.session_state.batch_is_running = True
         st.session_state.batch_completed_videos = []

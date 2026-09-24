@@ -1,73 +1,61 @@
 @echo off
 setlocal EnableDelayedExpansion
-title YouTube Automation and AI Video Suite
+title AI Video Producer - Google Flow Auto Batch Loop
 cd /d "%~dp0"
 
-:menu
-cls
 echo ============================================================
-echo   YOUTUBE AUTOMATION AND AI VIDEO PRODUCTION SUITE
+echo   AI VIDEO PRODUCER - GOOGLE FLOW AUTO BATCH PIPELINE
 echo ============================================================
 echo.
-echo   [1] Khoi chay AI Video Producer (Streamlit Web UI - Port 8502)
-echo   [2] Khoi chay YouTube View Booster (Streamlit Web UI - Port 8501)
-echo   [3] Khoi chay YouTube View Booster (CLI Chay ngam 24/7)
-echo   [4] Mo Chrome Debugging CDP cho Google Flow (Port 9222)
-echo   [5] Tu Dong Tao Hang Loat Video tu Prompt (CLI Auto Batch Loop)
-echo   [6] Chay kiem tra chan doan he thong (Tests)
-echo   [7] Thoat
+
+:: 1. TU DONG KICH HOAT CHROME PORT 9222 CHO GOOGLE FLOW (OPT 4 CU)
+echo [*] Dang tu dong kiem tra va khoi dong Chrome Google Flow (Cong CDP 9222)...
+
+set "CHROME_EXE=C:\Program Files\Google\Chrome\Application\chrome.exe"
+if not exist "%CHROME_EXE%" set "CHROME_EXE=C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+if not exist "%CHROME_EXE%" set "CHROME_EXE=%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"
+
+python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9222/json/version', timeout=1)" >nul 2>&1
+if "%ERRORLEVEL%"=="0" (
+    echo [OK] Chrome Google Flow (Port 9222) da san sang!
+) else (
+    echo [*] Cong 9222 chua bat. Dang tu dong khoi dong Chrome voi profile Default...
+    tasklist /FI "IMAGENAME eq chrome.exe" 2>NUL | find /I /N "chrome.exe">NUL
+    if "%ERRORLEVEL%"=="0" (
+        echo [*] Dang giai phong Chrome cu de mo cong 9222...
+        taskkill /F /IM chrome.exe >nul 2>&1
+        timeout /t 1 >nul
+    )
+    start "" "%CHROME_EXE%" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\Google\Chrome\User Data" --profile-directory="Default" --remote-allow-origins=* --no-first-run --no-default-browser-check "https://flow.google.com"
+    timeout /t 2 >nul
+    echo [OK] Chrome da tu dong kich hoat tai cong 9222!
+)
+
 echo.
 echo ============================================================
-set /p opt="Nhap lua chon cua ban (1-7): "
+echo   CHON CHE DO KHOI CHAY
+echo ============================================================
+echo   [1] Giao dien Web (Streamlit UI - Nhap Prompt va Tao Video) [MAC DINH]
+echo   [2] Chay truc tiep tren Command Line (CLI Auto Batch)
+echo   [3] Thoat
+echo ============================================================
+set "opt=1"
+set /p opt="Nhap lua chon (1-3, mac dinh 1 sau 5 giay): "
 
-if "%opt%"=="1" goto opt1
-if "%opt%"=="2" goto opt2
-if "%opt%"=="3" goto opt3
-if "%opt%"=="4" goto opt4
-if "%opt%"=="5" goto opt5
-if "%opt%"=="6" goto opt6
-if "%opt%"=="7" goto opt7
-goto menu
+if "%opt%"=="2" goto run_cli
+if "%opt%"=="3" exit /b 0
 
-:opt1
+:run_ui
 echo.
 echo [*] Dang khoi chay AI Video Producer tren cong 8502...
+start http://localhost:8502
 streamlit run src/app.py --server.port 8502
 pause
-goto menu
+exit /b 0
 
-:opt2
+:run_cli
 echo.
-echo [*] Dang khoi chay YouTube View Booster UI tren cong 8501...
-call scripts\run_view_booster_ui.bat
-goto menu
-
-:opt3
-echo.
-echo [*] Dang khoi chay YouTube View Booster CLI...
-call scripts\run_view_booster_headless.bat
-goto menu
-
-:opt4
-echo.
-echo [*] Dang mo Chrome Debugging cho Google Flow...
-call scripts\launch_flow_chrome.bat
-goto menu
-
-:opt5
-echo.
-echo [*] Dang khoi chay Auto Batch Video Producer tu Prompt...
+echo [*] Dang chay Auto Batch Video Producer CLI...
 python scripts\batch_video_producer.py
 pause
-goto menu
-
-:opt6
-echo.
-echo [*] Dang chay kiem tra he thong...
-python -m unittest discover -s tests -v
-python tests\test_flow_connection.py
-pause
-goto menu
-
-:opt7
 exit /b 0

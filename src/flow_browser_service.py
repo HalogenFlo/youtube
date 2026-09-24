@@ -79,12 +79,12 @@ def is_cdp_available(port: int = 9222) -> bool:
 
 
 def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
-    """Nếu Chrome chưa mở cổng CDP 9222, chủ động khởi chạy Chrome với cờ remote-debugging-port."""
+    """Tự động kích hoạt Chrome với cổng CDP 9222 hoàn toàn tự động, không bắt người dùng mở thủ công."""
     port = cfg.get("cdp_port", 9222)
     if is_cdp_available(port):
         return True
 
-    safe_log(f"[*] Chrome chua mo cong CDP {port}. Dang khoi chay Chrome voi profile {cfg.get('profile_directory')}...")
+    safe_log(f"[*] Cổng Google Flow ({port}) chưa sẵn sàng. Đang tự động kích hoạt Chrome...")
     chrome_candidates = [
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
@@ -92,11 +92,20 @@ def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
     ]
     chrome_bin = next((c for c in chrome_candidates if os.path.exists(c)), None)
     if not chrome_bin:
-        safe_log("[ERROR] Khong tim thay Chrome tren may.")
+        safe_log("[ERROR] Không tìm thấy Google Chrome trên máy tính.")
         return False
 
     user_data = cfg.get("chrome_user_data_dir", os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data"))
     profile = cfg.get("profile_directory", "Default")
+
+    # Chromium chỉ mở cổng CDP nếu là tiến trình gốc. Nếu Chrome đang chạy, tự động dọn dẹp để khởi động lại với port 9222.
+    if os.name == 'nt':
+        try:
+            safe_log("[*] Đang giải phóng tiến trình Chrome cũ để kích hoạt cổng 9222...")
+            subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(1.0)
+        except Exception:
+            pass
 
     cmd = [
         chrome_bin,
@@ -110,14 +119,15 @@ def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
     ]
     try:
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(20):
+        for _ in range(30):
             time.sleep(0.5)
             if is_cdp_available(port):
-                safe_log(f"[OK] Chrome da san sang lang nghe tai cong CDP {port}.")
+                safe_log(f"[OK] Google Chrome đã tự động kích hoạt thành công trên cổng CDP {port}!")
                 return True
     except Exception as e:
-        safe_log(f"[ERROR] Khong the khoi chay Chrome: {e}")
+        safe_log(f"[ERROR] Không thể khởi chạy Chrome: {e}")
     return False
+
 
 
 class FlowBrowserController:
