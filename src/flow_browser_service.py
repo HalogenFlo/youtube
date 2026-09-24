@@ -96,17 +96,8 @@ def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
         safe_log("[ERROR] Không tìm thấy Google Chrome trên máy tính.")
         return False
 
-    user_data = cfg.get("chrome_user_data_dir", os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data"))
+    user_data = cfg.get("chrome_user_data_dir", str(ROOT_DIR / "flow_chrome_profile"))
     profile = cfg.get("profile_directory", "Default")
-
-    # Chromium chỉ mở cổng CDP nếu là tiến trình gốc. Nếu Chrome đang chạy, tự động dọn dẹp để khởi động lại với port 9222.
-    if os.name == 'nt':
-        try:
-            safe_log("[*] Đang giải phóng tiến trình Chrome cũ để kích hoạt cổng 9222...")
-            subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(1.0)
-        except Exception:
-            pass
 
     cmd = [
         chrome_bin,
@@ -119,8 +110,11 @@ def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
         cfg.get("tool_url", "https://flow.google.com")
     ]
     try:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        for _ in range(30):
+        creation_flags = 0
+        if os.name == 'nt':
+            creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creation_flags)
+        for _ in range(20):
             time.sleep(0.5)
             if is_cdp_available(port):
                 safe_log(f"[OK] Google Chrome đã tự động kích hoạt thành công trên cổng CDP {port}!")
@@ -143,34 +137,22 @@ class FlowBrowserController:
         self.tool_frame: Optional[Frame] = None
 
     def connect(self) -> Tuple[bool, str]:
-        """Kết nối tới Google Flow: Thử qua CDP 9222 hoặc tự động khởi chạy Chrome trực tiếp bằng Playwright."""
+        """Kết nối tới Google Flow: Tự động khởi chạy Chrome với cổng 9222 và profile Default nếu chưa có."""
         port = self.cfg.get("cdp_port", 9222)
         tool_url = self.cfg.get("tool_url", "https://flow.google.com")
 
+        # 1. Đảm bảo Chrome cổng 9222 được bật tự động 100% với Profile Default của người dùng
+        if not is_cdp_available(port):
+            safe_log(f"[*] Cổng 9222 chưa mở. Tự động khởi động Chrome với Profile Default...")
+            ok_chrome = ensure_chrome_with_cdp(self.cfg)
+            if not ok_chrome:
+                return False, f"Không thể tự động kích hoạt Chrome cổng {port}."
+
         try:
             self.playwright = sync_playwright().start()
-            
-            # Cách 1: Kết nối nếu cổng CDP 9222 đã sẵn sàng
-            if is_cdp_available(port):
-                safe_log(f"[*] Đang kết nối tới Chrome qua cổng CDP {port}...")
-                self.browser = self.playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}", timeout=5000)
-                self.context = self.browser.contexts[0] if self.browser.contexts else None
-            else:
-                # Cách 2: Khởi chạy Chrome với profile flow riêng biệt để tránh kẹt SingletonLock khi Chrome của user đang mở
-                safe_log("[*] Cổng 9222 chưa mở, khởi động Chrome Google Flow qua profile phụ...")
-                temp_flow_data = str(ROOT_DIR / "temp" / "flow_browser_data")
-                os.makedirs(temp_flow_data, exist_ok=True)
-                try:
-                    self.context = self.playwright.chromium.launch_persistent_context(
-                        user_data_dir=temp_flow_data,
-                        channel="chrome",
-                        headless=False,
-                        args=["--remote-allow-origins=*"],
-                        timeout=6000
-                    )
-                except Exception as ex_ctx:
-                    safe_log(f"[!] Không thể mở Chrome profile phụ: {ex_ctx}")
-                    return False, f"Lỗi khởi chạy trình duyệt: {ex_ctx}"
+            safe_log(f"[*] Đang kết nối tới Chrome qua cổng CDP {port}...")
+            self.browser = self.playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}", timeout=10000)
+            self.context = self.browser.contexts[0] if self.browser.contexts else None
 
             if not self.context:
                 return False, "Không thể khởi tạo phiên làm việc của trình duyệt."
