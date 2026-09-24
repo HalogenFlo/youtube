@@ -74,7 +74,8 @@ def main():
     ]
 
     try:
-        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        creationflags = (subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008) if os.name == "nt" else 0
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
         for i in range(15):
             time.sleep(0.5)
             if is_port_ready():
@@ -83,6 +84,7 @@ def main():
     except Exception as e:
         print(f"[ERROR] Lỗi khởi động Chrome: {e}")
         return 1
+
 
     print("[!] Chrome đã được mở nhưng chưa kịp phản hồi cổng 9222. Vẫn tiếp tục quy trình.")
     return 0

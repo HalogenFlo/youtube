@@ -190,19 +190,32 @@ class FlowBrowserController:
             return False, f"Lỗi kết nối Google Flow: {str(e)}"
 
     def _ensure_page(self) -> Optional[Page]:
-        if not self.page or self.page.is_closed():
+        try:
+            if not self.page or self.page.is_closed():
+                ok, msg = self.connect()
+                if not ok:
+                    safe_log(f"[ERROR] {msg}")
+                    return None
+            # Thử truy cập url để chắc chắn target page/context chưa bị đóng
+            _ = self.page.url
+            return self.page
+        except Exception:
+            safe_log("[*] Phát hiện trang hoặc trình duyệt đã bị ngắt kết nối. Đang tự động kết nối lại...")
+            self.browser = None
+            self.context = None
+            self.page = None
             ok, msg = self.connect()
             if not ok:
                 safe_log(f"[ERROR] {msg}")
                 return None
-        return self.page
+            return self.page
 
     def generate_scene_video(
         self,
         prompt: str,
         output_path: str,
         orientation: str = "vertical",
-        timeout_sec: int = 180
+        timeout_sec: int = 360
     ) -> Tuple[bool, str]:
         """
         Tự động đưa prompt lên Google Flow (Google Veo / Videos section),
@@ -391,6 +404,9 @@ class FlowBrowserController:
                 if elapsed < min_generation_wait:
                     continue
 
+                if int(elapsed) % 30 < 4:
+                    safe_log(f"[*] Đang theo dõi tiến độ sinh video từ Google Flow ({int(elapsed)}s/{timeout_sec}s)...")
+
                 candidate_url = None
 
                 # Ưu tiên URL từ network listener
@@ -400,8 +416,23 @@ class FlowBrowserController:
                             candidate_url = n_url
                             break
 
-                # Tiếp theo kiểm tra thẻ <video> mới trong DOM
+                # Tiếp theo kích hoạt preview trên thẻ video vừa sinh để ép Flow tải stream
                 if not candidate_url:
+                    try:
+                        chat_cards = page.locator("aside img, [class*='chat'] img, [role='log'] img").all()
+                        if chat_cards:
+                            chat_cards[-1].hover()
+                    except Exception:
+                        pass
+
+                    try:
+                        play_btns = page.locator("button:has-text('play_circle'), [aria-label*='Play'], [aria-label*='play']").all()
+                        if play_btns:
+                            play_btns[-1].hover()
+                    except Exception:
+                        pass
+
+                    # Kiểm tra thẻ <video> mới trong DOM
                     for v in page.locator("video").all():
                         try:
                             src = v.get_attribute("src")
@@ -410,6 +441,7 @@ class FlowBrowserController:
                                 break
                         except Exception:
                             pass
+
 
                 if candidate_url:
                     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
@@ -448,16 +480,22 @@ class FlowBrowserController:
                         safe_log(f"[!] Lỗi khi tải video blob: {ex}")
 
             diagnostic_path = output_path if output_path.endswith(".png") else output_path.replace(".mp4", "_diagnostic.png")
-            page.screenshot(path=diagnostic_path)
-            return False, f"Hết thời gian chờ video từ Google Flow. Ảnh chẩn đoán: {diagnostic_path}"
+            try:
+                if page and not page.is_closed():
+                    page.screenshot(path=diagnostic_path)
+            except Exception:
+                pass
+            return False, f"Hết thời gian chờ video từ Google Flow ({timeout_sec}s). Ảnh chẩn đoán: {diagnostic_path}"
 
         except Exception as e:
             return False, f"Lỗi trong quá trình tương tác Google Flow: {str(e)}"
         finally:
             try:
-                page.remove_listener("response", _on_response)
+                if page and not page.is_closed():
+                    page.remove_listener("response", _on_response)
             except Exception:
                 pass
+
 
     def generate_scene_image(
         self,

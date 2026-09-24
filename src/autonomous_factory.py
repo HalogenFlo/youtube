@@ -46,9 +46,24 @@ def _load_unlocked() -> Dict[str, Any]:
 
 def _save_unlocked(state: Dict[str, Any]) -> None:
     STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = STATE_PATH.with_suffix(".tmp")
-    temp_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(temp_path, STATE_PATH)
+    temp_path = STATE_PATH.with_name(f"factory_state_{os.getpid()}_{time.time_ns()}.tmp")
+    try:
+        temp_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+        for attempt in range(10):
+            try:
+                os.replace(temp_path, STATE_PATH)
+                return
+            except OSError:
+                time.sleep(0.05)
+    except Exception:
+        pass
+    finally:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
+
 
 
 def recover_interrupted_jobs() -> None:
