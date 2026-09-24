@@ -23,12 +23,13 @@ if hasattr(sys.stderr, 'reconfigure'):
 
 def safe_log(msg: str):
     try:
-        print(msg)
+        print(msg, flush=True)
     except Exception:
         try:
-            print(msg.encode('ascii', errors='replace').decode('ascii'))
+            print(msg.encode('ascii', errors='replace').decode('ascii'), flush=True)
         except Exception:
             pass
+
 
 from src.config import (
     TEMP_DIR, OUTPUT_DIR, TTS_VOICE_DEFAULT, DEFAULT_IMAGE_STYLE
@@ -163,8 +164,9 @@ def produce_single_video_pipeline(
                 output_path=img_file,
                 orientation=orientation,
                 style_preset=style_preset,
-                fallback_to_sd=False
+                fallback_to_sd=True
             )
+
         else:
             from src.image_service import generate_single_image
             ok, res = generate_single_image(

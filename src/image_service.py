@@ -4,8 +4,10 @@
 
 import os
 import gc
+import torch
 from typing import Tuple, List, Dict, Any
 from src.config import SD_MODEL_DEFAULT, SD_RESOLUTIONS, DEFAULT_IMAGE_STYLE
+
 
 # Negative prompt tiêu chuẩn để tăng chất lượng ảnh SD 1.5
 DEFAULT_NEGATIVE_PROMPT = (

@@ -25,12 +25,13 @@ if hasattr(sys.stderr, 'reconfigure'):
 
 def safe_log(msg: str):
     try:
-        print(msg)
+        print(msg, flush=True)
     except Exception:
         try:
-            print(msg.encode('ascii', errors='replace').decode('ascii'))
+            print(msg.encode('ascii', errors='replace').decode('ascii'), flush=True)
         except Exception:
             pass
+
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT_DIR / "flow_config.json"
@@ -142,21 +143,39 @@ class FlowBrowserController:
         self.tool_frame: Optional[Frame] = None
 
     def connect(self) -> Tuple[bool, str]:
-        """Kết nối tới Chrome đang chạy qua CDP."""
+        """Kết nối tới Google Flow: Thử qua CDP 9222 hoặc tự động khởi chạy Chrome trực tiếp bằng Playwright."""
         port = self.cfg.get("cdp_port", 9222)
-        if not is_cdp_available(port):
-            if not ensure_chrome_with_cdp(self.cfg):
-                return False, f"Không thể kết nối cổng CDP {port}. Hãy khởi chạy file launch_flow_chrome.bat trước."
+        tool_url = self.cfg.get("tool_url", "https://flow.google.com")
 
         try:
             self.playwright = sync_playwright().start()
-            self.browser = self.playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
-            self.context = self.browser.contexts[0] if self.browser.contexts else None
+            
+            # Cách 1: Kết nối nếu cổng CDP 9222 đã sẵn sàng
+            if is_cdp_available(port):
+                safe_log(f"[*] Đang kết nối tới Chrome qua cổng CDP {port}...")
+                self.browser = self.playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}", timeout=5000)
+                self.context = self.browser.contexts[0] if self.browser.contexts else None
+            else:
+                # Cách 2: Khởi chạy Chrome với profile flow riêng biệt để tránh kẹt SingletonLock khi Chrome của user đang mở
+                safe_log("[*] Cổng 9222 chưa mở, khởi động Chrome Google Flow qua profile phụ...")
+                temp_flow_data = str(ROOT_DIR / "temp" / "flow_browser_data")
+                os.makedirs(temp_flow_data, exist_ok=True)
+                try:
+                    self.context = self.playwright.chromium.launch_persistent_context(
+                        user_data_dir=temp_flow_data,
+                        channel="chrome",
+                        headless=False,
+                        args=["--remote-allow-origins=*"],
+                        timeout=6000
+                    )
+                except Exception as ex_ctx:
+                    safe_log(f"[!] Không thể mở Chrome profile phụ: {ex_ctx}")
+                    return False, f"Lỗi khởi chạy trình duyệt: {ex_ctx}"
+
             if not self.context:
-                return False, "Không tìm thấy Browser Context trong Chrome."
+                return False, "Không thể khởi tạo phiên làm việc của trình duyệt."
 
             # Tìm tab đã mở tool_url hoặc mở tab mới
-            tool_url = self.cfg.get("tool_url", "")
             for p in self.context.pages:
                 if "flow.google.com" in p.url:
                     self.page = p
@@ -164,18 +183,25 @@ class FlowBrowserController:
 
             if not self.page:
                 self.page = self.context.new_page()
-                self.page.goto(tool_url, wait_until="domcontentloaded", timeout=60000)
+                try:
+                    self.page.goto(tool_url, wait_until="domcontentloaded", timeout=15000)
+                except Exception:
+                    pass
+
 
             # Chờ và bắt iframe chứa VP Stickman Lab
-            frame = self._find_tool_frame(timeout_sec=25)
+            frame = self._find_tool_frame(timeout_sec=15)
             if not frame:
-                return False, "Đã mở Flow nhưng không tìm thấy khung ứng dụng 'VP Stickman Lab'. Vui lòng kiểm tra quyền truy cập tool."
+                safe_log("[!] Đã mở Flow nhưng chưa vào frame, tiếp tục với trang chính...")
+                self.tool_frame = self.page.main_frame
+            else:
+                self.tool_frame = frame
 
-            self.tool_frame = frame
-            return True, "Kết nối thành công tới Google Flow Tool."
+            return True, "Kết nối thành công tới Google Flow."
 
         except Exception as e:
-            return False, f"Lỗi kết nối Flow CDP: {str(e)}"
+            return False, f"Lỗi kết nối Flow: {str(e)}"
+
 
     def _find_tool_frame(self, timeout_sec: int = 25) -> Optional[Frame]:
         """Quét tìm iframe con chứa giao diện VP Stickman Lab."""
@@ -275,11 +301,15 @@ class FlowBrowserController:
             # 2. Điền form
             ratio = "9:16" if orientation == "vertical" else "16:9"
             boxes = frame.get_by_role("textbox")
+            try:
+                boxes.nth(0).wait_for(state="visible", timeout=5000)
+            except Exception:
+                return False, "Google Flow chưa đăng nhập tài khoản hoặc tool chưa sẵn sàng."
 
             # Ghép prompt với character lock
             full_topic = f"{prompt.strip()} {STICKMAN_CANONICAL_GUIDANCE}"
-
             boxes.nth(0).fill(full_topic)
+
             boxes.nth(1).fill(style_preset)
             boxes.nth(2).fill("Match canonical blue shirt #8CCFE8, white head, oval black eyes, coral tongue.")
             boxes.nth(3).fill("")

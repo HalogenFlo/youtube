@@ -225,11 +225,12 @@ def run_batch_ui():
                     output_path=img_file,
                     orientation="vertical",
                     style_preset=DEFAULT_IMAGE_STYLE,
-                    fallback_to_sd=False
+                    fallback_to_sd=True
                 )
                 if not ok_flow or not os.path.exists(img_file):
-                    st.error(f"Lỗi khi vẽ cảnh {sc_num} qua Google Flow: {res_flow}")
+                    st.error(f"Lỗi khi vẽ cảnh {sc_num}: {res_flow}")
                     return
+
 
             # 3. Phân tích Timestamps Whisper
             log_txt.text(f"[Whisper] Đang đồng bộ phụ đề Karaoke cho video {v_idx}...")
