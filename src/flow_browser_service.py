@@ -96,18 +96,10 @@ def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
         safe_log("[ERROR] Không tìm thấy Google Chrome trên máy tính.")
         return False
 
-    user_data = cfg.get("chrome_user_data_dir", os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data"))
+    user_data = cfg.get("chrome_user_data_dir", str(ROOT_DIR / "flow_chrome_profile"))
     profile = cfg.get("profile_directory", "Default")
 
-    # Chromium chỉ mở cổng 9222 nếu được bật sạch từ đầu trên Profile đó.
-    # Tự động đóng Chrome cũ và mở lại kèm --restore-last-session để giữ nguyên toàn bộ tab của người dùng!
-    if os.name == 'nt':
-        try:
-            safe_log("[*] Đang khởi động lại Chrome để mở cổng gỡ lỗi 9222 trên tài khoản np368057@gmail.com...")
-            subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            time.sleep(2.0)
-        except Exception:
-            pass
+    # Không tự ý tắt Chrome của người dùng để tránh mất trang và làm gián đoạn trải nghiệm
 
     cmd = [
         chrome_bin,
@@ -115,7 +107,8 @@ def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
         f"--user-data-dir={user_data}",
         f"--profile-directory={profile}",
         "--remote-allow-origins=*",
-        "--restore-last-session",
+        "--no-first-run",
+        "--no-default-browser-check",
         cfg.get("tool_url", "https://flow.google.com")
     ]
     try:
