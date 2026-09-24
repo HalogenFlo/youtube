@@ -18,12 +18,14 @@ from src.flow_browser_service import get_flow_controller
 
 
 def check_chrome_flow_status() -> bool:
-    """Kiểm tra xem Chrome Google Flow (cổng CDP 9222) có đang sẵn sàng không."""
+    """Kiểm tra cực nhanh trong 0.2s xem cổng CDP 9222 có phản hồi không, tuyệt đối không block UI."""
     try:
-        controller = get_flow_controller()
-        return controller.connect()
+        import urllib.request
+        with urllib.request.urlopen("http://127.0.0.1:9222/json/version", timeout=0.2) as resp:
+            return resp.status == 200
     except Exception:
         return False
+
 
 
 def run_batch_ui():
