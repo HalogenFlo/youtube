@@ -3,6 +3,7 @@
 # Trích dẫn: Kế thừa cơ chế CDP Playwright và React Fiber state injection từ dự án tiktok-ytb.
 
 import os
+import sys
 import json
 import time
 import base64
@@ -10,6 +11,26 @@ import subprocess
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple
 from playwright.sync_api import sync_playwright, Page, Frame, BrowserContext
+
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
+def safe_log(msg: str):
+    try:
+        print(msg)
+    except Exception:
+        try:
+            print(msg.encode('ascii', errors='replace').decode('ascii'))
+        except Exception:
+            pass
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT_DIR / "flow_config.json"
@@ -34,7 +55,7 @@ def load_flow_config() -> Dict[str, Any]:
         try:
             return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
         except Exception as e:
-            print(f"[WARNING] Lỗi đọc flow_config.json: {e}")
+            safe_log(f"[WARNING] Loi doc flow_config.json: {e}")
     return {
         "tool_url": "https://flow.google.com/project/41d3d574-907c-4bb0-90a7-c98f85f5e22b/tool/2791e8ba-9ae0-4ca9-9368-b7efe600c53d",
         "cdp_port": 9222,
@@ -63,7 +84,7 @@ def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
     if is_cdp_available(port):
         return True
 
-    print(f"[*] Chrome chưa mở cổng CDP {port}. Đang khởi chạy Chrome với profile {cfg.get('profile_directory')}...")
+    safe_log(f"[*] Chrome chua mo cong CDP {port}. Dang khoi chay Chrome voi profile {cfg.get('profile_directory')}...")
     chrome_candidates = [
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
@@ -71,7 +92,7 @@ def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
     ]
     chrome_bin = next((c for c in chrome_candidates if os.path.exists(c)), None)
     if not chrome_bin:
-        print("[ERROR] Không tìm thấy Chrome trên máy.")
+        safe_log("[ERROR] Khong tim thay Chrome tren may.")
         return False
 
     user_data = cfg.get("chrome_user_data_dir", os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data"))
@@ -92,10 +113,10 @@ def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
         for _ in range(20):
             time.sleep(0.5)
             if is_cdp_available(port):
-                print(f"[OK] Chrome đã sẵn sàng lắng nghe tại cổng CDP {port}.")
+                safe_log(f"[OK] Chrome da san sang lang nghe tai cong CDP {port}.")
                 return True
     except Exception as e:
-        print(f"[ERROR] Không thể khởi chạy Chrome: {e}")
+        safe_log(f"[ERROR] Khong the khoi chay Chrome: {e}")
     return False
 
 
@@ -174,7 +195,7 @@ class FlowBrowserController:
         mascot_rel = self.cfg.get("mascot_reference_path", "assets/characters/channel-mascot/reference-v1.png")
         mascot_path = ROOT_DIR / mascot_rel
         if not mascot_path.exists():
-            print(f"[WARNING] Không tìm thấy file mascot: {mascot_path}")
+            safe_log(f"[WARNING] Khong tim thay file mascot: {mascot_path}")
             return False
 
         media_id = self.cfg.get("mascot_media_id", "de94a39b-155f-4afe-acbb-d9d4b59ad532")
@@ -217,7 +238,7 @@ class FlowBrowserController:
                 clear_btn.wait_for(state="visible", timeout=5000)
                 return True
         except Exception as e:
-            print(f"[WARNING] Lỗi inject character hook: {e}")
+            safe_log(f"[WARNING] Loi inject character hook: {e}")
         return False
 
     def generate_scene_image(

@@ -3,8 +3,30 @@
 # Trích dẫn: Gọi FlowBrowserController từ src/flow_browser_service.py.
 
 import os
+import sys
 from pathlib import Path
 from typing import Tuple, List, Dict, Any
+
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
+def safe_log(msg: str):
+    try:
+        print(msg)
+    except Exception:
+        try:
+            print(msg.encode('ascii', errors='replace').decode('ascii'))
+        except Exception:
+            pass
+
 from src.flow_browser_service import get_flow_controller
 from src.config import DEFAULT_IMAGE_STYLE
 
@@ -14,13 +36,13 @@ def generate_flow_image(
     output_path: str,
     orientation: str = "vertical",
     style_preset: str = DEFAULT_IMAGE_STYLE,
-    fallback_to_sd: bool = True
+    fallback_to_sd: bool = False
 ) -> Tuple[bool, str]:
     """
     Sinh 1 ảnh phân cảnh bằng Google Flow (Nano Banana Pro).
     Nếu gặp lỗi và fallback_to_sd=True, tự động chuyển sang mô hình Local Stable Diffusion.
     """
-    print(f"[*] Đang yêu cầu Google Flow sinh ảnh: \"{prompt[:60]}...\"")
+    safe_log(f"[*] Dang yeu cau Google Flow sinh anh: \"{prompt[:60]}...\"")
     controller = get_flow_controller()
     success, result_or_err = controller.generate_scene_image(
         prompt=prompt,
@@ -32,9 +54,9 @@ def generate_flow_image(
     if success:
         return True, result_or_err
 
-    print(f"[!] Google Flow gặp sự cố: {result_or_err}")
+    safe_log(f"[!] Google Flow gap su co: {result_or_err}")
     if fallback_to_sd:
-        print("[*] Tự động Fallback sang Local Stable Diffusion 1.5...")
+        safe_log("[*] Tu dong Fallback sang Local Stable Diffusion 1.5...")
         try:
             from src.image_service import generate_single_image as generate_sd_single_image
             return generate_sd_single_image(
@@ -53,7 +75,7 @@ def generate_flow_batch(
     temp_dir: str,
     orientation: str = "vertical",
     style_preset: str = DEFAULT_IMAGE_STYLE,
-    fallback_to_sd: bool = True
+    fallback_to_sd: bool = False
 ) -> Tuple[bool, List[str]]:
     """
     Sinh hàng loạt ảnh cho các phân cảnh trong kịch bản.

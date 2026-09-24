@@ -3,10 +3,23 @@
 # Trích dẫn: Sử dụng CLI chính thức của thư viện edge-tts.
 
 import os
+import sys
 import subprocess
 import time
 from typing import Tuple
 from src.config import TTS_VOICE_DEFAULT
+
+# Đảm bảo in log trên Windows không bị UnicodeEncodeError
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
 
 def generate_tts(
     text: str, 
@@ -68,14 +81,20 @@ def generate_tts(
             if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
                 return True, output_path
             else:
-                last_err = result.stderr or "Không nhận được phản hồi âm thanh từ API Microsoft."
-                print(f"[TTS] Lần thử {attempt + 1}/{max_retries} thất bại: {last_err.strip()}")
+                last_err = result.stderr or "Khong nhan duoc phan hoi am thanh tu API."
+                try:
+                    print(f"[TTS] Lan thu {attempt + 1}/{max_retries} that bai: {last_err.strip()}")
+                except Exception:
+                    pass
                 if attempt < max_retries - 1:
-                    time.sleep(1.5) # Nghỉ ngắn trước khi thử lại
+                    time.sleep(1.5)
                     
         except Exception as e:
             last_err = str(e)
-            print(f"[TTS] Lần thử {attempt + 1}/{max_retries} gặp lỗi hệ thống: {last_err}")
+            try:
+                print(f"[TTS] Lan thu {attempt + 1}/{max_retries} gap loi: {last_err}")
+            except Exception:
+                pass
             if attempt < max_retries - 1:
                 time.sleep(1.5)
 

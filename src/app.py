@@ -4,6 +4,19 @@
 
 import os
 import sys
+
+# Ép console và Streamlit logger luôn dùng UTF-8 với chế độ thay thế lỗi, chống hoàn toàn UnicodeEncodeError
+if hasattr(sys.stdout, 'reconfigure'):
+    try:
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+if hasattr(sys.stderr, 'reconfigure'):
+    try:
+        sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+
 import time
 import streamlit as st
 import pandas as pd
@@ -569,7 +582,10 @@ elif st.session_state.step == 2:
                     scene["image_path"] = paths[idx]
                     progress_bar.progress(30 + int((idx / len(sd_scenes)) * 30))
             else:
-                st.error(f"Lỗi sinh ảnh loạt: {paths}")
+                err_msg = paths[0] if (isinstance(paths, list) and paths) else str(paths)
+                st.error(f"❌ {err_msg}")
+                if use_flow:
+                    st.warning("👉 Hãy mở Chrome kết nối Google Flow: chạy file scripts/launch_flow_chrome.bat (hoặc phím [4] trong run.bat).")
                 
         # Sinh loạt video Wan 2.1
         if wan_scenes:
