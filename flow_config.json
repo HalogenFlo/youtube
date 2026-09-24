@@ -1,0 +1,14 @@
+{
+  "tool_url": "https://flow.google.com/project/41d3d574-907c-4bb0-90a7-c98f85f5e22b/tool/2791e8ba-9ae0-4ca9-9368-b7efe600c53d",
+  "chrome_user_data_dir": "C:\\Users\\Admin\\AppData\\Local\\Google\\Chrome\\User Data",
+  "profile_directory": "Default",
+  "user_email": "np368057@gmail.com",
+  "cdp_port": 9222,
+  "mascot_reference_path": "assets/characters/channel-mascot/reference-v1.png",
+  "mascot_media_id": "de94a39b-155f-4afe-acbb-d9d4b59ad532",
+  "default_model": "Nano Banana Pro",
+  "default_aspect_ratio": "9:16",
+  "workers": 2,
+  "timeout_seconds": 180,
+  "flow_require_ui_evidence": false
+}

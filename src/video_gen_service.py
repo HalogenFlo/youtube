@@ -5,11 +5,8 @@
 import os
 import gc
 import time
-import torch
 import requests
 from typing import Tuple, List, Dict, Any
-from diffusers import WanPipeline
-from diffusers.utils import export_to_video
 from src.config import WAN_MODEL_DEFAULT, WAN_RESOLUTIONS, WAN_DEFAULT_FRAMES, WAN_DEFAULT_STEPS, OLLAMA_API_URL, OLLAMA_MODEL_DEFAULT
 
 def unload_ollama_vram() -> None:
@@ -33,15 +30,16 @@ def unload_ollama_vram() -> None:
     except Exception as e:
         print(f"Không thể liên hệ Ollama để unload model (Ollama có thể đã tắt hoặc chưa chạy): {e}")
 
-def _setup_pipeline(model_id: str) -> WanPipeline:
+def _setup_pipeline(model_id: str):
     """
     Khởi tạo WanPipeline cho sinh video có kiểm tra thiết bị phần cứng.
     Chủ động unload Ollama trước, sau đó thiết lập CPU/GPU động.
     """
     unload_ollama_vram()
+    import torch
+    from diffusers import WanPipeline
     
     print(f"Đang tải Wan 2.1 Video Generation Model: {model_id}...")
-    # Tự động chọn kiểu dữ liệu phù hợp với thiết bị (CPU yêu cầu float32)
     dtype = torch.float16 if torch.cuda.is_available() else torch.float32
     
     pipe = WanPipeline.from_pretrained(
@@ -49,7 +47,6 @@ def _setup_pipeline(model_id: str) -> WanPipeline:
         torch_dtype=dtype
     )
     
-    # Chỉ kích hoạt các tối ưu hóa VRAM sống còn nếu có GPU CUDA
     if torch.cuda.is_available():
         pipe.enable_model_cpu_offload()
         pipe.enable_vae_tiling()
@@ -89,6 +86,7 @@ def generate_single_video(
         ).frames[0]
         
         # Lưu clip video với tốc độ 16fps mặc định của Wan
+        from diffusers.utils import export_to_video
         export_to_video(video_frames, output_path, fps=16)
         elapsed = time.time() - start_time
         return True, output_path, elapsed
@@ -101,8 +99,12 @@ def generate_single_video(
         if pipe is not None:
             del pipe
         gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
 
 def generate_batch_videos(
     scenes: List[Dict[str, Any]], 
@@ -141,6 +143,7 @@ def generate_batch_videos(
                 guidance_scale=5.0
             ).frames[0]
             
+            from diffusers.utils import export_to_video
             export_to_video(video_frames, output_path, fps=16)
             generated_paths.append(output_path)
             
@@ -155,5 +158,9 @@ def generate_batch_videos(
         if pipe is not None:
             del pipe
         gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass

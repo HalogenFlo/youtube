@@ -1,38 +1,64 @@
-:: Chức năng: Tự động cài đặt thư viện phụ thuộc và khởi chạy ứng dụng Streamlit Web UI.
-:: Lý do tạo: Tiện ích khởi chạy nhanh cho người dùng trên hệ điều hành Windows.
-:: Trích dẫn: Tuân thủ quy định khởi chạy trong PLAN.md.
-
 @echo off
-title AI Video Producer Launcher
+setlocal EnableDelayedExpansion
+title YouTube Automation and AI Video Suite
+cd /d "%~dp0"
+
+:menu
+cls
 echo ============================================================
-echo   KHOI CHAY HE THONG AUTOMATED AI VIDEO PRODUCTION PIPELINE
+echo   YOUTUBE AUTOMATION AND AI VIDEO PRODUCTION SUITE
 echo ============================================================
+echo.
+echo   [1] Khoi chay AI Video Producer (Streamlit Web UI - Port 8502)
+echo   [2] Khoi chay YouTube View Booster (Streamlit Web UI - Port 8501)
+echo   [3] Khoi chay YouTube View Booster (CLI Chay ngam 24/7)
+echo   [4] Mo Chrome Debugging CDP cho Google Flow (Port 9222)
+echo   [5] Chay kiem tra chan doan he thong (Tests)
+echo   [6] Thoat
+echo.
+echo ============================================================
+set /p opt="Nhap lua chon cua ban (1-6): "
 
-:: Kiem tra Python
-python --version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [ERROR] Python chua duoc cai dat hoac chua duoc them vao PATH.
-    echo Vui long tai va cai dat Python 3.10+ tu python.org truoc.
-    pause
-    exit /b 1
-)
+if "%opt%"=="1" goto opt1
+if "%opt%"=="2" goto opt2
+if "%opt%"=="3" goto opt3
+if "%opt%"=="4" goto opt4
+if "%opt%"=="5" goto opt5
+if "%opt%"=="6" goto opt6
+goto menu
 
-:: Kiem tra FFmpeg
-ffmpeg -version >nul 2>&1
-if %errorlevel% neq 0 (
-    echo [WARNING] FFmpeg chua duoc cai dat hoac chua duoc them vao PATH.
-    echo He thong van se khoi chay, nhung khau tach audio va burn phu de se gap loi.
-    echo Vui long tai FFmpeg va them vao bien moi truong PATH.
-    echo ------------------------------------------------------------
-)
-
-echo [1/2] Dang kiem tra va cai dat cac thu vien phu thuoc (requirements.txt)...
-pip install -r requirements.txt
-if %errorlevel% neq 0 (
-    echo [WARNING] Co loi xay ra khi cai dat thu vien. Vui long kiem tra ket noi mang.
-)
-
-echo [2/2] Dang khoi chay giao dien Streamlit Web UI...
-streamlit run src/app.py
-
+:opt1
+echo.
+echo [*] Dang khoi chay AI Video Producer tren cong 8502...
+streamlit run src/app.py --server.port 8502
 pause
+goto menu
+
+:opt2
+echo.
+echo [*] Dang khoi chay YouTube View Booster UI tren cong 8501...
+call scripts\run_view_booster_ui.bat
+goto menu
+
+:opt3
+echo.
+echo [*] Dang khoi chay YouTube View Booster CLI...
+call scripts\run_view_booster_headless.bat
+goto menu
+
+:opt4
+echo.
+echo [*] Dang mo Chrome Debugging cho Google Flow...
+call scripts\launch_flow_chrome.bat
+goto menu
+
+:opt5
+echo.
+echo [*] Dang chay kiem tra he thong...
+python -m unittest discover -s tests -v
+python tests\test_flow_connection.py
+pause
+goto menu
+
+:opt6
+exit /b 0

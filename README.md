@@ -77,20 +77,47 @@ pip install -r requirements_booster.txt
 
 ### 3️⃣ Khởi chạy ứng dụng
 
-#### 🖥️ Khởi chạy Web UI:
-* **Trên Windows**: Click đúp vào file **`run_view_booster_ui.bat`**
-* **Hoặc bằng lệnh**:
-  ```bash
-  streamlit run src/app_view_booster.py
-  ```
-  Truy cập giao diện tại: `http://localhost:8501`.
+#### 🚀 Cách nhanh nhất (Menu tương tác 1-Click):
+Chỉ cần chạy file **`run.bat`** tại thư mục gốc, hệ thống sẽ hiển thị menu lựa chọn:
+```text
+============================================================
+  🚀 YOUTUBE AUTOMATION & AI VIDEO PRODUCTION SUITE
+============================================================
+  [1] Khởi chạy AI Video Producer (Streamlit Web UI)
+  [2] Khởi chạy YouTube View Booster (Streamlit Web UI - Port 8501)
+  [3] Khởi chạy YouTube View Booster (CLI Chạy ngầm 24/7)
+  [4] Mở Chrome CDP cho Google Flow (np368057@gmail.com - Port 9222)
+  [5] Chạy kiểm tra chẩn đoán toàn diện hệ thống (Tests)
+  [6] Thoát
+```
 
-#### 📟 Khởi chạy CLI 24/7 (Chạy nền):
-* **Trên Windows**: Click đúp vào file **`run_view_booster_headless.bat`**
-* **Hoặc bằng lệnh**:
-  ```bash
-  python cli_booster.py --channel "https://www.youtube.com/@Remioo-br" --threads 2 --headless
-  ```
+#### 📁 Cấu Trúc Thư Mục Chuẩn Hóa
+```text
+youtube/
+├── .agent/              # Quy tắc & hướng dẫn làm việc
+├── assets/              # Tài nguyên tĩnh (mascot, fonts, âm thanh)
+├── docker/              # Toàn bộ cấu hình, script và ảnh .tar của Docker
+│   ├── images/          # Các file image .tar nạp offline
+│   └── scripts/         # Script build và run Docker
+├── docs/                # Toàn bộ tài liệu kỹ thuật & hướng dẫn
+│   ├── PLAN.md          # Kế hoạch phát triển
+│   ├── DOCKER_GUIDE.md  # Hướng dẫn chi tiết Docker
+│   └── GOOGLE_FLOW_GUIDE.md # Báo cáo phân tích Google Flow
+├── scripts/             # Script chạy phụ trợ (.bat cho Windows)
+│   ├── launch_flow_chrome.bat
+│   ├── run_view_booster_ui.bat
+│   └── run_view_booster_headless.bat
+├── src/                 # Toàn bộ mã nguồn cốt lõi
+├── tasks/               # Quản lý tiến độ (todo.md)
+├── temp/                # Dữ liệu tạm sinh ra khi chạy
+├── tests/               # Toàn bộ các bài kiểm thử tự động
+├── booster_config.json  # Cấu hình YouTube Booster
+├── cli_booster.py       # Điểm chạy nền Booster CLI
+├── flow_config.json     # Cấu hình Google Flow
+├── requirements.txt     # Thư viện phụ thuộc
+├── run.bat              # Menu khởi chạy trung tâm 1-click
+└── README.md
+```
 
 ---
 

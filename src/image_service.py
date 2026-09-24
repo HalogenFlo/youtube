@@ -4,9 +4,7 @@
 
 import os
 import gc
-import torch
 from typing import Tuple, List, Dict, Any
-from diffusers import StableDiffusionPipeline
 from src.config import SD_MODEL_DEFAULT, SD_RESOLUTIONS, DEFAULT_IMAGE_STYLE
 
 # Negative prompt tiêu chuẩn để tăng chất lượng ảnh SD 1.5
@@ -16,20 +14,33 @@ DEFAULT_NEGATIVE_PROMPT = (
     "signature, username, bad art"
 )
 
-def _setup_pipeline(model_id: str) -> StableDiffusionPipeline:
+def _setup_pipeline(model_id: str):
     """Khởi tạo Stable Diffusion Pipeline có kiểm tra thiết bị phần cứng."""
+    import torch
+    if not hasattr(torch, "xpu"):
+        class _DummyXPU:
+            is_available = staticmethod(lambda: False)
+            device_count = staticmethod(lambda: 0)
+            empty_cache = staticmethod(lambda: None)
+            def __getattr__(self, name):
+                return lambda *args, **kwargs: None
+        torch.xpu = _DummyXPU()
+
+    try:
+        from diffusers import StableDiffusionPipeline
+    except Exception as e:
+        raise RuntimeError(f"Lỗi nạp thư viện diffusers ({e}). Khuyên dùng chế độ Google Flow (Nano Banana Pro)!")
+
     print(f"Đang tải Stable Diffusion Model: {model_id}...")
-    # Tự động chọn kiểu dữ liệu phù hợp với thiết bị (CPU yêu cầu float32 để tương thích tốt)
     dtype = torch.float16 if torch.cuda.is_available() else torch.float32
     
     pipe = StableDiffusionPipeline.from_pretrained(
         model_id,
         torch_dtype=dtype,
-        safety_checker=None, # Tắt safety checker để tiết kiệm VRAM và tăng tốc sinh ảnh
+        safety_checker=None,
         requires_safety_checker=False
     )
     
-    # Chỉ kích hoạt các tối ưu hóa VRAM nếu có GPU CUDA
     if torch.cuda.is_available():
         pipe.enable_model_cpu_offload()
         pipe.enable_vae_slicing()

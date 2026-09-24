@@ -8,8 +8,9 @@ import unittest
 import shutil
 from typing import Dict, Any, List
 
-# Thêm thư mục gốc vào path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if ROOT_DIR not in sys.path:
+    sys.path.insert(0, ROOT_DIR)
 
 # Đọc tham số CLI --unit-only
 UNIT_ONLY = "--unit-only" in sys.argv

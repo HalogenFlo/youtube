@@ -10,6 +10,18 @@ from moviepy.editor import ImageClip, VideoFileClip, AudioFileClip, concatenate_
 import moviepy.video.fx.all as vfx
 from src.config import TEMP_DIR, OUTPUT_DIR, DEFAULT_FPS, FONT_PATH
 from src.subtitle_builder import build_ass_subtitle
+from src.visual_beats import apply_visual_beat_motion
+
+# Vá lỗi Moviepy decorator use_clip_fps_by_default làm mất fps trên Python 3.12
+try:
+    import moviepy.video.VideoClip as _mpy_vc
+    _orig_ffmpeg_write = _mpy_vc.ffmpeg_write_video
+    def _safe_ffmpeg_write_video(clip, filename, fps, codec="libx264", **kw):
+        actual_fps = fps or getattr(clip, "fps", None) or 30
+        return _orig_ffmpeg_write(clip, filename, actual_fps, codec=codec, **kw)
+    _mpy_vc.ffmpeg_write_video = _safe_ffmpeg_write_video
+except Exception:
+    pass
 
 def apply_ken_burns(image_path: str, duration: float, orientation: str) -> ImageClip:
     """
@@ -232,7 +244,11 @@ def compile_video_pipeline(
                 else:
                     image_path = scene.get("image_path", "")
                     if image_path and os.path.exists(image_path):
-                        visual_clip = apply_ken_burns(image_path, audio_dur, orientation)
+                        try:
+                            visual_clip = apply_visual_beat_motion(image_path, audio_dur, orientation)
+                        except Exception as e:
+                            print(f"[WARNING] Lỗi apply_visual_beat_motion, fallback Ken Burns: {e}")
+                            visual_clip = apply_ken_burns(image_path, audio_dur, orientation)
                 
                 # Nếu không load được tài nguyên nào, tạo clip đen làm fallback
                 if visual_clip is None:

@@ -27,6 +27,7 @@ from src.tts_service import generate_tts
 from src.video_downloader import download_and_extract
 from src.whisper_service import transcribe_audio_to_text, get_word_timestamps
 from src.image_service import generate_single_image, generate_batch_images
+from src.flow_image_service import generate_flow_image, generate_flow_batch
 from src.video_gen_service import generate_single_video, generate_batch_videos
 from src.video_compiler import compile_video_pipeline
 
@@ -311,6 +312,17 @@ st.session_state.style_preset = st.sidebar.text_input(
     value=st.session_state.style_preset
 )
 
+# Nguồn sinh ảnh & Kỹ thuật chuyển động
+st.sidebar.markdown("---")
+st.sidebar.markdown("### 🎨 Nguồn sinh hình ảnh")
+image_engine = st.sidebar.radio(
+    "Mô hình tạo ảnh:",
+    ["🍌 Google Flow (Nano Banana Pro / CDP)", "💻 Stable Diffusion 1.5 (Local GPU/CPU)"],
+    index=0,
+    help="Google Flow sử dụng Nano Banana Pro trên cloud, khóa nhân vật Stickman và không tốn VRAM card rời."
+)
+st.session_state.image_engine = image_engine
+
 # --- HEADER CHÍNH ---
 st.markdown("<div class='main-header'>AI VIDEO PRODUCER</div>", unsafe_allow_html=True)
 st.markdown("<div class='sub-header'>Hệ thống tự động hóa sản xuất video ngắn local sử dụng AI</div>", unsafe_allow_html=True)
@@ -530,17 +542,28 @@ elif st.session_state.step == 2:
             else:
                 sd_scenes.append((i, scene))
                 
-        # Sinh loạt ảnh SD
+        # Sinh loạt ảnh (Google Flow hoặc Stable Diffusion)
         if sd_scenes:
-            status_text.text("Đang sinh ảnh AI bằng Stable Diffusion...")
+            use_flow = getattr(st.session_state, "image_engine", "").startswith("🍌 Google Flow")
+            engine_name = "Google Flow (Nano Banana Pro)" if use_flow else "Stable Diffusion 1.5"
+            status_text.text(f"Đang sinh ảnh AI bằng {engine_name}...")
+            
             # Tạo list scene dict thô để truyền cho batch
             sd_raw_scenes = [s[1] for s in sd_scenes]
-            success, paths = generate_batch_images(
-                scenes=sd_raw_scenes,
-                temp_dir=TEMP_DIR,
-                orientation=st.session_state.orientation,
-                style_preset=st.session_state.style_preset
-            )
+            if use_flow:
+                success, paths = generate_flow_batch(
+                    scenes=sd_raw_scenes,
+                    temp_dir=TEMP_DIR,
+                    orientation=st.session_state.orientation,
+                    style_preset=st.session_state.style_preset
+                )
+            else:
+                success, paths = generate_batch_images(
+                    scenes=sd_raw_scenes,
+                    temp_dir=TEMP_DIR,
+                    orientation=st.session_state.orientation,
+                    style_preset=st.session_state.style_preset
+                )
             if success:
                 for idx, (original_idx, scene) in enumerate(sd_scenes):
                     scene["image_path"] = paths[idx]
@@ -667,13 +690,23 @@ elif st.session_state.step == 2:
                     st.warning("Chưa sinh ảnh cho cảnh này.")
                     
                 if st.button("🖼️ Tạo lại ảnh AI", key=f"btn_img_{i}"):
-                    with st.spinner("Đang chạy SD sinh ảnh..."):
-                        success, path = generate_single_image(
-                            prompt=scene["video_prompt"],
-                            output_path=scene["image_path"],
-                            orientation=st.session_state.orientation,
-                            style_preset=st.session_state.style_preset
-                        )
+                    use_flow = getattr(st.session_state, "image_engine", "").startswith("🍌 Google Flow")
+                    spinner_msg = "Đang chạy Google Flow sinh ảnh..." if use_flow else "Đang chạy SD sinh ảnh..."
+                    with st.spinner(spinner_msg):
+                        if use_flow:
+                            success, path = generate_flow_image(
+                                prompt=scene["video_prompt"],
+                                output_path=scene["image_path"],
+                                orientation=st.session_state.orientation,
+                                style_preset=st.session_state.style_preset
+                            )
+                        else:
+                            success, path = generate_single_image(
+                                prompt=scene["video_prompt"],
+                                output_path=scene["image_path"],
+                                orientation=st.session_state.orientation,
+                                style_preset=st.session_state.style_preset
+                            )
                         if success:
                             st.success("Sinh ảnh thành công!")
                             st.rerun()

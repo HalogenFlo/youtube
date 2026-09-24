@@ -52,7 +52,7 @@ def call_ollama(prompt: str, system_prompt: str, model: str = OLLAMA_MODEL_DEFAU
     }
     
     try:
-        response = requests.post(OLLAMA_API_URL, json=payload, timeout=60)
+        response = requests.post(OLLAMA_API_URL, json=payload, timeout=300)
         if response.status_code == 200:
             result = response.json()
             response_text = result.get("response", "").strip()
@@ -282,7 +282,7 @@ def translate_segments_batch(
     }
     
     try:
-        response = requests.post(OLLAMA_API_URL, json=payload, timeout=60)
+        response = requests.post(OLLAMA_API_URL, json=payload, timeout=300)
         if response.status_code == 200:
             result = response.json()
             response_text = result.get("response", "").strip()
