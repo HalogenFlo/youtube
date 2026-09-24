@@ -14,7 +14,7 @@ if not exist "%CHROME_EXE%" set "CHROME_EXE=%LOCALAPPDATA%\Google\Chrome\Applica
 echo [*] Dang khoi dong Chrome voi tai khoan Google np368057@gmail.com tren cong 9222...
 taskkill /F /IM chrome.exe >nul 2>&1
 timeout /t 2 >nul
-start "" "%CHROME_EXE%" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\Google\Chrome\User Data" --profile-directory="Default" --remote-allow-origins=* --restore-last-session "https://flow.google.com"
+start "" "%CHROME_EXE%" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\Google\Chrome\User Data" --profile-directory="Default" --remote-allow-origins=* --restore-last-session "https://flow.google.com/project/4763b8d1-5c45-4532-85b9-960a80cefcb4/tool/a1dc8db6-3417-4d6b-a00a-50832cb508e1?mode=APP"
 
 echo.
 echo [*] Dang khoi chay Giao dien Web tren cong 8502...
