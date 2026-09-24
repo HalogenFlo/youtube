@@ -1,214 +1,288 @@
-# Chức năng: Giao diện Streamlit sản xuất video tự động hàng loạt từ Prompt (Auto Batch Pipeline).
-# Lý do tạo: Đáp ứng trọn vẹn yêu cầu người dùng: nhập prompt -> tự động sinh kịch bản -> lặp tạo nhiều video hoàn chỉnh.
-# Trích dẫn: Tích hợp với src/batch_producer.py và src/flow_browser_service.py.
+# Chức năng: Giao diện Web Streamlit cho quy trình Nhập Prompt -> Sinh Kịch Bản -> Google Flow vẽ cảnh -> Render Video.
+# Lý do tạo: Đáp ứng 100% mong muốn của người dùng: Trực quan, dễ dùng trên Web, hiển thị kịch bản và tự động chạy Google Flow.
 
 import os
 import sys
 import time
+import urllib.request
 import streamlit as st
+import pandas as pd
 from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
-from src.batch_producer import run_batch_video_loop
-from src.config import OUTPUT_DIR, TTS_VOICES_VI, TTS_VOICES_EN, DEFAULT_IMAGE_STYLE
+from src.config import OUTPUT_DIR, TEMP_DIR, TTS_VOICES_VI, TTS_VOICES_EN, DEFAULT_IMAGE_STYLE
+from src.llm_service import generate_script
+from src.tts_service import generate_tts
+from src.flow_image_service import generate_flow_image
+from src.whisper_service import get_word_timestamps
+from src.video_compiler import compile_video_pipeline
 from src.flow_browser_service import get_flow_controller
 
 
 def check_chrome_flow_status() -> bool:
-    """Kiểm tra cực nhanh trong 0.2s xem cổng CDP 9222 có phản hồi không, tuyệt đối không block UI."""
+    """Kiểm tra nhanh trong 0.2s xem cổng CDP 9222 có phản hồi không."""
     try:
-        import urllib.request
-        with urllib.request.urlopen("http://127.0.0.1:9222/json/version", timeout=0.2) as resp:
+        req = urllib.request.Request("http://127.0.0.1:9222/json/version", headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=0.2) as resp:
             return resp.status == 200
     except Exception:
         return False
 
 
+def get_audio_duration(file_path: str) -> float:
+    try:
+        from mutagen.mp3 import MP3
+        return MP3(file_path).info.length
+    except Exception:
+        pass
+    try:
+        from moviepy.editor import AudioFileClip
+        clip = AudioFileClip(file_path)
+        dur = clip.duration
+        clip.close()
+        return dur
+    except Exception:
+        return 5.0
+
 
 def run_batch_ui():
     st.markdown("""
     <div style="text-align: center; margin-bottom: 2rem;">
-        <h1 style="font-size: 2.5rem; font-weight: 800; background: linear-gradient(90deg, #ff7e5f, #feb47b, #86e3ce); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
-            ⚡ TỰ ĐỘNG SẢN XUẤT NHIỀU VIDEO (AUTO BATCH PIPELINE)
+        <h1 style="font-size: 2.6rem; font-weight: 800; background: linear-gradient(90deg, #ff7e5f, #feb47b, #86e3ce); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+            🎬 AI VIDEO PRODUCER — GOOGLE FLOW PIPELINE
         </h1>
-        <p style="color: #8b949e; font-size: 1.1rem;">
-            Nhập ý tưởng/prompt ➔ AI tự động viết kịch bản ➔ Google Flow vẽ bối cảnh từng cảnh ➔ Render xuất xưởng hàng loạt video hoàn chỉnh.
+        <p style="color: #8b949e; font-size: 1.15rem;">
+            Nhập Prompt ➔ AI Tự Động Sinh Kịch Bản ➔ Google Flow Vẽ Bối Cảnh Từng Cảnh ➔ Xuất Video Hoàn Chỉnh
         </p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Khởi tạo state kết quả nếu chưa có
-    if "batch_completed_videos" not in st.session_state:
-        st.session_state.batch_completed_videos = []
-    if "batch_is_running" not in st.session_state:
-        st.session_state.batch_is_running = False
+    # State quản lý
+    if "current_scripts" not in st.session_state:
+        st.session_state.current_scripts = []
+    if "completed_videos" not in st.session_state:
+        st.session_state.completed_videos = []
 
-    # Khung kiểm tra trạng thái Google Flow CDP
-    col_status_1, col_status_2 = st.columns([3, 1])
-    with col_status_1:
-        is_cdp_connected = check_chrome_flow_status()
+    # Thanh trạng thái Google Flow
+    is_cdp_connected = check_chrome_flow_status()
+    col_st1, col_st2 = st.columns([3, 1])
+    with col_st1:
         if is_cdp_connected:
-            st.success("🟢 **Google Flow CDP sẵn sàng**: Trình duyệt Chrome đã kết nối cổng 9222 và sẵn sàng sinh bối cảnh AI!")
+            st.success("🟢 **Google Flow CDP Sẵn Sàng**: Trình duyệt Chrome đã mở cổng 9222 và sẵn sàng kết nối Google Flow!")
         else:
-            st.warning("🟠 **Chrome Google Flow chưa kết nối cổng 9222**: Hãy chắc chắn Chrome đã mở với cờ `--remote-debugging-port=9222` để dùng Google Flow.")
-    with col_status_2:
-        if st.button("🔄 Kiểm tra kết nối CDP", key="btn_check_cdp"):
+            st.info("ℹ️ **Cổng 9222**: Khi bấm tạo video, hệ thống sẽ tự động kết nối với Chrome Google Flow của bạn.")
+    with col_st2:
+        if st.button("🔄 Kiểm tra kết nối", key="btn_refresh_status"):
             st.rerun()
 
     st.markdown("---")
 
-    # Form nhập liệu chính
-    st.markdown("### 📝 1. Thiết lập Prompt & Số lượng video")
-    
-    col_input, col_config = st.columns([3, 2])
+    # BƯỚC 1: NHẬP PROMPT
+    st.markdown("### 📝 Bước 1: Nhập Prompt / Ý Tưởng Video")
+    col_p1, col_p2 = st.columns([3, 2])
 
-    with col_input:
-        default_prompt = (
-            "Top những bí ẩn khoa học kỳ thú nhất vũ trụ mà con người chưa có lời giải đáp.\n"
-            "Giải thích bằng phong cách dí dỏm, lôi cuốn và dễ hiểu."
-        )
-        prompt_input = st.text_area(
-            "Nhập Prompt / Ý tưởng hoặc Danh sách các chủ đề (Mỗi dòng 1 chủ đề):",
-            value=default_prompt,
-            height=150,
-            help="Nếu nhập 1 chủ đề và chọn tạo 3 video, AI sẽ tự động chia thành 3 phần video hấp dẫn. Nếu nhập nhiều dòng, mỗi dòng sẽ là 1 video riêng."
+    with col_p1:
+        prompt_text = st.text_area(
+            "Nhập chủ đề hoặc prompt chi tiết của bạn:",
+            value="3 bí ẩn khoa học kỳ thú nhất vũ trụ mà con người chưa có lời giải đáp. Phong cách hài hước, cuốn hút.",
+            height=120,
+            help="Bạn có thể nhập 1 chủ đề chung hoặc nhập danh sách nhiều chủ đề (mỗi dòng 1 video)."
         )
 
-    with col_config:
-        batch_count = st.slider(
-            "Số lượng video muốn tạo (Vòng lặp batch):",
-            min_value=1,
-            max_value=10,
-            value=2,
-            step=1,
-            help="Hệ thống sẽ tự động chạy vòng lặp sinh lần lượt từng video."
-        )
+    with col_p2:
+        num_videos = st.number_input("Số lượng video muốn tạo:", min_value=1, max_value=10, value=1, step=1)
+        lang = st.selectbox("Ngôn ngữ video:", ["Tiếng Việt", "English"], index=0)
+        lang_code = "vi" if lang == "Tiếng Việt" else "en"
+        voice_default = "vi-VN-HoaiMyNeural" if lang_code == "vi" else "en-US-EmmaNeural"
 
-        lang_choice = st.selectbox(
-            "Ngôn ngữ video & Giọng đọc:",
-            ["Tiếng Việt (vi-VN)", "English (en-US)"],
-            index=0
-        )
-        lang_code = "vi" if "Tiếng Việt" in lang_choice else "en"
+    # Nút bấm hành động
+    col_btn1, col_btn2 = st.columns(2)
+    with col_btn1:
+        btn_gen_script = st.button("✨ 1. Tạo Kịch Bản Phân Cảnh (Xem trước kịch bản)", use_container_width=True)
+    with col_btn2:
+        btn_one_click = st.button("⚡ TẠO TỰ ĐỘNG TỪ A-Z (Kịch bản ➔ Google Flow ➔ Video)", type="primary", use_container_width=True)
 
-        orientation_choice = st.selectbox(
-            "Định dạng khung hình:",
-            ["Dọc 9:16 (TikTok / YouTube Shorts / Reels)", "Ngang 16:9 (YouTube Video)"],
-            index=0
-        )
-        orientation = "vertical" if "Dọc" in orientation_choice else "horizontal"
+    # XỬ LÝ 1: SINH KỊCH BẢN ĐỂ XEM TRƯỚC
+    if btn_gen_script:
+        if not prompt_text.strip():
+            st.warning("Vui lòng nhập Prompt / Ý tưởng trước.")
+        else:
+            st.session_state.current_scripts = []
+            lines = [l.strip() for l in prompt_text.strip().split("\n") if l.strip()]
+            
+            with st.spinner("AI đang động não viết kịch bản phân cảnh..."):
+                for idx in range(num_videos):
+                    topic = lines[idx] if idx < len(lines) else (prompt_text.strip() if num_videos == 1 else f"{prompt_text.strip()} (Tập {idx+1})")
+                    ok, script_data = generate_script(topic=topic, style_preset=DEFAULT_IMAGE_STYLE, language=lang_code)
+                    if ok and "scenes" in script_data:
+                        st.session_state.current_scripts.append({
+                            "title": topic,
+                            "video_index": idx + 1,
+                            "scenes": script_data["scenes"]
+                        })
+                    else:
+                        st.error(f"Lỗi tạo kịch bản cho video {idx+1}: {script_data}")
+            
+            if st.session_state.current_scripts:
+                st.success(f"🎉 Đã sinh thành công kịch bản cho {len(st.session_state.current_scripts)} video! Bạn có thể xem chi tiết bên dưới.")
 
-        engine_choice = st.selectbox(
-            "Mô hình sinh hình ảnh bối cảnh:",
-            ["🍌 Google Flow (Nano Banana Pro / Khóa nhân vật Stickman)", "💻 Stable Diffusion 1.5 (Local)"],
-            index=0
-        )
-        image_engine = "flow" if "Google Flow" in engine_choice else "sd"
+    # HIỂN THỊ KỊCH BẢN ĐÃ SINH
+    if st.session_state.current_scripts:
+        st.markdown("---")
+        st.markdown("### 📋 Kịch Bản Chi Tiết Cho Từng Video")
+        
+        for sc_item in st.session_state.current_scripts:
+            v_idx = sc_item["video_index"]
+            v_title = sc_item["title"]
+            scenes = sc_item["scenes"]
+            
+            with st.expander(f"🎬 Kịch bản Video #{v_idx}: {v_title} ({len(scenes)} phân cảnh)", expanded=True):
+                df_scenes = pd.DataFrame(scenes)
+                col_rename = {
+                    "scene_num": "Cảnh #",
+                    "narration": "Lời thoại (TTS)",
+                    "video_prompt": "Mô tả bối cảnh gửi Google Flow (Visual Prompt)"
+                }
+                st.dataframe(df_scenes.rename(columns=col_rename), use_container_width=True)
 
-    # Giọng đọc TTS
-    voices_dict = TTS_VOICES_VI if lang_code == "vi" else TTS_VOICES_EN
-    selected_voice = list(voices_dict.values())[0]
+        st.markdown("### 🍌 Bước 2: Dùng Google Flow Vẽ Bối Cảnh & Xuất Video")
+        if st.button("🚀 BẮT ĐẦU DÙNG GOOGLE FLOW TẠO CÁC VIDEO THEO KỊCH BẢN TRÊN", type="primary", use_container_width=True):
+            btn_one_click = True  # Kích hoạt quy trình sản xuất theo các kịch bản đã có
 
-    st.markdown("---")
-
-    # Nút bắt đầu thực thi
-    btn_start = st.button(
-        f"🚀 BẮT ĐẦU TỰ ĐỘNG TẠO {batch_count} VIDEO THEO KỊCH BẢN",
-        type="primary",
-        use_container_width=True
-    )
-
-    if btn_start:
-        if not prompt_input.strip():
-            st.error("Vui lòng nhập Prompt / Ý tưởng trước khi chạy.")
+    # XỬ LÝ 2: CHẠY QUY TRÌNH SẢN XUẤT GOOGLE FLOW & RENDER VIDEO
+    if btn_one_click:
+        if not prompt_text.strip():
+            st.warning("Vui lòng nhập Prompt / Ý tưởng trước.")
             return
 
-        if image_engine == "flow" and not is_cdp_connected:
-            with st.spinner("Đang tự động kích hoạt Google Chrome và kết nối cổng 9222..."):
+        # Đảm bảo kết nối Google Flow
+        if not is_cdp_connected:
+            with st.spinner("Đang tự động kết nối Google Chrome cổng 9222..."):
                 controller = get_flow_controller()
-                ok, err = controller.connect()
-                if not ok:
-                    st.error(f"❌ Không thể tự động kết nối Google Flow: {err}")
-                    return
-                is_cdp_connected = True
+                controller.connect()
 
+        # Nếu chưa có kịch bản, tự động sinh kịch bản ngay
+        if not st.session_state.current_scripts:
+            lines = [l.strip() for l in prompt_text.strip().split("\n") if l.strip()]
+            with st.spinner("Đang sinh kịch bản cho các video..."):
+                for idx in range(num_videos):
+                    topic = lines[idx] if idx < len(lines) else (prompt_text.strip() if num_videos == 1 else f"{prompt_text.strip()} (Tập {idx+1})")
+                    ok, script_data = generate_script(topic=topic, style_preset=DEFAULT_IMAGE_STYLE, language=lang_code)
+                    if ok and "scenes" in script_data:
+                        st.session_state.current_scripts.append({
+                            "title": topic,
+                            "video_index": idx + 1,
+                            "scenes": script_data["scenes"]
+                        })
 
-        st.session_state.batch_is_running = True
-        st.session_state.batch_completed_videos = []
+        if not st.session_state.current_scripts:
+            st.error("Không thể tạo kịch bản. Vui lòng kiểm tra lại Ollama hoặc Prompt.")
+            return
 
-        # Các container hiển thị tiến độ
-        progress_overall = st.progress(0)
-        overall_text = st.empty()
-        
-        progress_current = st.progress(0)
-        current_text = st.empty()
-        
-        log_box = st.empty()
-        log_lines = []
+        # BẮT ĐẦU CHẠY VÒNG LẶP SẢN XUẤT TỪNG VIDEO
+        st.session_state.completed_videos = []
+        prog_bar = st.progress(0)
+        status_txt = st.empty()
+        log_txt = st.empty()
 
-        def ui_progress_callback(video_num: int, total_videos: int, pct: float, msg: str):
-            # Tính phần trăm tổng thể
-            overall_pct = int(((video_num - 1) / total_videos) * 100 + (pct / total_videos))
-            progress_overall.progress(min(100, max(0, overall_pct)))
-            overall_text.markdown(f"**Tổng tiến độ:** Đang xử lý Video **{video_num}/{total_videos}** ({overall_pct}%)")
+        total_vids = len(st.session_state.current_scripts)
+        run_ts = time.strftime("%Y%m%d_%H%M%S")
+        batch_dir = os.path.join(TEMP_DIR, f"web_batch_{run_ts}")
+        os.makedirs(batch_dir, exist_ok=True)
 
-            # Tiến độ video hiện tại
-            progress_current.progress(min(100, max(0, int(pct))))
-            current_text.markdown(f"**Video {video_num}:** {msg} ({int(pct)}%)")
+        for v_i, sc_item in enumerate(st.session_state.current_scripts):
+            v_idx = sc_item["video_index"]
+            v_title = sc_item["title"]
+            scenes = sc_item["scenes"]
+            v_work_dir = os.path.join(batch_dir, f"video_{v_idx}")
+            os.makedirs(v_work_dir, exist_ok=True)
 
-            # Ghi log
-            log_lines.append(f"[{time.strftime('%H:%M:%S')}] [Video {video_num}/{total_videos}] {msg}")
-            log_box.code("\n".join(log_lines[-8:]), language="text")
+            status_txt.markdown(f"**▶ Video {v_idx}/{total_vids}:** `{v_title}`")
 
-        try:
-            with st.spinner("Đang chạy vòng lặp sản xuất video tự động..."):
-                completed_videos, meta_reports = run_batch_video_loop(
-                    prompt=prompt_input,
-                    count=batch_count,
-                    language=lang_code,
-                    voice=selected_voice,
+            # 1. Sinh Audio TTS
+            for s_i, sc in enumerate(scenes):
+                sc_num = sc.get("scene_num", s_i + 1)
+                audio_file = os.path.join(v_work_dir, f"scene_{sc_num:03d}.mp3")
+                generate_tts(text=sc["narration"], output_path=audio_file, voice=voice_default)
+                sc["audio_path"] = audio_file
+                sc["audio_duration"] = get_audio_duration(audio_file)
+
+            # 2. Sinh ảnh bối cảnh Google Flow cho TỪNG PHÂN CẢNH
+            for s_i, sc in enumerate(scenes):
+                sc_num = sc.get("scene_num", s_i + 1)
+                img_file = os.path.join(v_work_dir, f"scene_{sc_num:03d}_bg.png")
+                sc["image_path"] = img_file
+                sc["use_video_ai"] = False
+
+                prompt_sc = sc.get("video_prompt") or sc.get("narration") or "Stickman cinematic scene"
+                log_txt.text(f"[Google Flow] Đang vẽ Cảnh {sc_num}/{len(scenes)}: \"{prompt_sc[:50]}...\"")
+
+                ok_flow, res_flow = generate_flow_image(
+                    prompt=prompt_sc,
+                    output_path=img_file,
+                    orientation="vertical",
                     style_preset=DEFAULT_IMAGE_STYLE,
-                    orientation=orientation,
-                    image_engine=image_engine,
-                    progress_callback=ui_progress_callback
+                    fallback_to_sd=False
                 )
+                if not ok_flow or not os.path.exists(img_file):
+                    st.error(f"Lỗi khi vẽ cảnh {sc_num} qua Google Flow: {res_flow}")
+                    return
 
-            st.session_state.batch_completed_videos = completed_videos
-            st.session_state.batch_is_running = False
+            # 3. Phân tích Timestamps Whisper
+            log_txt.text(f"[Whisper] Đang đồng bộ phụ đề Karaoke cho video {v_idx}...")
+            all_words = []
+            cum_time = 0.0
+            for sc in scenes:
+                ok_w, words = get_word_timestamps(sc["audio_path"], language=lang_code)
+                if ok_w and words:
+                    for w in words:
+                        all_words.append({
+                            "word": w["word"],
+                            "start": w["start"] + cum_time,
+                            "end": w["end"] + cum_time
+                        })
+                cum_time += sc.get("audio_duration", 5.0)
 
-            if completed_videos:
-                st.balloons()
-                st.success(f"🎉 ĐÃ HOÀN TẤT VÒNG LẶP: Sản xuất thành công {len(completed_videos)}/{batch_count} video hoàn chỉnh!")
-            else:
-                st.error("Không có video nào được hoàn thành. Vui lòng kiểm tra nhật ký lỗi.")
+            # 4. Biên tập & Render Video
+            log_txt.text(f"[MoviePy & FFmpeg] Đang ghép các bối cảnh và burn phụ đề cho video {v_idx}...")
+            ok_ren, compiled_vids, err_ren = compile_video_pipeline(
+                scenes=scenes,
+                words_timestamps=all_words,
+                max_duration=120.0,
+                orientation="vertical"
+            )
 
-        except Exception as e:
-            st.session_state.batch_is_running = False
-            st.error(f"Lỗi trong quá trình chạy batch: {e}")
+            if ok_ren and compiled_vids:
+                final_out = os.path.join(OUTPUT_DIR, f"video_batch_{run_ts}_v{v_idx:02d}.mp4")
+                import shutil
+                shutil.copy2(compiled_vids[0], final_out)
+                st.session_state.completed_videos.append(final_out)
 
-    # Hiển thị bộ sưu tập video thành phẩm
-    if st.session_state.batch_completed_videos:
+            prog_bar.progress(int((v_i + 1) / total_vids * 100))
+
+        prog_bar.progress(100)
+        status_txt.success(f"🎉 ĐÃ HOÀN TẤT: Xuất bản thành công {len(st.session_state.completed_videos)}/{total_vids} video hoàn chỉnh bằng Google Flow!")
+        log_txt.empty()
+
+    # HIỂN THỊ DANH SÁCH VIDEO THÀNH PHẨM
+    if st.session_state.completed_videos:
         st.markdown("---")
-        st.markdown("### 📥 Bộ Sưu Tập Video Hoàn Thành")
-        
-        cols = st.columns(min(len(st.session_state.batch_completed_videos), 3))
-        for idx, video_path in enumerate(st.session_state.batch_completed_videos):
-            col_target = cols[idx % len(cols)]
-            with col_target:
+        st.markdown("### 📥 Video Thành Phẩm Hoàn Chỉnh")
+        cols = st.columns(min(len(st.session_state.completed_videos), 3))
+        for idx, vid_path in enumerate(st.session_state.completed_videos):
+            with cols[idx % len(cols)]:
                 st.markdown(f"#### 🎬 Video #{idx + 1}")
-                st.caption(f"`{os.path.basename(video_path)}`")
-                if os.path.exists(video_path):
-                    st.video(video_path)
-                    with open(video_path, "rb") as f:
+                st.caption(f"`{os.path.basename(vid_path)}`")
+                if os.path.exists(vid_path):
+                    st.video(vid_path)
+                    with open(vid_path, "rb") as f:
                         st.download_button(
                             label=f"💾 Tải Video #{idx + 1}",
                             data=f,
-                            file_name=os.path.basename(video_path),
+                            file_name=os.path.basename(vid_path),
                             mime="video/mp4",
-                            key=f"dl_batch_{idx}"
+                            key=f"dl_v_{idx}"
                         )
-                else:
-                    st.warning("File không tồn tại.")
