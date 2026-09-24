@@ -96,8 +96,18 @@ def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
         safe_log("[ERROR] Không tìm thấy Google Chrome trên máy tính.")
         return False
 
-    user_data = cfg.get("chrome_user_data_dir", str(ROOT_DIR / "flow_chrome_profile"))
+    user_data = cfg.get("chrome_user_data_dir", os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data"))
     profile = cfg.get("profile_directory", "Default")
+
+    # Chromium chỉ mở cổng 9222 nếu được bật sạch từ đầu trên Profile đó.
+    # Tự động đóng Chrome cũ và mở lại kèm --restore-last-session để giữ nguyên toàn bộ tab của người dùng!
+    if os.name == 'nt':
+        try:
+            safe_log("[*] Đang khởi động lại Chrome để mở cổng gỡ lỗi 9222 trên tài khoản np368057@gmail.com...")
+            subprocess.run(["taskkill", "/F", "/IM", "chrome.exe"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            time.sleep(2.0)
+        except Exception:
+            pass
 
     cmd = [
         chrome_bin,
@@ -105,8 +115,7 @@ def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
         f"--user-data-dir={user_data}",
         f"--profile-directory={profile}",
         "--remote-allow-origins=*",
-        "--no-first-run",
-        "--no-default-browser-check",
+        "--restore-last-session",
         cfg.get("tool_url", "https://flow.google.com")
     ]
     try:
@@ -114,10 +123,10 @@ def ensure_chrome_with_cdp(cfg: Dict[str, Any]) -> bool:
         if os.name == 'nt':
             creation_flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
         subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creation_flags)
-        for _ in range(20):
+        for _ in range(25):
             time.sleep(0.5)
             if is_cdp_available(port):
-                safe_log(f"[OK] Google Chrome đã tự động kích hoạt thành công trên cổng CDP {port}!")
+                safe_log(f"[OK] Google Chrome ({profile} - np368057@gmail.com) đã kích hoạt thành công trên cổng {port}!")
                 return True
     except Exception as e:
         safe_log(f"[ERROR] Không thể khởi chạy Chrome: {e}")

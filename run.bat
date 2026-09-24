@@ -11,8 +11,10 @@ set "CHROME_EXE=C:\Program Files\Google\Chrome\Application\chrome.exe"
 if not exist "%CHROME_EXE%" set "CHROME_EXE=C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
 if not exist "%CHROME_EXE%" set "CHROME_EXE=%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"
 
-echo [*] Dang tu dong mo Chrome Google Flow tren cong 9222...
-start "" "%CHROME_EXE%" --remote-debugging-port=9222 --user-data-dir="%~dp0flow_chrome_profile" --profile-directory="Default" --remote-allow-origins=* --no-first-run --no-default-browser-check "https://flow.google.com"
+echo [*] Dang khoi dong Chrome voi tai khoan Google np368057@gmail.com tren cong 9222...
+taskkill /F /IM chrome.exe >nul 2>&1
+timeout /t 2 >nul
+start "" "%CHROME_EXE%" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\Google\Chrome\User Data" --profile-directory="Default" --remote-allow-origins=* --restore-last-session "https://flow.google.com"
 
 echo.
 echo [*] Dang khoi chay Giao dien Web tren cong 8502...
