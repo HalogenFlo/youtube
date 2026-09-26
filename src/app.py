@@ -184,10 +184,19 @@ if "wan_steps" not in st.session_state:
 if "wan_measured_sec_per_step" not in st.session_state:
     st.session_state.wan_measured_sec_per_step = get_gpu_benchmark_sec_per_step()
 
-# --- CHỨC NĂNG DUY NHẤT: TỰ ĐỘNG SẢN XUẤT VIDEO HÀNG LOẠT (AUTO BATCH LOOP) ---
-from src.app_batch import run_batch_ui
-run_batch_ui()
-st.stop()
+# --- CHỌN CHẾ ĐỘ LÀM VIỆC (MẶC ĐỊNH: CHẾ ĐỘ LOCAL CŨ) ---
+st.sidebar.markdown("## 🧭 Chế độ Làm Việc")
+app_mode = st.sidebar.radio(
+    "Lựa chọn chế độ:",
+    ["🛠️ Chế độ Local (Từng bước / Wan 2.1 / SD)", "⚡ Tự động hàng loạt (Auto Batch)"],
+    index=0,
+    help="Chế độ Local cho phép kiểm soát từng bước (Kịch bản, TTS, Wan 2.1, SD 1.5, Phụ đề)."
+)
+if app_mode == "⚡ Tự động hàng loạt (Auto Batch)":
+    from src.app_batch import run_batch_ui
+    run_batch_ui()
+    st.stop()
+
 
 
 
