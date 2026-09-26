@@ -11,5 +11,6 @@
   "default_aspect_ratio": "9:16",
   "workers": 2,
   "timeout_seconds": 180,
+  "video_timeout_seconds": 1800,
   "flow_require_ui_evidence": false
 }

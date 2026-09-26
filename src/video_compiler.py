@@ -102,7 +102,7 @@ def burn_subtitles(video_in: str, ass_path: str, video_out: str, part_num: int =
         if ":" in norm_font_path:
             f_drive, f_path = norm_font_path.split(":", 1)
             norm_font_path = f"{f_drive}\\:{f_path}"
-            
+
         drawtext_filter = (
             f"drawtext=fontfile='{norm_font_path}':text='{watermark_text}':"
             f"x=(w-text_w)/2:y=60:fontsize=36:fontcolor=white:box=1:"
@@ -229,45 +229,62 @@ def compile_video_pipeline(
             
             # 3. Tạo các clip phân cảnh bằng MoviePy
             scene_clips = []
+            part_audio_clips = []
             current_scene_start = 0.0
             
+            from moviepy.editor import concatenate_audioclips
+            from moviepy.audio.AudioClip import AudioClip
+
             for scene in part_scenes:
                 audio_path = scene.get("audio_path", "")
-                audio_dur = scene.get("audio_duration", 5.0)
+                audio_dur = float(scene.get("audio_duration", 5.0))
                 
                 # Load audio
-                if audio_path and os.path.exists(audio_path):
-                    audio_clip = AudioFileClip(audio_path)
-                else:
-                    # Fallback nếu không có audio
-                    audio_clip = None
+                audio_clip = None
+                if audio_path and os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+                    try:
+                        audio_clip = AudioFileClip(audio_path)
+                        # Đảm bảo thời lượng audio khớp chính xác
+                        if audio_clip.duration:
+                            audio_clip = audio_clip.set_duration(min(audio_clip.duration, audio_dur))
+                    except Exception as e:
+                        print(f"[WARNING] Lỗi load audio {audio_path}: {e}")
+                        audio_clip = None
                 
+                # Nếu không có audio clip, tạo âm thanh im lặng đúng thời lượng để không bị lệch nhịp
+                if audio_clip is None:
+                    audio_clip = AudioClip(lambda t: 0.0, duration=audio_dur)
+                part_audio_clips.append(audio_clip)
+
                 # Load hình ảnh hoặc video
                 visual_clip = None
                 if scene.get("use_video_ai", False):
                     video_path = scene.get("video_path", "")
-                    if video_path and os.path.exists(video_path):
-                        visual_clip = process_video_clip(video_path, audio_dur, orientation)
-                else:
+                    if video_path and os.path.exists(video_path) and os.path.getsize(video_path) > 0:
+                        try:
+                            visual_clip = process_video_clip(video_path, audio_dur, orientation)
+                            # Loại bỏ audio gốc của video AI để chống xung đột/câm tiếng
+                            visual_clip = visual_clip.without_audio()
+                        except Exception as e:
+                            print(f"[WARNING] Lỗi load video AI {video_path}: {e}")
+                            visual_clip = None
+
+                if visual_clip is None:
                     image_path = scene.get("image_path", "")
-                    if image_path and os.path.exists(image_path):
+                    if image_path and os.path.exists(image_path) and os.path.getsize(image_path) > 0:
                         try:
                             visual_clip = apply_visual_beat_motion(image_path, audio_dur, orientation)
                         except Exception as e:
                             print(f"[WARNING] Lỗi apply_visual_beat_motion, fallback Ken Burns: {e}")
                             visual_clip = apply_ken_burns(image_path, audio_dur, orientation)
                 
-                # Nếu không load được tài nguyên nào, tạo clip đen làm fallback
+                # Nếu không load được tài nguyên nào, tạo clip màu tối làm fallback
                 if visual_clip is None:
                     target_w, target_h = (480, 848) if orientation == "vertical" else (848, 480)
-                    # Tạo clip màu đen
                     from moviepy.video.VideoClip import ColorClip
-                    visual_clip = ColorClip(size=(target_w, target_h), color=(0, 0, 0), duration=audio_dur)
+                    visual_clip = ColorClip(size=(target_w, target_h), color=(15, 20, 28), duration=audio_dur)
                 
-                # Gán audio vào visual clip
-                if audio_clip:
-                    visual_clip = visual_clip.set_audio(audio_clip)
-                    
+                visual_clip = visual_clip.set_duration(audio_dur)
                 scene_clips.append(visual_clip)
                 current_scene_start += audio_dur
             
@@ -275,10 +292,15 @@ def compile_video_pipeline(
             if not scene_clips:
                 continue
                 
-            print(f"Đang kết nối các clip cho Phần {part_num}...")
-            # Sử dụng method="compose" để ghép các clip chuẩn xác
+            print(f"Đang kết nối các clip và âm thanh giọng đọc cho Phần {part_num}...")
+            # Nối hình ảnh
             part_video_raw = concatenate_videoclips(scene_clips, method="compose")
-            
+
+            # Gán chuỗi audio liên tục đảm bảo 100% có tiếng nói
+            if part_audio_clips:
+                combined_audio = concatenate_audioclips(part_audio_clips)
+                part_video_raw = part_video_raw.set_audio(combined_audio)
+
             # Xuất video thô
             raw_output_path = os.path.join(TEMP_DIR, f"part_{part_num}_raw.mp4")
             temp_files.append(raw_output_path)
@@ -289,6 +311,8 @@ def compile_video_pipeline(
                 fps=DEFAULT_FPS,
                 codec="libx264",
                 audio_codec="aac",
+                temp_audiofile=os.path.join(TEMP_DIR, f"temp-audio-part{part_num}.m4a"),
+                remove_temp=True,
                 verbose=False,
                 logger=None
             )
@@ -296,7 +320,15 @@ def compile_video_pipeline(
             # Đóng các clip để giải phóng bộ nhớ
             part_video_raw.close()
             for c in scene_clips:
-                c.close()
+                try:
+                    c.close()
+                except Exception:
+                    pass
+            for a in part_audio_clips:
+                try:
+                    a.close()
+                except Exception:
+                    pass
             
             # 4. Tạo phụ đề ASS cho phần này
             ass_path = os.path.join(TEMP_DIR, f"part_{part_num}.ass")

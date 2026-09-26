@@ -1,5 +1,4 @@
 # 🎬 Báo Cáo Phân Tích & Học Hỏi: Kiến Trúc Tạo Video Bằng Google Flow (Từ Repo `tiktok-ytb`)
-
 > **Nguồn nghiên cứu**: [hongphuoc6104/tiktok-ytb](https://github.com/hongphuoc6104/tiktok-ytb)  
 > **Mục tiêu**: Nghiên cứu phương thức khai thác công cụ **Google Flow** (`flow.google.com`) để sinh ảnh và sản xuất video tự động chất lượng cao cho TikTok/YouTube Shorts.
 
@@ -106,3 +105,38 @@ Thay vì sinh toàn bộ chuyển động bằng Video AI phức tạp (vốn t�
    - Áp dụng cấu trúc Prompt phân cấp: `Scene Topic + Base Style + Character Lock Guidance + Preserve/Change Rules`.
 3. **Bước 3: Nâng cấp Video Compiler với Visual Beats**:
    - Cải tiến `src/video_compiler.py` để hỗ trợ hiệu ứng chuyển cảnh vi mô (micro-animation: Zoom, Pan, Keyframe) khớp chính xác với timestamp của Whisper/TTS.
+
+---
+
+## 6. Cơ Chế Chờ Video Trực Tiếp & Triệt Tiêu Fallback (Direct Video Waiting Engine)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Web UI / Batch Producer
+    participant Controller as Flow Browser Service (CDP)
+    participant Chrome as Google Flow (Chrome Web SPA)
+    participant Compiler as Video Compiler & Subtitles
+
+    UI->>Controller: generate_flow_video(prompt, timeout=1800s)
+    Controller->>Chrome: Điền Prompt Video Veo & ấn Generate
+    loop Theo dõi tiến trình (Mỗi 30s)
+        Controller->>Chrome: Bắt response network (video/*, HTTP 200/206 Partial Content)
+        Controller->>Chrome: Quét thẻ video, play_circle, nút Download
+        Controller-->>UI: Cập nhật nhịp: Đang render (X giây / 1800 giây)
+    end
+    alt Flow tạo video clip thành công (.mp4)
+        Chrome-->>Controller: Stream video blob hoặc file URL
+        Controller->>UI: Lưu scene_XXX.mp4 nguyên gốc từ Flow
+        UI->>Compiler: Ghép audio TTS + phụ đề karaoke vào video Flow
+        Compiler-->>UI: Xuất thành phẩm output/video_batch_*.mp4
+    else Timeout (>1800s) hoặc lỗi nghiêm trọng
+        Controller-->>UI: Báo lỗi chi tiết cảnh X
+        Note over UI: DỪNG LẠI THEO YÊU CẦU.<br/>TUYỆT ĐỐI KHÔNG FALLBACK sang ảnh Flow hay SD!
+    end
+```
+
+### Các nguyên tắc cốt lõi:
+1. **Kiên trì chờ kết quả (1800s / 30 phút)**: Google Veo / Flow có thể xếp hàng vào giờ cao điểm, hệ thống duy trì lắng nghe socket CDP và cập nhật tiến trình liên tục thay vì hủy sớm ở 360s.
+2. **Bắt luồng stream đa định dạng**: Chấp nhận HTTP 206 Partial Content cho streaming HTML5 và mọi Content-Type chứa `video/`.
+3. **Triệt tiêu Fallback ngoài ý muốn**: Khi người dùng chọn chế độ Video Flow (`flow_video`), hệ thống không bao giờ tự ý hạ cấp về ảnh tĩnh hay nạp Stable Diffusion 1.5 nặng máy.

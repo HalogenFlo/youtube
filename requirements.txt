@@ -8,12 +8,14 @@ streamlit>=1.30.0
 requests>=2.31.0
 edge-tts>=6.1.9
 faster-whisper>=1.0.0
-diffusers>=0.26.0
-transformers>=4.38.0
+diffusers==0.35.2
+transformers==4.57.3
+huggingface-hub==0.36.2
 accelerate>=0.27.0
 safetensors>=0.4.0
 sentencepiece>=0.1.99
-torch>=2.2.0
+torch==2.9.1
+torchaudio==2.9.1
 moviepy>=1.0.3,<2.0.0
 Pillow>=10.2.0
 yt-dlp>=2024.3.10
@@ -23,3 +25,4 @@ nodriver>=0.38
 playwright>=1.48.0
 fake-useragent>=1.4.0
 psutil>=5.9.0
+coqui-tts[codec]==0.27.5

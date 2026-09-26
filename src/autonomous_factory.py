@@ -15,6 +15,7 @@ from typing import Any, Dict, List
 from src.batch_producer import produce_single_video_pipeline, split_prompt_to_video_topics
 from src.config import DEFAULT_IMAGE_STYLE, OUTPUT_DIR, TEMP_DIR, TTS_VOICE_DEFAULT
 from src.flow_browser_service import get_flow_controller, get_flow_readiness
+from src.studio_skill_registry import record_skill_outcome
 
 
 STATE_PATH = Path(TEMP_DIR) / "video_factory_state.json"
@@ -92,6 +93,11 @@ def add_factory_jobs(
     style_preset: str = DEFAULT_IMAGE_STYLE,
     orientation: str = "vertical",
     image_engine: str = "flow",
+    media_mode: str = "flow_video",
+    target_scenes: int = 5,
+    voice_mode: str = "edge",
+    voice_reference_path: str = "",
+    studio_mode: bool = True,
 ) -> List[str]:
     topics = split_prompt_to_video_topics(prompt, count, language)
     created_ids: List[str] = []
@@ -117,6 +123,11 @@ def add_factory_jobs(
                     "style_preset": style_preset,
                     "orientation": orientation,
                     "image_engine": image_engine,
+                    "media_mode": media_mode,
+                    "target_scenes": max(1, int(target_scenes)),
+                    "voice_mode": voice_mode,
+                    "voice_reference_path": voice_reference_path,
+                    "studio_mode": bool(studio_mode),
                 },
             })
         state["paused"] = False
@@ -162,6 +173,18 @@ def clear_finished_jobs() -> int:
         return removed
 
 
+def clear_failed_jobs() -> int:
+    """Xóa lịch sử lỗi nhưng giữ nguyên video đã hoàn tất."""
+    with _LOCK:
+        state = _load_unlocked()
+        before = len(state["jobs"])
+        state["jobs"] = [job for job in state["jobs"] if job.get("status") != "failed"]
+        removed = before - len(state["jobs"])
+        if removed:
+            _save_unlocked(state)
+        return removed
+
+
 def cancel_queued_jobs() -> int:
     """Hủy riêng các việc chưa bắt đầu, không đụng tới video đang chạy/thành phẩm."""
     with _LOCK:
@@ -189,6 +212,9 @@ def _next_job() -> Dict[str, Any] | None:
     with _LOCK:
         state = _load_unlocked()
         if state.get("paused"):
+            return None
+        # Đảm bảo chỉ sản xuất tuần tự đúng 1 video tại một thời điểm
+        if any(job.get("status") == "running" for job in state["jobs"]):
             return None
         for job in state["jobs"]:
             if job.get("status") == "queued":
@@ -232,12 +258,20 @@ def _worker_loop() -> None:
                 style_preset=settings.get("style_preset", DEFAULT_IMAGE_STYLE),
                 orientation=settings.get("orientation", "vertical"),
                 image_engine=settings.get("image_engine", "flow"),
+                media_mode=settings.get("media_mode", "flow_image"),
+                target_scenes=int(settings.get("target_scenes", 5)),
+                voice_mode=settings.get("voice_mode", "edge"),
+                voice_reference_path=settings.get("voice_reference_path", ""),
+                job_key=job["id"],
+                studio_mode=bool(settings.get("studio_mode", True)),
                 progress_callback=progress_callback,
             )
+            skill_ids = metadata.get("editorial_report", {}).get("selected_skill_ids", []) if isinstance(metadata, dict) else []
+            record_skill_outcome(skill_ids, success)
             if success:
                 _update_job(
                     job["id"], status="completed", progress=100, message="Video và metadata đã sẵn sàng",
-                    output_path=result, metadata=metadata, completed_at=_now(),
+                    output_path=result, metadata=metadata, completed_at=_now(), error="",
                 )
             else:
                 _update_job(job["id"], status="failed", progress=0, message=str(result), error=str(result))

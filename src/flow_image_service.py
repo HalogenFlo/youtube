@@ -5,7 +5,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Tuple, List, Dict, Any
+from typing import Tuple, List, Dict, Any, Optional, Callable
 
 if hasattr(sys.stdout, 'reconfigure'):
     try:
@@ -36,7 +36,9 @@ def generate_flow_media(
     output_path: str,
     orientation: str = "vertical",
     style_preset: str = DEFAULT_IMAGE_STYLE,
-    mode: str = "video"
+    mode: str = "video",
+    timeout_sec: Optional[int] = None,
+    status_callback: Optional[Callable[[int, str], None]] = None,
 ) -> Tuple[bool, str]:
     """
     Sinh nội dung (Video hoặc Ảnh) trực tiếp từ Google Flow theo prompt.
@@ -49,14 +51,17 @@ def generate_flow_media(
         success, result_path = controller.generate_scene_video(
             prompt=prompt,
             output_path=output_path,
-            orientation=orientation
+            orientation=orientation,
+            timeout_sec=timeout_sec,
+            status_callback=status_callback,
         )
     else:
         success, result_path = controller.generate_scene_image(
             prompt=prompt,
             output_path=output_path,
             orientation=orientation,
-            style_preset=style_preset
+            style_preset=style_preset,
+            timeout_sec=timeout_sec or 90,
         )
 
     if success and os.path.exists(output_path):
@@ -72,14 +77,16 @@ def generate_flow_image(
     output_path: str,
     orientation: str = "vertical",
     style_preset: str = DEFAULT_IMAGE_STYLE,
-    fallback_to_sd: bool = False
+    fallback_to_sd: bool = False,
+    timeout_sec: Optional[int] = None,
 ) -> Tuple[bool, str]:
     return generate_flow_media(
         prompt=prompt,
         output_path=output_path,
         orientation=orientation,
         style_preset=style_preset,
-        mode="image"
+        mode="image",
+        timeout_sec=timeout_sec,
     )
 
 
@@ -88,14 +95,18 @@ def generate_flow_video(
     output_path: str,
     orientation: str = "vertical",
     style_preset: str = DEFAULT_IMAGE_STYLE,
+    timeout_sec: Optional[int] = None,
+    status_callback: Optional[Callable[[int, str], None]] = None,
 ) -> Tuple[bool, str]:
-    """Sinh clip MP4 thật từ Google Flow cho một phân cảnh."""
+    """Sinh clip MP4 thật từ Google Flow cho một phân cảnh (kiên trì chờ, không fallback)."""
     return generate_flow_media(
         prompt=prompt,
         output_path=output_path,
         orientation=orientation,
         style_preset=style_preset,
         mode="video",
+        timeout_sec=timeout_sec,
+        status_callback=status_callback,
     )
 
 

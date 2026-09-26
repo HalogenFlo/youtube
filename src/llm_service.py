@@ -71,7 +71,8 @@ def generate_script(
     topic: str, 
     style_preset: str = "cinematic, detailed, 4k", 
     language: str = "vi",
-    model: str = OLLAMA_MODEL_DEFAULT
+    model: str = OLLAMA_MODEL_DEFAULT,
+    target_scenes: int = 5,
 ) -> Tuple[bool, Any]:
     """
     Luồng A: Sinh kịch bản mới hoàn toàn từ chủ đề/ý tưởng.
@@ -79,6 +80,11 @@ def generate_script(
     user_prompt = (
         f"Hãy viết kịch bản video ngắn cho chủ đề/ý tưởng sau: \"{topic}\".\n"
         f"Phong cách hình ảnh yêu cầu cho các video prompt: \"{style_preset}\".\n"
+        f"Kịch bản phải có ĐÚNG {max(1, int(target_scenes))} phân cảnh; mỗi cảnh khoảng 5-10 giây.\n"
+        "Nếu là nội dung giáo dục, toán hoặc kỹ thuật: lời thoại phải giải thích kiến thức chính xác, "
+        "có ít nhất một ví dụ cụ thể và đi đến đáp án; không viết lời dẫn chung chung.\n"
+        "Mọi video_prompt TUYỆT ĐỐI không được yêu cầu vẽ chữ, số, công thức, bảng viết, phụ đề hay ký hiệu đọc được; "
+        "hãy dùng vật thể, ánh sáng, khối hình và hành động trực quan vì AI tạo hình thường viết sai chữ.\n"
         "Đảm bảo mạch câu chuyện liền mạch, hấp dẫn và cấu trúc đúng định dạng JSON."
     )
     return call_ollama(user_prompt, get_system_prompt(language), model)
@@ -89,22 +95,58 @@ def _fallback_video_metadata(topic: str, language: str = "vi") -> Dict[str, Any]
     clean_topic = re.sub(r"\s*\((Phần|Part)\s+\d+.*?\)\s*$", "", topic, flags=re.IGNORECASE).strip()
     clean_topic = re.sub(r"\s+", " ", clean_topic).strip(" .,:;-_")
     if language == "vi":
-        title = f"{clean_topic}: Điều bất ngờ bạn chưa biết"
-        description = f"Khám phá kiến thức ngắn gọn, dễ hiểu và thú vị về {clean_topic}."
-        base_tags = ["#kienthuc", "#kienthucmoingay", "#shorts", "#videoAI", "#khampha"]
+        title = f"Giải thích ngắn: {clean_topic}"
+        disclosure = "Hình ảnh, video hoặc giọng đọc trong nội dung này được tạo hay hỗ trợ bởi AI."
+        description = f"Khám phá kiến thức ngắn gọn, dễ hiểu về {clean_topic}.\n\n{disclosure}"
+        tiktok_caption = f"Cùng tìm hiểu ngắn gọn về {clean_topic}. {disclosure}"
+        base_tags = ["#KienThuc", "#KhamPha", "#VideoAI", "#AIGenerated"]
     else:
-        title = f"{clean_topic}: What You Didn't Know"
-        description = f"A short, clear and surprising explanation of {clean_topic}."
-        base_tags = ["#knowledge", "#learnontiktok", "#shorts", "#AIvideo", "#facts"]
+        title = f"A short explanation: {clean_topic}"
+        disclosure = "Visuals, video, or narration in this content were generated or assisted by AI."
+        description = f"A short and clear explanation of {clean_topic}.\n\n{disclosure}"
+        tiktok_caption = f"A quick explanation of {clean_topic}. {disclosure}"
+        base_tags = ["#Knowledge", "#Learn", "#AIVideo", "#AIGenerated"]
 
     words = re.findall(r"[^\W\d_]+", clean_topic, flags=re.UNICODE)[:3]
     topic_tag = "#" + "".join(words) if words else ""
     hashtags = ([topic_tag] if topic_tag else []) + base_tags
+    hashtags = hashtags[:6]
+    risk_flags = _metadata_risk_flags(clean_topic, "")
     return {
         "title": title[:100],
         "description": description,
-        "hashtags": hashtags[:8],
+        "tiktok_caption": tiktok_caption[:2200],
+        "hashtags": hashtags,
+        "ai_disclosure": disclosure,
+        "requires_ai_label": True,
+        "manual_review_required": bool(risk_flags),
+        "risk_flags": risk_flags,
+        "platforms": {
+            "youtube": {
+                "title": title[:100],
+                "description": description,
+                "hashtags": hashtags,
+                "set_altered_content": True,
+            },
+            "tiktok": {
+                "caption": tiktok_caption[:2200],
+                "hashtags": hashtags,
+                "enable_ai_generated_label": True,
+            },
+        },
     }
+
+
+def _metadata_risk_flags(topic: str, narration: str) -> List[str]:
+    combined = f"{topic} {narration}".lower()
+    categories = {
+        "health_or_medical": ["sức khỏe", "y tế", "bệnh", "thuốc", "medical", "health", "disease"],
+        "finance": ["tài chính", "đầu tư", "chứng khoán", "crypto", "finance", "investment"],
+        "civic_or_politics": ["bầu cử", "chính trị", "tổng thống", "election", "politic", "president"],
+        "crisis_or_disaster": ["chiến tranh", "thảm họa", "động đất", "war", "disaster", "earthquake"],
+        "real_person_or_public_figure": ["người nổi tiếng", "ca sĩ", "diễn viên", "celebrity", "public figure"],
+    }
+    return [name for name, terms in categories.items() if any(term in combined for term in terms)]
 
 
 def generate_video_metadata(
@@ -117,10 +159,15 @@ def generate_video_metadata(
     narration = " ".join(str(scene.get("narration", "")) for scene in scenes)
     lang_name = "tiếng Việt" if language == "vi" else "English"
     system_prompt = (
-        "Bạn là chuyên gia metadata cho video kiến thức ngắn. "
-        "Chỉ trả về JSON gồm title, description và hashtags. "
-        f"Tiêu đề và mô tả viết bằng {lang_name}; title tối đa 100 ký tự, hấp dẫn nhưng không giật tít sai. "
-        "hashtags là mảng 5-8 chuỗi, mỗi chuỗi bắt đầu bằng #, không dấu cách."
+        "Bạn là chuyên gia metadata cho video kiến thức ngắn, tuân thủ chính sách YouTube và TikTok. "
+        "Chỉ trả về JSON gồm title, description, tiktok_caption, hashtags, ai_disclosure và risk_flags. "
+        f"Viết bằng {lang_name}. Title tối đa 100 ký tự và phải phản ánh chính xác lời thoại. "
+        "Không dùng clickbait sai lệch, tuyên bố chắc chắn khi chưa có bằng chứng, giả mạo người thật, "
+        "keyword stuffing, #fyp/#viral không liên quan, hoặc hứa hẹn y tế/tài chính. "
+        "description và tiktok_caption phải minh bạch rằng hình ảnh/video/giọng đọc được tạo hoặc hỗ trợ bởi AI. "
+        "hashtags là 3-6 hashtag liên quan trực tiếp, mỗi chuỗi bắt đầu bằng # và không có dấu cách. "
+        "risk_flags là mảng các rủi ro cần người kiểm tra như health_or_medical, finance, civic_or_politics, "
+        "crisis_or_disaster, real_person_or_public_figure; để trống nếu không có."
     )
     prompt = (
         f"Chủ đề: {topic}\n"
@@ -135,16 +182,60 @@ def generate_video_metadata(
         if isinstance(raw_tags, str):
             raw_tags = raw_tags.replace(",", " ").split()
         hashtags = []
+        blocked_generic_tags = {"#fyp", "#foryou", "#viral", "#trending", "#xuhuong"}
         for tag in raw_tags if isinstance(raw_tags, list) else []:
             normalized = "#" + re.sub(r"[^\w\u00C0-\u024F]", "", str(tag).lstrip("#"))
-            if len(normalized) > 1 and normalized not in hashtags:
+            if len(normalized) > 1 and normalized.lower() not in blocked_generic_tags and normalized not in hashtags:
                 hashtags.append(normalized)
         if title and hashtags:
-            return True, {
+            deceptive_phrases = [
+                "100%", "chắc chắn", "bị che giấu", "không ai muốn bạn biết",
+                "guaranteed", "shocking truth", "they don't want you to know",
+            ]
+            if any(phrase in title.lower() for phrase in deceptive_phrases):
+                title = _fallback_video_metadata(topic, language)["title"]
+            disclosure = str(data.get("ai_disclosure", "")).strip()
+            if not disclosure:
+                disclosure = (
+                    "Hình ảnh, video hoặc giọng đọc trong nội dung này được tạo hay hỗ trợ bởi AI."
+                    if language == "vi" else
+                    "Visuals, video, or narration in this content were generated or assisted by AI."
+                )
+            if disclosure.lower() not in description.lower():
+                description = f"{description}\n\n{disclosure}".strip()
+            tiktok_caption = str(data.get("tiktok_caption", "")).strip() or description
+            if disclosure.lower() not in tiktok_caption.lower():
+                tiktok_caption = f"{tiktok_caption} {disclosure}".strip()
+            heuristic_flags = _metadata_risk_flags(topic, narration)
+            supplied_flags = data.get("risk_flags", [])
+            if not isinstance(supplied_flags, list):
+                supplied_flags = []
+            risk_flags = list(dict.fromkeys([str(flag) for flag in supplied_flags] + heuristic_flags))
+            hashtags = hashtags[:6]
+            result = {
                 "title": title[:100],
                 "description": description,
-                "hashtags": hashtags[:8],
+                "tiktok_caption": tiktok_caption[:2200],
+                "hashtags": hashtags,
+                "ai_disclosure": disclosure,
+                "requires_ai_label": True,
+                "manual_review_required": bool(risk_flags),
+                "risk_flags": risk_flags,
             }
+            result["platforms"] = {
+                "youtube": {
+                    "title": result["title"],
+                    "description": result["description"],
+                    "hashtags": hashtags,
+                    "set_altered_content": True,
+                },
+                "tiktok": {
+                    "caption": result["tiktok_caption"],
+                    "hashtags": hashtags,
+                    "enable_ai_generated_label": True,
+                },
+            }
+            return True, result
 
     return True, _fallback_video_metadata(topic, language)
 
@@ -472,5 +563,3 @@ def feedback_educational_script(
         "Hãy cập nhật lại kịch bản JSON theo góp ý trên. Giữ nguyên định dạng và nội dung các phân cảnh không bị yêu cầu sửa đổi."
     )
     return call_ollama(user_prompt, get_educational_system_prompt(language), model)
-
-

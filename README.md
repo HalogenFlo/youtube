@@ -10,6 +10,17 @@ Giao diện chính hiện là một dây chuyền sản xuất video tự độn
 4. Bấm **Khởi động dây chuyền**. Có thể để máy chạy; hàng đợi được lưu tại `temp/video_factory_state.json`.
 5. Lấy video, tiêu đề, mô tả và hashtag trong tab **Kho thành phẩm**. Mỗi MP4 có một file JSON metadata cùng tên trong thư mục `output/`.
 
+### Video, phân cảnh và giọng đọc
+
+- **Số video trong lô** là số file thành phẩm cần sản xuất.
+- **Số phân cảnh mỗi video** là số clip/ảnh Flow được ghép bên trong một video; có thể chọn từ 1 đến 12.
+- **Giọng có sẵn** dùng Edge TTS, hỗ trợ tiếng Việt và tiếng Anh.
+- **Clone giọng local** dùng XTTS-v2 với file mẫu 6-30 giây. XTTS-v2 chưa hỗ trợ tiếng Việt; chỉ dùng cho các ngôn ngữ được liệt kê trên giao diện và chỉ dùng giọng đã được cho phép.
+
+### Studio biên tập local nhiều vai
+
+Khi bật **Studio biên tập local nhiều vai**, bản nháp được chuyển qua các vai trò: nghiên cứu, kiểm chứng, biên kịch, biên tập giữ chân, đạo diễn hình ảnh, kiểm duyệt chính sách và QA. Registry chọn kỹ năng có điểm hiệu dụng cao nhất cho từng vai và cập nhật điểm theo kết quả job thật. Báo cáo QA cùng danh sách kỹ năng được lưu trong metadata JSON của video.
+
 Nếu ứng dụng đóng giữa chừng, công việc đang chạy sẽ trở lại hàng chờ khi mở lại. Khi Chrome/Google Flow mất kết nối, xưởng tự tạm dừng để tránh làm hỏng toàn bộ hàng đợi.
 
 ---

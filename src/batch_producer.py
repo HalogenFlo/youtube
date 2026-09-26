@@ -39,6 +39,8 @@ from src.tts_service import generate_tts
 from src.flow_image_service import generate_flow_image, generate_flow_video
 from src.whisper_service import get_word_timestamps
 from src.video_compiler import compile_video_pipeline
+from src.voice_clone_service import generate_cloned_tts
+from src.studio_editorial_service import run_studio_editorial_pipeline
 
 
 def get_audio_duration(file_path: str) -> float:
@@ -88,6 +90,26 @@ def split_prompt_to_video_topics(main_prompt: str, count: int, language: str = "
     return topics
 
 
+def build_exact_tts_timestamps(scenes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Tạo timestamp từ đúng lời thoại nguồn, tránh Whisper viết sai thuật ngữ/toán học."""
+    words_out: List[Dict[str, Any]] = []
+    offset = 0.0
+    for scene in scenes:
+        narration_words = str(scene.get("narration", "")).split()
+        duration = max(0.1, float(scene.get("audio_duration", 5.0)))
+        if narration_words:
+            usable_duration = duration * 0.94
+            word_duration = usable_duration / len(narration_words)
+            for index, word in enumerate(narration_words):
+                words_out.append({
+                    "word": word,
+                    "start": offset + index * word_duration,
+                    "end": offset + (index + 1) * word_duration,
+                })
+        offset += duration
+    return words_out
+
+
 def produce_single_video_pipeline(
     topic: str,
     video_index: int,
@@ -98,6 +120,12 @@ def produce_single_video_pipeline(
     style_preset: str = DEFAULT_IMAGE_STYLE,
     orientation: str = "vertical",
     image_engine: str = "flow",
+    media_mode: str = "flow_image",
+    target_scenes: int = 5,
+    voice_mode: str = "edge",
+    voice_reference_path: str = "",
+    job_key: str = "",
+    studio_mode: bool = True,
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
@@ -117,7 +145,9 @@ def produce_single_video_pipeline(
                 pass
 
     run_meta = {"topic": topic, "video_index": video_index}
-    video_work_dir = os.path.join(batch_work_dir, f"video_{video_index:02d}")
+    safe_job_key = "".join(ch for ch in str(job_key) if ch.isalnum() or ch in "-_")
+    work_name = f"job_{safe_job_key}" if safe_job_key else f"video_{video_index:02d}"
+    video_work_dir = os.path.join(batch_work_dir, work_name)
     os.makedirs(video_work_dir, exist_ok=True)
 
     # 1. BIÊN SOẠN KỊCH BẢN
@@ -125,7 +155,8 @@ def produce_single_video_pipeline(
     success, script_data = generate_script(
         topic=topic,
         style_preset=style_preset,
-        language=language
+        language=language,
+        target_scenes=target_scenes,
     )
 
     if not success or "scenes" not in script_data or not script_data["scenes"]:
@@ -133,7 +164,16 @@ def produce_single_video_pipeline(
         notify(10, err)
         return False, err, run_meta
 
-    scenes = script_data["scenes"]
+    if studio_mode:
+        notify(15, "Ban biên tập local đang kiểm chứng, sửa hook và đạo diễn hình ảnh...")
+        scenes, editorial_report = run_studio_editorial_pipeline(
+            topic=topic, script_data=script_data,
+            target_scenes=max(1, int(target_scenes)), language=language,
+        )
+        run_meta["editorial_report"] = editorial_report
+    else:
+        scenes = script_data["scenes"][:max(1, int(target_scenes))]
+        run_meta["editorial_report"] = {"mode": "single_writer", "approved": True, "selected_skill_ids": []}
     num_scenes = len(scenes)
     notify(20, f"Đã lập kịch bản gồm {num_scenes} phân cảnh độc lập.")
 
@@ -141,67 +181,133 @@ def produce_single_video_pipeline(
     notify(25, "Đang sinh giọng đọc AI (TTS) cho các phân cảnh...")
     for i, sc in enumerate(scenes):
         sc_num = sc.get("scene_num", i + 1)
-        audio_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}.mp3")
-        generate_tts(
-            text=sc["narration"],
-            output_path=audio_file,
-            voice=voice,
-            rate="+0%"
-        )
+        audio_ext = ".wav" if voice_mode == "clone_local" else ".mp3"
+        audio_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}{audio_ext}")
+        if voice_mode == "clone_local":
+            audio_ok, audio_result = generate_cloned_tts(
+                text=sc["narration"], output_path=audio_file,
+                reference_audio=voice_reference_path, language=language,
+            )
+        else:
+            audio_ok, audio_result = generate_tts(
+                text=sc["narration"], output_path=audio_file, voice=voice, rate="+0%"
+            )
+        if not audio_ok or not os.path.exists(audio_file):
+            err = f"Lỗi giọng đọc cảnh {sc_num}: {audio_result}"
+            notify(25, err)
+            return False, err, run_meta
         sc["audio_path"] = audio_file
         sc["audio_duration"] = get_audio_duration(audio_file)
         notify(25 + (i + 1) / num_scenes * 15, f"Đã sinh giọng đọc phân cảnh {sc_num}/{num_scenes}")
 
-    # 3. SINH BỐI CẢNH AI RIÊNG BIỆT CHO TỪNG PHÂN CẢNH (GOOGLE FLOW)
+    # 3. SINH BỐI CẢNH AI RIÊNG BIỆT CHO TỪNG PHÂN CẢNH (GOOGLE FLOW / FALLBACK)
     notify(45, "Bắt đầu sinh bối cảnh hình ảnh AI riêng biệt cho từng phân cảnh...")
     for i, sc in enumerate(scenes):
         sc_num = sc.get("scene_num", i + 1)
         prompt = sc.get("video_prompt") or sc.get("narration") or "Stickman cinematic scene"
         step_pct = 45 + (i / num_scenes) * 30
-        notify(step_pct, f"Đang tạo cảnh {sc_num}/{num_scenes} qua Google Flow...")
+        notify(step_pct, f"Đang tạo bối cảnh phân cảnh {sc_num}/{num_scenes}...")
 
-        if image_engine == "flow":
-            media_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}.mp4")
-            sc["video_path"] = media_file
+        vid_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}.mp4")
+        img_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}_bg.png")
+
+        # Kiểm tra xem phân cảnh đã có sẵn file hợp lệ từ lần chạy trước hay không (tái sử dụng thông minh)
+        if os.path.exists(vid_file) and os.path.getsize(vid_file) > 10000:
+            safe_log(f"[✓] Tái sử dụng clip video có sẵn cho cảnh {sc_num}: {vid_file}")
+            sc["video_path"] = vid_file
             sc["use_video_ai"] = True
-            ok, res = generate_flow_video(
+            continue
+
+        if os.path.exists(img_file) and os.path.getsize(img_file) > 5000:
+            safe_log(f"[✓] Tái sử dụng ảnh có sẵn cho cảnh {sc_num}: {img_file}")
+            sc["image_path"] = img_file
+            sc["use_video_ai"] = False
+            continue
+
+        media_ok = False
+        try_flow_video = image_engine == "flow" and (
+            media_mode == "flow_video" or (media_mode == "hybrid" and i == 0)
+        )
+
+        if try_flow_video:
+            # Sinh video qua Google Flow (kiên trì chờ lấy video trực tiếp, KHÔNG fallback sang ảnh)
+            notify(step_pct, f"Đang kết nối Google Flow sinh video cho cảnh {sc_num}/{num_scenes} (chế độ chờ video trực tiếp)...")
+
+            def flow_status_cb(sec: int, text: str):
+                notify(step_pct, f"Cảnh {sc_num}/{num_scenes}: Google Flow đang render clip ({sec}s)... Vui lòng đợi.")
+
+            ok_vid, res_vid = generate_flow_video(
                 prompt=prompt,
-                output_path=media_file,
+                output_path=vid_file,
                 orientation=orientation,
                 style_preset=style_preset,
+                status_callback=flow_status_cb,
             )
-        else:
-            from src.image_service import generate_single_image
-            media_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}_bg.png")
-            sc["image_path"] = media_file
-            sc["use_video_ai"] = False
-            ok, res = generate_single_image(
-                prompt=prompt,
-                output_path=media_file,
-                orientation=orientation,
-                style_preset=style_preset
-            )
+            if ok_vid and os.path.exists(vid_file) and os.path.getsize(vid_file) > 0:
+                sc["video_path"] = vid_file
+                sc["use_video_ai"] = True
+                media_ok = True
+                safe_log(f"[✓] Cảnh {sc_num} hoàn tất bằng Google Flow video clip.")
+            else:
+                # Người dùng yêu cầu: KHÔNG fallback sang ảnh, không fallback sang SD hay khung hình rỗng!
+                err_msg = f"Lỗi sinh video Flow cảnh {sc_num}: {res_vid}. Hệ thống dừng theo yêu cầu không fallback sang ảnh."
+                safe_log(f"[X] {err_msg}")
+                notify(step_pct, err_msg)
+                return False, err_msg, run_meta
 
-        if not ok or not os.path.exists(media_file) or os.path.getsize(media_file) == 0:
-            err = f"Lỗi sinh ảnh phân cảnh {sc_num} từ Google Flow: {res}"
+        elif image_engine == "flow":
+            notify(step_pct, f"Đang tạo ảnh Flow cho cảnh {sc_num}/{num_scenes}...")
+            res_img = ""
+            for flow_attempt in range(1, 4):
+                ok_img, res_img = generate_flow_image(
+                    prompt=prompt,
+                    output_path=img_file,
+                    orientation=orientation,
+                    style_preset=style_preset,
+                )
+                if ok_img and os.path.exists(img_file) and os.path.getsize(img_file) > 0:
+                    sc["image_path"] = img_file
+                    sc["use_video_ai"] = False
+                    media_ok = True
+                    safe_log(f"[✓] Cảnh {sc_num} hoàn tất bằng ảnh Google Flow + chuyển động dựng.")
+                    break
+                if flow_attempt < 3:
+                    wait_seconds = 15 * flow_attempt
+                    notify(step_pct, f"Flow chưa trả ảnh cảnh {sc_num}; tự thử lại {flow_attempt + 1}/3 sau {wait_seconds} giây...")
+                    time.sleep(wait_seconds)
+            if not media_ok:
+                err_msg = f"Lỗi sinh ảnh Flow cảnh {sc_num}: {res_img}."
+                safe_log(f"[X] {err_msg}")
+                notify(step_pct, err_msg)
+                return False, err_msg, run_meta
+
+        elif not media_ok:
+            # Chỉ dùng SD 1.5 khi người dùng chủ động chọn engine local khác Flow
+            notify(step_pct, f"Đang tạo hình ảnh phân cảnh {sc_num} bằng engine local...")
+            try:
+                from src.image_service import generate_single_image
+                ok_sd, res_sd = generate_single_image(
+                    prompt=prompt,
+                    output_path=img_file,
+                    orientation=orientation,
+                    style_preset=style_preset
+                )
+                if ok_sd and os.path.exists(img_file) and os.path.getsize(img_file) > 0:
+                    sc["image_path"] = img_file
+                    sc["use_video_ai"] = False
+                    media_ok = True
+            except Exception as e_sd:
+                safe_log(f"[!] Fallback SD lỗi: {e_sd}")
+
+        # Nếu không có tài nguyên hình ảnh hợp lệ, báo lỗi rõ ràng, tuyệt đối không tạo khung hình giả
+        if not media_ok:
+            err = f"Lỗi sinh ảnh phân cảnh {sc_num}: Không tạo được bối cảnh hợp lệ từ engine."
             notify(step_pct, err)
             return False, err, run_meta
 
     # 4. PHÂN TÍCH TIMESTAMPS PHỤ ĐỀ (WHISPER)
-    notify(78, "Đang phân tích phụ đề từng chữ (Karaoke Word Timestamps)...")
-    all_words = []
-    cumulative_time = 0.0
-
-    for i, sc in enumerate(scenes):
-        ok, words = get_word_timestamps(sc["audio_path"], language=language)
-        if ok and words:
-            for w in words:
-                all_words.append({
-                    "word": w["word"],
-                    "start": w["start"] + cumulative_time,
-                    "end": w["end"] + cumulative_time
-                })
-        cumulative_time += sc.get("audio_duration", 5.0)
+    notify(78, "Đang tạo phụ đề chính xác từ lời thoại nguồn...")
+    all_words = build_exact_tts_timestamps(scenes)
 
     # 5. BIÊN TẬP VÀ RENDER VIDEO HOÀN CHỈNH
     notify(85, "Đang biên tập chuyển cảnh và burn phụ đề video...")
@@ -227,6 +333,8 @@ def produce_single_video_pipeline(
 
     run_meta["final_path"] = final_path
     run_meta["scenes"] = scenes
+    run_meta["media_mode"] = media_mode
+    run_meta["studio_mode"] = studio_mode
     notify(96, "Đang tạo tiêu đề, mô tả và hashtag phù hợp với nội dung...")
     _, publishing = generate_video_metadata(topic, scenes, language=language)
     run_meta["publishing"] = publishing

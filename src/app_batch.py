@@ -1,7 +1,9 @@
 """Giao diện điều hành xưởng sản xuất video kiến thức tự động."""
 
 import html
+import hashlib
 import os
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -9,14 +11,16 @@ import streamlit as st
 
 from src.autonomous_factory import (
     add_factory_jobs,
+    clear_failed_jobs,
     clear_finished_jobs,
     ensure_factory_worker,
     get_factory_state,
     retry_failed_jobs,
     set_factory_paused,
 )
-from src.config import DEFAULT_IMAGE_STYLE, TTS_VOICES_EN, TTS_VOICES_VI
-from src.flow_browser_service import get_flow_readiness
+from src.config import ASSETS_DIR, DEFAULT_IMAGE_STYLE, TTS_VOICES_EN, TTS_VOICES_VI
+from src.flow_browser_service import get_flow_readiness, get_flow_controller
+from src.voice_clone_service import XTTS_LANGUAGES, voice_clone_available
 
 
 def check_chrome_flow_status() -> bool:
@@ -81,15 +85,35 @@ def _render_completed_card(job, index):
     output_path = job.get("output_path", "")
     title = publishing.get("title") or job.get("topic", "Video kiến thức")
     hashtags = " ".join(publishing.get("hashtags", []))
+    platforms = publishing.get("platforms", {})
+    youtube_meta = platforms.get("youtube", {})
+    tiktok_meta = platforms.get("tiktok", {})
+    youtube_title = youtube_meta.get("title", title)
+    youtube_description = youtube_meta.get("description", publishing.get("description", ""))
+    tiktok_caption = tiktok_meta.get("caption", publishing.get("tiktok_caption", youtube_description))
+    editorial = metadata.get("editorial_report", {})
     st.markdown(f"#### {index}. {title}")
     if output_path and os.path.exists(output_path):
         st.video(output_path)
     st.markdown(
-        f"<div class='meta-box'><b>Tiêu đề đăng:</b> {html.escape(title)}<br>"
+        f"<div class='meta-box'><b>YouTube title:</b> {html.escape(youtube_title)}<br>"
+        f"<b>YouTube description:</b> {html.escape(youtube_description)}<br>"
+        f"<b>TikTok caption:</b> {html.escape(tiktok_caption)}<br>"
         f"<b>Hashtag:</b> {html.escape(hashtags)}<br>"
-        f"<b>Mô tả:</b> {html.escape(publishing.get('description',''))}</div>",
+        f"<b>Nhãn AI:</b> Bật “Altered content” trên YouTube và “AI-generated content” trên TikTok.</div>",
         unsafe_allow_html=True,
     )
+    if publishing.get("manual_review_required"):
+        risk_text = ", ".join(publishing.get("risk_flags", []))
+        st.warning(f"Metadata cần kiểm tra thủ công trước khi đăng. Nhóm rủi ro: {risk_text}")
+    if editorial:
+        score = editorial.get("overall_score")
+        skill_names = [item.get("name", item.get("id", "")) for item in editorial.get("selected_skills", [])]
+        if score is not None:
+            st.caption(f"Studio QA: {score}/100 · Kỹ năng: {', '.join(filter(None, skill_names))}")
+        warnings = editorial.get("remaining_warnings", [])
+        if warnings:
+            st.warning("Studio còn cảnh báo: " + "; ".join(str(item) for item in warnings))
     if output_path and os.path.exists(output_path):
         with open(output_path, "rb") as video_file:
             st.download_button("Tải video MP4", video_file, file_name=Path(output_path).name, mime="video/mp4", key=f"video_{job.get('id')}", use_container_width=True)
@@ -143,29 +167,110 @@ def run_batch_ui():
         st.markdown("<div class='section-kicker'>Kho ý tưởng</div><div class='section-title'>Tạo lệnh sản xuất mới</div><div class='section-copy'>Mỗi dòng là một video riêng. Nếu chỉ có một chủ đề, AI sẽ tự chia thành nhiều tập.</div>", unsafe_allow_html=True)
         with st.form("factory_order_form", clear_on_submit=False):
             prompt = st.text_area("Chủ đề hoặc danh sách chủ đề", value="Những bí ẩn khoa học khiến con người phải suy nghĩ lại", height=135, help="Có thể nhập nhiều dòng, mỗi dòng là một video.")
+            st.info("Số video là số thành phẩm trong lô; số phân cảnh là số đoạn ghép bên trong mỗi video.")
             c1, c2 = st.columns(2)
-            count = c1.number_input("Số video", min_value=1, max_value=100, value=10, step=1)
+            count = c1.number_input("Số video trong lô", min_value=1, max_value=100, value=1, step=1)
             language_label = c2.selectbox("Ngôn ngữ", ["Tiếng Việt", "English"])
             language = "vi" if language_label == "Tiếng Việt" else "en"
             c3, c4 = st.columns(2)
             orientation_label = c3.selectbox("Khung hình", ["Dọc 9:16", "Ngang 16:9"])
             orientation = "vertical" if orientation_label.startswith("Dọc") else "horizontal"
-            voices = TTS_VOICES_VI if language == "vi" else TTS_VOICES_EN
-            voice_label = c4.selectbox("Giọng đọc", list(voices.keys()))
+            target_scenes = c4.number_input(
+                "Số phân cảnh mỗi video", min_value=1, max_value=12, value=5, step=1,
+                help="5 cảnh thường tương đương khoảng 25-50 giây. Đây không phải 5 video.",
+            )
+
+            media_mode_label = st.selectbox(
+                "Chế độ phương tiện Google Flow",
+                [
+                    "🎬 Video Flow cho mọi cảnh (Mỗi phân cảnh 1 video nhỏ ghép thành video lớn)",
+                    "Hybrid — Cảnh đầu video Flow, còn lại ảnh",
+                    "Nhanh & ổn định — Ảnh Flow + chuyển động",
+                ],
+                index=2,
+                help="Khuyên dùng ảnh Flow + chuyển động. Video Flow mọi cảnh có thể bị xếp hàng rất lâu khi Google quá tải.",
+            )
+            studio_mode = st.checkbox(
+                "Studio biên tập local nhiều vai",
+                value=True,
+                help="Thêm vòng kiểm chứng, sửa hook, độ rõ ràng, tính nhất quán hình ảnh và chính sách trước khi sản xuất.",
+            )
+            if media_mode_label.startswith("🎬 Video Flow") or "mọi cảnh" in media_mode_label:
+                media_mode = "flow_video"
+            elif media_mode_label.startswith("Hybrid"):
+                media_mode = "hybrid"
+            else:
+                media_mode = "flow_image"
+
+            voices = {**TTS_VOICES_VI, **TTS_VOICES_EN}
+            voice_mode_label = st.radio(
+                "Nguồn giọng đọc",
+                ["Giọng có sẵn — nhanh", "Clone giọng local — XTTS-v2"],
+                horizontal=True,
+            )
+            voice_mode = "clone_local" if voice_mode_label.startswith("Clone") else "edge"
+            voice_label = st.selectbox("Giọng có sẵn", list(voices.keys()))
+            voice_upload = st.file_uploader(
+                "File giọng mẫu cho chế độ clone (6-30 giây)", type=["wav", "mp3", "m4a"],
+                help="Chỉ được dùng giọng của bạn hoặc giọng đã được chủ sở hữu cho phép.",
+            )
+            voice_consent = st.checkbox("Tôi xác nhận đây là giọng của tôi hoặc tôi có quyền sử dụng giọng này.")
+            st.caption("XTTS-v2 local hỗ trợ English và 15 ngôn ngữ khác, nhưng chưa hỗ trợ tiếng Việt. Video tiếng Việt hiện dùng giọng có sẵn.")
+            if not voice_clone_available():
+                st.error("Engine clone local chưa được cài đặt.")
             style_preset = st.text_input("Phong cách hình ảnh", value=DEFAULT_IMAGE_STYLE)
             submitted = st.form_submit_button("Khởi động dây chuyền", type="primary", use_container_width=True)
 
         if submitted:
             if not prompt.strip():
                 st.warning("Hãy nhập ít nhất một chủ đề.")
-            elif not flow_ready:
-                st.error("Google Flow chưa sẵn sàng. Hãy chạy run.bat và đăng nhập Flow trong cửa sổ Chrome riêng trước khi bắt đầu.")
+            elif voice_mode == "clone_local" and language not in XTTS_LANGUAGES:
+                st.error("XTTS-v2 không hỗ trợ tiếng Việt. Hãy đổi video sang English hoặc chọn giọng có sẵn.")
+            elif voice_mode == "clone_local" and (voice_upload is None or not voice_consent):
+                st.error("Clone giọng cần file mẫu và xác nhận quyền sử dụng giọng.")
             else:
-                add_factory_jobs(prompt=prompt.strip(), count=int(count), language=language, voice=voices[voice_label], style_preset=style_preset, orientation=orientation, image_engine="flow")
-                st.success(f"Đã đưa {int(count)} video vào dây chuyền. Bạn có thể để trang chạy tự động.")
+                # Trải nghiệm 1-Click: Nếu Flow chưa mở, tự động khởi chạy Chrome ngay lập tức
+                if not flow_ready and media_mode in ("flow_image", "flow_video", "hybrid"):
+                    with st.spinner("Đang tự động khởi chạy Chrome Google Flow..."):
+                        ctrl = get_flow_controller()
+                        flow_ok, flow_msg = ctrl.connect()
+                        if not flow_ok:
+                            st.info(f"[*] {flow_msg} — Dây chuyền sẽ tự kết nối lại trong nền khi Chrome sẵn sàng.")
+
+                reference_path = ""
+                if voice_mode == "clone_local" and voice_upload is not None:
+                    voice_dir = Path(ASSETS_DIR) / "voices"
+                    voice_dir.mkdir(parents=True, exist_ok=True)
+                    voice_bytes = voice_upload.getvalue()
+                    digest = hashlib.sha256(voice_bytes).hexdigest()[:12]
+                    suffix = Path(voice_upload.name).suffix.lower() or ".wav"
+                    reference_file = voice_dir / f"voice_{digest}{suffix}"
+                    reference_file.write_bytes(voice_bytes)
+                    reference_path = str(reference_file)
+                add_factory_jobs(
+                    prompt=prompt.strip(), count=int(count), language=language,
+                    voice=voices[voice_label], style_preset=style_preset,
+                    orientation=orientation, image_engine="flow",
+                    media_mode=media_mode,
+                    target_scenes=int(target_scenes), voice_mode=voice_mode,
+                    voice_reference_path=reference_path,
+                    studio_mode=studio_mode,
+                )
+                st.success(f"✅ Đã đưa {int(count)} video × {int(target_scenes)} phân cảnh vào dây chuyền. Đang tự động sản xuất...")
+                time.sleep(1)
                 st.rerun()
 
         st.markdown("<br><div class='section-kicker'>Điều khiển xưởng</div>", unsafe_allow_html=True)
+        if flow_status != "ready":
+            if st.button("🚀 Mở nhanh Chrome Google Flow (Cổng 9222)", type="primary" if flow_status == "disconnected" else "secondary", use_container_width=True):
+                with st.spinner("Đang kết nối Chrome Google Flow..."):
+                    flow_ok, flow_msg = get_flow_controller().connect()
+                    if flow_ok:
+                        st.success("Google Flow đã sẵn sàng!")
+                    else:
+                        st.info(flow_msg)
+                    time.sleep(1)
+                    st.rerun()
         a, b = st.columns(2)
         if state.get("paused"):
             if a.button("Tiếp tục sản xuất", type="primary", use_container_width=True):
@@ -181,13 +286,13 @@ def run_batch_ui():
         if a2.button("Chạy lại việc lỗi", disabled=counts["failed"] == 0, use_container_width=True):
             retry_failed_jobs()
             st.rerun()
-        if b2.button("Dọn lịch sử", disabled=(counts["completed"] + counts["failed"] == 0), use_container_width=True):
-            clear_finished_jobs()
+        if b2.button("Xóa việc lỗi", disabled=counts["failed"] == 0, use_container_width=True):
+            clear_failed_jobs()
             st.rerun()
         if flow_status == "login_required":
             st.warning("Chrome điều khiển đã mở nhưng Google Flow chưa đăng nhập. Hãy đăng nhập một lần trong cửa sổ Chrome Flow, sau đó bấm Làm mới trạng thái.")
         elif flow_status == "disconnected":
-            st.warning("Chrome điều khiển chưa mở. Chạy `run.bat` để mở đúng phiên Google Flow.")
+            st.warning("Chrome điều khiển chưa mở. Bấm nút 'Mở nhanh Chrome Google Flow' ở trên hoặc bấm 'Khởi động dây chuyền' để hệ thống tự mở.")
 
     with right:
         tab_line, tab_output, tab_log = st.tabs(["Dây chuyền", "Kho thành phẩm", "Bảng dữ liệu"])
@@ -215,3 +320,9 @@ def run_batch_ui():
                 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
             else:
                 st.caption("Chưa có dữ liệu sản xuất.")
+
+    # Tự động cập nhật giao diện theo thời gian thực nếu đang có việc chạy hoặc trong hàng đợi
+    if counts["running"] > 0 or counts["queued"] > 0:
+        time.sleep(2.5)
+        st.rerun()
+

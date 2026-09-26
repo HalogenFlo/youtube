@@ -10,7 +10,7 @@ import base64
 import subprocess
 import threading
 from pathlib import Path
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Callable
 from playwright.sync_api import sync_playwright, Page, Frame, BrowserContext, Browser
 
 if hasattr(sys.stdout, 'reconfigure'):
@@ -60,6 +60,7 @@ def load_flow_config() -> Dict[str, Any]:
         "chrome_user_data_dir": os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data"),
         "profile_directory": "Default",
         "timeout_seconds": 180,
+        "video_timeout_seconds": 1800,
     }
 
 
@@ -107,6 +108,23 @@ class FlowBrowserController:
         self.page: Optional[Page] = None
         self.seen_video_urls: set = set()
         self.seen_video_hashes: set = set()
+
+    def is_video_response(self, res) -> bool:
+        """Kiểm tra một network response có phải là luồng video hợp lệ từ Flow hay không (hỗ trợ HTTP 200/206)."""
+        try:
+            r_url = getattr(res, "url", "")
+            status = getattr(res, "status", 0)
+            if status not in (200, 206):
+                return False
+            headers = getattr(res, "headers", {}) or {}
+            ct = str(headers.get("content-type", "")).lower()
+            if "video/" in ct:
+                return True
+            if "flow-content.google/video/" in r_url or ".mp4" in r_url or "googlevideo.com" in r_url:
+                return True
+        except Exception:
+            pass
+        return False
 
     def _launch_flow_chrome(self) -> Tuple[bool, str]:
         """Tự mở lại Chrome profile riêng nếu tiến trình bị đóng/crash."""
@@ -215,12 +233,16 @@ class FlowBrowserController:
         prompt: str,
         output_path: str,
         orientation: str = "vertical",
-        timeout_sec: int = 360
+        timeout_sec: Optional[int] = None,
+        status_callback: Optional[Callable[[int, str], None]] = None,
     ) -> Tuple[bool, str]:
         """
         Tự động đưa prompt lên Google Flow (Google Veo / Videos section),
-        kích hoạt tạo video, đợi render và tải file .mp4 về output_path.
+        kích hoạt tạo video, kiên trì đợi render và tải file .mp4 về output_path.
         """
+        if timeout_sec is None:
+            timeout_sec = int(self.cfg.get("video_timeout_seconds", 1800))
+
         page = self._ensure_page()
         if not page:
             return False, "Không thể mở trang Google Flow."
@@ -232,8 +254,8 @@ class FlowBrowserController:
         new_network_videos: List[str] = []
         def _on_response(res):
             try:
-                r_url = res.url
-                if ("flow-content.google/video/" in r_url or ".mp4" in r_url) and res.status == 200:
+                if self.is_video_response(res):
+                    r_url = res.url
                     if r_url not in self.seen_video_urls and r_url not in new_network_videos:
                         new_network_videos.append(r_url)
             except Exception:
@@ -405,7 +427,13 @@ class FlowBrowserController:
                     continue
 
                 if int(elapsed) % 30 < 4:
-                    safe_log(f"[*] Đang theo dõi tiến độ sinh video từ Google Flow ({int(elapsed)}s/{timeout_sec}s)...")
+                    msg = f"[*] Đang theo dõi tiến độ sinh video từ Google Flow ({int(elapsed)}s/{timeout_sec}s)... Tiếp tục chờ AI render clip hoàn chỉnh..."
+                    safe_log(msg)
+                    if status_callback:
+                        try:
+                            status_callback(int(elapsed), msg)
+                        except Exception:
+                            pass
 
                 candidate_url = None
 
@@ -419,9 +447,18 @@ class FlowBrowserController:
                 # Tiếp theo kích hoạt preview trên thẻ video vừa sinh để ép Flow tải stream
                 if not candidate_url:
                     try:
-                        chat_cards = page.locator("aside img, [class*='chat'] img, [role='log'] img").all()
-                        if chat_cards:
-                            chat_cards[-1].hover()
+                        # Thử hover vào card trong gallery All media (cột bên trái)
+                        media_items = page.locator("main div[role='button'], main div[tabindex='0'], [role='grid'] div, aside img, [class*='chat'] img").all()
+                        if media_items:
+                            media_items[0].hover()
+                    except Exception:
+                        pass
+
+                    try:
+                        download_btns = page.locator("button[aria-label*='Download' i], button[aria-label*='Tải' i], [data-icon='download']").all()
+                        for dl in download_btns:
+                            if dl.is_visible():
+                                dl.hover()
                     except Exception:
                         pass
 
@@ -441,6 +478,17 @@ class FlowBrowserController:
                                 break
                         except Exception:
                             pass
+
+                    # Kiểm tra thẻ <source> bên trong <video>
+                    if not candidate_url:
+                        for s in page.locator("video source").all():
+                            try:
+                                s_src = s.get_attribute("src")
+                                if s_src and s_src not in self.seen_video_urls and ("blob:" in s_src or "http" in s_src):
+                                    candidate_url = s_src
+                                    break
+                            except Exception:
+                                pass
 
 
                 if candidate_url:
@@ -502,11 +550,225 @@ class FlowBrowserController:
         prompt: str,
         output_path: str,
         orientation: str = "vertical",
-        style_preset: str = ""
+        style_preset: str = "",
+        timeout_sec: int = 90
     ) -> Tuple[bool, str]:
         """Tự động sinh ảnh từ Google Flow Nano Banana / Imagen 3."""
-        # Gọi luồng sinh media
-        return self.generate_scene_video(prompt=prompt, output_path=output_path, orientation=orientation)
+        page = self._ensure_page()
+        if not page:
+            return False, "Không thể kết nối vào tab Google Flow."
+
+        safe_log(f"[*] Đang yêu cầu Google Flow sinh ảnh tĩnh (Imagen 3): \"{prompt[:50]}...\"")
+        project_url = self.cfg.get("project_url", "https://flow.google.com")
+
+        new_images: List[str] = []
+        def _on_image_response(res):
+            try:
+                r_url = res.url
+                if ("flow-content.google/image/" in r_url or ("flow-content.google" in r_url and ".png" in r_url)) and res.status == 200:
+                    new_images.append(r_url)
+            except Exception:
+                pass
+
+        try:
+            page.on("response", _on_image_response)
+        except Exception:
+            pass
+
+        try:
+            # 1. KIỂM TRA TOOL FRAME (Applet Tool "GIA SƯ STICKMAN STUDIO 4K" / Nano Banana Pro)
+            tool_frame = None
+            for f in page.frames:
+                try:
+                    for b in f.locator("button").all():
+                        t = b.inner_text()
+                        if "TẠO ẢNH" in t or "CINEMATIC" in t or "TẢI ẢNH" in t:
+                            tool_frame = f
+                            break
+                    if tool_frame:
+                        break
+                except Exception:
+                    pass
+
+            if tool_frame:
+                safe_log("[*] Phát hiện Google Flow Tool iframe (Nano Banana Pro). Đang điền prompt...")
+                try:
+                    # Nếu màn hình đang hiển thị kết quả phân cảnh trước (có nút add), bấm add để reset form
+                    for b_el in tool_frame.locator("button").all():
+                        if "add" in b_el.inner_text().lower():
+                            b_el.click()
+                            page.wait_for_timeout(800)
+                            break
+
+                    existing_tool_imgs = {img.get_attribute("src") for img in tool_frame.locator("img").all() if img.get_attribute("src")}
+                    ta = tool_frame.locator("textarea").first
+                    ta.fill(prompt)
+                    page.wait_for_timeout(300)
+                    gen_btn = tool_frame.locator("button").first
+                    gen_btn.click()
+                    safe_log("[*] Đã bấm nút 'TẠO ẢNH CINEMATIC' trong Flow Tool. Đang chờ Nano Banana Pro hoàn tất...")
+
+                    start_time = time.time()
+                    while time.time() - start_time < timeout_sec:
+                        page.wait_for_timeout(2000)
+                        for img in tool_frame.locator("img").all():
+                            try:
+                                src = img.get_attribute("src") or ""
+                                if src and src not in existing_tool_imgs and src.startswith("data:image/"):
+                                    import base64
+                                    b64 = src.split(",", 1)[1]
+                                    data = base64.b64decode(b64)
+                                    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                                    with open(output_path, "wb") as f_out:
+                                        f_out.write(data)
+                                    safe_log(f"[✓] Đã tạo thành công ảnh từ Google Flow Tool (Nano Banana Pro): {output_path}")
+                                    return True, output_path
+                            except Exception:
+                                pass
+                    return False, f"Hết thời gian chờ ảnh từ Flow Tool ({timeout_sec}s)."
+                except Exception as e_tool:
+                    safe_log(f"[!] Lỗi tương tác Flow Tool: {e_tool}")
+
+            # 2. TRƯỜNG HỢP GIAO DIỆN FLOW GỐC (DỰ ÁN KHÔNG QUA APPLET FRAME)
+            if "flow.google.com" not in page.url or "/project/" not in page.url:
+                page.goto(project_url, wait_until="domcontentloaded", timeout=25000)
+                try:
+                    page.wait_for_timeout(3000)
+                except Exception:
+                    pass
+
+            # Thu thập ảnh đã có để tránh lấy trùng
+            existing_imgs = set()
+            for img in page.locator("img").all():
+                try:
+                    s = img.get_attribute("src")
+                    if s:
+                        existing_imgs.add(s)
+                except Exception:
+                    pass
+
+            # Tìm ô input
+            selectors = [
+                "textarea[placeholder*='create' i]",
+                "textarea[placeholder*='prompt' i]",
+                "textarea[placeholder*='describe' i]",
+                "textarea",
+                "input[type='text'][placeholder*='prompt' i]",
+                "div[contenteditable='true']",
+            ]
+            input_box = None
+            for sel in selectors:
+                loc = page.locator(sel)
+                if loc.count() > 0 and loc.first.is_visible():
+                    input_box = loc.first
+                    break
+
+            if not input_box:
+                return False, "Không tìm thấy ô nhập prompt trên Flow."
+
+            try:
+                input_box.click(force=True, timeout=5000)
+                input_box.fill("")
+            except Exception:
+                pass
+
+            ratio_hint = "vertical 9:16 portrait" if orientation == "vertical" else "horizontal 16:9 landscape"
+            full_prompt = (
+                "Generate a high-detail still cinematic image, not a video. Use the configured image model (Imagen 3 / Nano Banana Pro).\n"
+                f"Scene: {prompt.strip()}\n{STICKMAN_CANONICAL_GUIDANCE}\n"
+                f"Style: {style_preset}. Composition: {ratio_hint}. 4k resolution, rich colors, no text, no captions."
+            )
+            input_box.fill(full_prompt)
+            page.wait_for_timeout(500)
+
+            # Bấm Generate
+            btn_selectors = [
+                "button[aria-label='Start generation']",
+                "button[aria-label*='generate' i]",
+                "button:has-text('Generate')",
+                "button:has-text('Tạo')",
+            ]
+            btn = None
+            for b_sel in btn_selectors:
+                b_loc = page.locator(b_sel)
+                if b_loc.count() > 0 and b_loc.first.is_visible():
+                    btn = b_loc.first
+                    break
+            if btn:
+                try:
+                    btn.click(force=True, timeout=5000)
+                except Exception:
+                    input_box.press("Enter")
+            else:
+                input_box.press("Enter")
+
+            safe_log("[*] Đã gửi lệnh sinh ảnh lên Google Flow. Đang chờ ảnh hoàn tất...")
+            start_time = time.time()
+            while time.time() - start_time < timeout_sec:
+                page.wait_for_timeout(2000)
+                # Kiểm tra network
+                for img_url in list(new_images):
+                    if img_url not in existing_imgs:
+                        # Tải ảnh về
+                        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                        save_js = """
+                        async (src) => {
+                            const response = await fetch(src);
+                            const blob = await response.blob();
+                            return new Promise((resolve) => {
+                                const reader = new FileReader();
+                                reader.onloadend = () => resolve(reader.result);
+                                reader.readAsDataURL(blob);
+                            });
+                        }
+                        """
+                        try:
+                            data_url = page.evaluate(save_js, img_url)
+                            if data_url and "," in data_url:
+                                b64 = data_url.split(",")[1]
+                                import base64
+                                with open(output_path, "wb") as f:
+                                    f.write(base64.b64decode(b64))
+                                safe_log(f"[✓] Đã tạo thành công ảnh từ Google Flow: {output_path}")
+                                return True, output_path
+                        except Exception:
+                            pass
+
+                # Kiểm tra DOM img
+                for img in page.locator("img[src*='flow-content']").all():
+                    try:
+                        src = img.get_attribute("src")
+                        if src and src not in existing_imgs:
+                            save_js = """
+                            async (src) => {
+                                const response = await fetch(src);
+                                const blob = await response.blob();
+                                return new Promise((resolve) => {
+                                    const reader = new FileReader();
+                                    reader.onloadend = () => resolve(reader.result);
+                                    reader.readAsDataURL(blob);
+                                });
+                            }
+                            """
+                            data_url = page.evaluate(save_js, src)
+                            if data_url and "," in data_url:
+                                b64 = data_url.split(",")[1]
+                                import base64
+                                with open(output_path, "wb") as f:
+                                    f.write(base64.b64decode(b64))
+                                safe_log(f"[✓] Đã lưu ảnh từ thẻ DOM Flow: {output_path}")
+                                return True, output_path
+                    except Exception:
+                        pass
+
+            return False, f"Hết thời gian chờ ảnh từ Google Flow ({timeout_sec}s)."
+        except Exception as exc:
+            return False, f"Lỗi sinh ảnh trên Flow: {exc}"
+        finally:
+            try:
+                page.remove_listener("response", _on_image_response)
+            except Exception:
+                pass
 
 
 _CONTROLLER_LOCAL = threading.local()
