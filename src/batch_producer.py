@@ -276,10 +276,29 @@ def produce_single_video_pipeline(
                     notify(step_pct, f"Flow chưa trả ảnh cảnh {sc_num}; tự thử lại {flow_attempt + 1}/3 sau {wait_seconds} giây...")
                     time.sleep(wait_seconds)
             if not media_ok:
-                err_msg = f"Lỗi sinh ảnh Flow cảnh {sc_num}: {res_img}."
-                safe_log(f"[X] {err_msg}")
-                notify(step_pct, err_msg)
-                return False, err_msg, run_meta
+                # Cơ chế Tự Phục Hồi (Self-Healing): Nếu Google Flow quá tải hoặc nghẽn mạng,
+                # tự động kế thừa ảnh bối cảnh hợp lệ liền trước kết hợp Visual Beats để tiếp tục dây chuyền,
+                # TUYỆT ĐỐI KHÔNG HỦY BỎ TIẾN TRÌNH, đảm bảo video luôn hoàn thành 100% kèm giọng đọc và phụ đề.
+                fallback_source = None
+                for prev_sc in reversed(scenes[:i]):
+                    prev_img = prev_sc.get("image_path")
+                    if prev_img and os.path.exists(prev_img) and os.path.getsize(prev_img) > 0:
+                        fallback_source = prev_img
+                        break
+
+                if fallback_source:
+                    import shutil
+                    shutil.copy2(fallback_source, img_file)
+                    sc["image_path"] = img_file
+                    sc["use_video_ai"] = False
+                    media_ok = True
+                    safe_log(f"[!] Cảnh {sc_num}: Google Flow quá tải ({res_img}). Tự động phục hồi bối cảnh để tiếp tục dây chuyền xuất video.")
+                    notify(step_pct, f"Cảnh {sc_num}: Google Flow quá tải. Tự động phục hồi bối cảnh để hoàn thành video...")
+                else:
+                    err_msg = f"Lỗi sinh ảnh Flow cảnh {sc_num}: {res_img}."
+                    safe_log(f"[X] {err_msg}")
+                    notify(step_pct, err_msg)
+                    return False, err_msg, run_meta
 
         elif not media_ok:
             # Chỉ dùng SD 1.5 khi người dùng chủ động chọn engine local khác Flow

@@ -704,12 +704,28 @@ class FlowBrowserController:
 
             safe_log("[*] Đã gửi lệnh sinh ảnh lên Google Flow. Đang chờ ảnh hoàn tất...")
             start_time = time.time()
-            while time.time() - start_time < timeout_sec:
+            effective_timeout = max(timeout_sec, int(self.cfg.get("timeout_seconds", 120)))
+            last_retry_click = 0.0
+
+            while time.time() - start_time < effective_timeout:
                 page.wait_for_timeout(2000)
-                # Kiểm tra network
+
+                # 1. TỰ ĐỘNG PHÁT HIỆN LỖI HIGH DEMAND VÀ BẤM "TRY AGAIN"
+                now = time.time()
+                if now - last_retry_click > 8.0:
+                    try:
+                        try_again_btn = page.locator("button:has-text('Try again'), [aria-label*='Try again']").first
+                        if try_again_btn.count() > 0 and try_again_btn.is_visible():
+                            safe_log("[!] Phát hiện Google Flow thông báo 'high demand'. Đang tự động bấm 'Try again'...")
+                            try_again_btn.click(timeout=3000)
+                            last_retry_click = now
+                            page.wait_for_timeout(2500)
+                    except Exception:
+                        pass
+
+                # 2. KIỂM TRA NETWORK RESPONSE
                 for img_url in list(new_images):
                     if img_url not in existing_imgs:
-                        # Tải ảnh về
                         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
                         save_js = """
                         async (src) => {
@@ -729,16 +745,33 @@ class FlowBrowserController:
                                 import base64
                                 with open(output_path, "wb") as f:
                                     f.write(base64.b64decode(b64))
-                                safe_log(f"[✓] Đã tạo thành công ảnh từ Google Flow: {output_path}")
+                                safe_log(f"[✓] Đã tạo thành công ảnh từ Google Flow qua network: {output_path}")
                                 return True, output_path
                         except Exception:
                             pass
 
-                # Kiểm tra DOM img
-                for img in page.locator("img[src*='flow-content']").all():
-                    try:
-                        src = img.get_attribute("src")
-                        if src and src not in existing_imgs:
+                # 3. KIỂM TRA DOM (Card mới nhất trong gallery All media và khung chat)
+                dom_img_selectors = [
+                    "aside [role='grid'] img",
+                    "main img[src*='flow-content']",
+                    "main img[src*='googleusercontent']",
+                    "aside img",
+                    "img[src*='flow-content']",
+                    "img[src*='blob:']",
+                ]
+                for sel in dom_img_selectors:
+                    for img in page.locator(sel).all():
+                        try:
+                            src = img.get_attribute("src") or ""
+                            if not src or src in existing_imgs:
+                                continue
+                            # Bỏ qua icon nhỏ, avatar và logo
+                            if any(k in src.lower() for k in ("avatar", "icon", "logo", "favicon", "profile")):
+                                continue
+                            box = img.bounding_box()
+                            if box and (box["width"] < 100 or box["height"] < 100):
+                                continue
+
                             save_js = """
                             async (src) => {
                                 const response = await fetch(src);
@@ -754,14 +787,15 @@ class FlowBrowserController:
                             if data_url and "," in data_url:
                                 b64 = data_url.split(",")[1]
                                 import base64
+                                os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
                                 with open(output_path, "wb") as f:
                                     f.write(base64.b64decode(b64))
-                                safe_log(f"[✓] Đã lưu ảnh từ thẻ DOM Flow: {output_path}")
+                                safe_log(f"[✓] Đã lưu ảnh thành công từ thẻ DOM Flow ({sel}): {output_path}")
                                 return True, output_path
-                    except Exception:
-                        pass
+                        except Exception:
+                            pass
 
-            return False, f"Hết thời gian chờ ảnh từ Google Flow ({timeout_sec}s)."
+            return False, f"Hết thời gian chờ ảnh từ Google Flow ({effective_timeout}s)."
         except Exception as exc:
             return False, f"Lỗi sinh ảnh trên Flow: {exc}"
         finally:
