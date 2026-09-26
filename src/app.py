@@ -184,15 +184,35 @@ if "wan_steps" not in st.session_state:
 if "wan_measured_sec_per_step" not in st.session_state:
     st.session_state.wan_measured_sec_per_step = get_gpu_benchmark_sec_per_step()
 
-# --- CHỌN CHẾ ĐỘ LÀM VIỆC (MẶC ĐỊNH: CHẾ ĐỘ LOCAL CŨ) ---
-st.sidebar.markdown("## 🧭 Chế độ Làm Việc")
-app_mode = st.sidebar.radio(
-    "Lựa chọn chế độ:",
-    ["🛠️ Chế độ Local (Từng bước / Wan 2.1 / SD)", "⚡ Tự động hàng loạt (Auto Batch)"],
-    index=0,
-    help="Chế độ Local cho phép kiểm soát từng bước (Kịch bản, TTS, Wan 2.1, SD 1.5, Phụ đề)."
+# --- MENU CHỌN TÍNH NĂNG CHÍNH ---
+feature_mode = st.sidebar.selectbox(
+    "🎯 Chọn tính năng chính",
+    [
+        "🎬 Sản xuất Video Ngắn (Local SD / Wan 2.1)",
+        "🧘 Học Tiếng Anh Self-heal",
+        "🎙️ Dịch & Lồng tiếng Video",
+        "📚 Bài dạy AI Slideshow",
+        "⚡ Xưởng Tự Động (Auto Batch Google Flow)"
+    ],
+    key="feature_mode"
 )
-if app_mode == "⚡ Tự động hàng loạt (Auto Batch)":
+
+if feature_mode == "🧘 Học Tiếng Anh Self-heal":
+    from src.app_selfheal import run_selfheal_ui
+    run_selfheal_ui()
+    st.stop()
+
+if feature_mode == "🎙️ Dịch & Lồng tiếng Video":
+    from src.app_dubbing import run_dubbing_ui
+    run_dubbing_ui()
+    st.stop()
+
+if feature_mode == "📚 Bài dạy AI Slideshow":
+    from src.app_educational import run_educational_ui
+    run_educational_ui()
+    st.stop()
+
+if feature_mode == "⚡ Xưởng Tự Động (Auto Batch Google Flow)":
     from src.app_batch import run_batch_ui
     run_batch_ui()
     st.stop()
