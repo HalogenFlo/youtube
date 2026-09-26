@@ -183,6 +183,13 @@ def produce_single_video_pipeline(
         sc_num = sc.get("scene_num", i + 1)
         audio_ext = ".wav" if voice_mode == "clone_local" else ".mp3"
         audio_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}{audio_ext}")
+        if os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000:
+            safe_log(f"[✓] Tái sử dụng file âm thanh có sẵn cho cảnh {sc_num}: {audio_file}")
+            sc["audio_path"] = audio_file
+            sc["audio_duration"] = get_audio_duration(audio_file)
+            notify(25 + (i + 1) / num_scenes * 15, f"Đã có giọng đọc phân cảnh {sc_num}/{num_scenes}")
+            continue
+
         if voice_mode == "clone_local":
             audio_ok, audio_result = generate_cloned_tts(
                 text=sc["narration"], output_path=audio_file,

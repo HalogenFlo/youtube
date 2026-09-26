@@ -92,7 +92,7 @@ class TestYouTubeBooster(unittest.TestCase):
         self.assertIn("ram_percent", stats)
         self.assertIn("ram_used_gb", stats)
         self.assertGreater(stats["ram_total_gb"], 0)
-        self.assertTrue(can_spawn_worker(max_ram_pct=100.0))
+        self.assertTrue(can_spawn_worker(max_ram_pct=100.0, max_chrome_procs=1000))
 
     def test_booster_manager_lifecycle(self):
         """Kiểm tra khởi tạo và dừng an toàn BoosterManager."""
