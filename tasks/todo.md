@@ -184,5 +184,43 @@ Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow
   - [x] Chạy lại test suite kiểm tra tương thích và tính toàn vẹn (19/19 tests PASS).
 - [x] **Task 3: Hướng dẫn người dùng thao tác 1-Click thực tế**
 
+---
+
+## 8. Kế Hoạch: Tái Cấu Trúc Thư Mục & Dọn Dẹp File Rác Toàn Diện
+
+### 1. Mục tiêu
+- Dọn dẹp sạch sẽ các file rác phát sinh trong quá trình dev/test: log cũ, ảnh screenshot debug, file âm thanh/video tạm thời trong `temp/`, `scratch/`, các file log xoay vòng trong `output/`, cache `__pycache__` và `.pytest_cache`.
+- Tái cấu trúc các kịch bản thực thi: di chuyển kịch bản phụ trợ `Mo_Chrome_Google_Flow.bat` vào `scripts/`, chuẩn hóa launcher `run.bat` và `run_web.bat` rõ ràng, tiện dụng.
+- Khắc phục test mock bị thiếu `getsize` trong `tests/test_flow_video_no_fallback.py` để test suite xanh 100%.
+- Bảo vệ an toàn tuyệt đối các dữ liệu quan trọng: Profile trình duyệt Flow (`flow_chrome_profile/`), Docker container images (`docker/images/`), cấu hình (`*_config.json`) và video thành phẩm (`output/*.mp4`).
+- Cập nhật sơ đồ cấu trúc thư mục hoàn chỉnh trong `README.md`.
+
+### 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Dọn dẹp file rác & cache tạm thời**
+  - [x] Xóa file log thừa ở thư mục gốc: `chrome_test.log`.
+  - [x] Dọn dẹp các ảnh screenshot debug và script nháp trong `scratch/`.
+  - [x] Dọn dẹp các file audio/video test tạm và log thừa trong `temp/` (`part_1_raw.mp4`, `part_1.ass`, `test_*.mp3`, `flow_current_screen.png`, `local_mode_screen.png`, `streamlit_*.log`).
+  - [x] Dọn dẹp log cũ xoay vòng trong `output/` (`booster.log.1`, `booster.log.2`), giữ lại `booster.log` và các video thành phẩm.
+  - [x] Dọn dẹp cache `__pycache__` và `.pytest_cache`.
+- [x] **Task 2: Tái cấu trúc script & Chuẩn hóa Launcher**
+  - [x] Di chuyển `Mo_Chrome_Google_Flow.bat` vào `scripts/` và đồng bộ cấu hình trong `scripts/launch_flow_chrome.bat`.
+  - [x] Tối ưu hóa `run.bat` tại thư mục gốc làm điểm điều khiển trung tâm duy nhất, thêm mục [6] Dọn rác 1-click.
+  - [x] Cập nhật `.gitignore` để đảm bảo không lưu vết các file rác trong tương lai.
+- [x] **Task 3: Sửa lỗi kiểm thử & Verify 100% Green**
+  - [x] Fix lỗi `FileNotFoundError` trong `tests/test_flow_video_no_fallback.py` do mock `exists` nhưng thiếu `getsize`.
+  - [x] Chạy toàn bộ test suite và đạt **56/56 PASS (100% OK)**.
+- [x] **Task 4: Cập nhật sơ đồ cây thư mục & Tài liệu hóa**
+  - [x] Cập nhật bản đồ thư mục trong `README.md`.
+  - [x] Báo cáo tổng kết các file đã dọn dẹp và dung lượng giải phóng cho người dùng.
+
+---
+
+## 9. [ĐÃ GỠ BỎ TOÀN BỘ THEO YÊU CẦU NGƯỜI DÙNG] Luồng Gemini Web
+- **Trạng thái**: Đã xóa bỏ hoàn toàn tất cả các file mã nguồn (`src/gemini_web_service.py`, `src/gemini_youtube_pipeline.py`, `src/app_gemini_youtube.py`), test suite (`tests/test_gemini_youtube_pipeline.py`), và gỡ bỏ menu điều hướng khỏi `src/app.py` cũng như `run_web.bat`.
+- Hệ thống chỉ duy trì 2 luồng chính cốt lõi:
+  1. `⚡ Xưởng Tự Động (Auto Batch Google Flow)`
+  2. `🎬 Sản xuất Video Ngắn (Local SD / Wan 2.1)`
+
+
 
 

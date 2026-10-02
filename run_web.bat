@@ -17,7 +17,7 @@ if not exist ".venv\Scripts\python.exe" (
     exit /b 1
 )
 
-start "" "%CHROME_EXE%" --remote-debugging-port=9222 --user-data-dir="%~dp0flow_chrome_profile" --profile-directory="Default" --remote-allow-origins=* --no-first-run --no-default-browser-check "https://flow.google.com"
+start "" "%CHROME_EXE%" --remote-debugging-port=9222 --user-data-dir="%~dp0flow_chrome_profile" --profile-directory="Default" --remote-allow-origins=* --no-first-run --no-default-browser-check "https://studio.youtube.com"
 
 start http://localhost:8502
 ".venv\Scripts\python.exe" -m streamlit run src\app.py --server.port 8502

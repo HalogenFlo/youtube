@@ -8,7 +8,7 @@ import sys
 import tempfile
 import subprocess
 import time
-from typing import Tuple
+from typing import List, Tuple
 from src.config import TTS_VOICE_DEFAULT
 
 # Đảm bảo in log trên Windows không bị UnicodeEncodeError
@@ -30,6 +30,8 @@ VOICE_FALLBACK_MAP = {
     "en-US-EmmaNeural": "en-US-JennyNeural",
     "en-US-JennyNeural": "en-US-GuyNeural",
     "en-US-GuyNeural": "en-US-JennyNeural",
+    "zh-CN-XiaoxiaoNeural": "zh-CN-YunxiNeural",
+    "zh-CN-YunxiNeural": "zh-CN-XiaoxiaoNeural",
 }
 
 
@@ -94,7 +96,7 @@ def _run_edge_tts_cli(text: str, output_path: str, voice: str, rate: str) -> Tup
             "-m", "edge_tts",
             "--voice", voice,
             "--file", tmp_txt_path,
-            "--rate", formatted_rate,
+            f"--rate={formatted_rate}",
             "--write-media", output_path
         ]
 
@@ -204,3 +206,46 @@ def generate_tts(
                 pass
 
     return False, f"Lỗi sinh giọng đọc edge-tts CLI: {last_err}"
+
+
+def generate_multivoice_tts(
+    segments: List[Tuple[str, str, str]],
+    output_path: str,
+) -> Tuple[bool, str]:
+    """Sinh từng đoạn bằng đúng giọng/ngôn ngữ rồi nối thành một file MP3."""
+    from moviepy.editor import AudioFileClip, concatenate_audioclips
+
+    parent_dir = os.path.dirname(output_path) or "."
+    os.makedirs(parent_dir, exist_ok=True)
+    stem = os.path.splitext(os.path.basename(output_path))[0]
+    temp_paths = []
+    clips = []
+    try:
+        usable_segments = [(text.strip(), voice, rate) for text, voice, rate in segments if text and text.strip()]
+        if not usable_segments:
+            return False, "Không có nội dung để sinh giọng đọc đa ngôn ngữ."
+        for index, (text, voice, rate) in enumerate(usable_segments, start=1):
+            segment_path = os.path.join(parent_dir, f".{stem}_segment_{index:02d}.mp3")
+            temp_paths.append(segment_path)
+            ok, result = generate_tts(text, segment_path, voice=voice, rate=rate)
+            if not ok:
+                return False, result
+            clips.append(AudioFileClip(segment_path))
+        combined = concatenate_audioclips(clips)
+        combined.write_audiofile(output_path, codec="libmp3lame", bitrate="192k", verbose=False, logger=None)
+        combined.close()
+        return True, output_path
+    except Exception as exc:
+        return False, f"Lỗi ghép giọng Việt–Trung: {exc}"
+    finally:
+        for clip in clips:
+            try:
+                clip.close()
+            except Exception:
+                pass
+        for temp_path in temp_paths:
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except OSError:
+                pass

@@ -6,6 +6,7 @@ import os
 import sys
 import time
 import json
+import random
 from pathlib import Path
 from typing import List, Dict, Any, Tuple, Optional, Callable
 
@@ -32,15 +33,75 @@ def safe_log(msg: str):
 
 
 from src.config import (
-    TEMP_DIR, OUTPUT_DIR, TTS_VOICE_DEFAULT, DEFAULT_IMAGE_STYLE
+    TEMP_DIR, OUTPUT_DIR, TTS_VOICE_DEFAULT, TTS_VOICE_ZH_DEFAULT, DEFAULT_IMAGE_STYLE
 )
 from src.llm_service import generate_script, generate_video_metadata
-from src.tts_service import generate_tts
+from src.tts_service import generate_tts, generate_multivoice_tts
 from src.flow_image_service import generate_flow_image, generate_flow_video
 from src.whisper_service import get_word_timestamps
 from src.video_compiler import compile_video_pipeline
 from src.voice_clone_service import generate_cloned_tts
 from src.studio_editorial_service import run_studio_editorial_pipeline
+
+
+CHINESE_TEACHING_TOPIC_BANK = [
+    "Chào hỏi người mới gặp",
+    "Giới thiệu tên và quê quán",
+    "Hỏi thăm sức khỏe",
+    "Cảm ơn và xin lỗi",
+    "Tạm biệt và hẹn gặp lại",
+    "Đếm số từ 1 đến 10",
+    "Hỏi giờ và nói thời gian",
+    "Nói ngày tháng và thứ trong tuần",
+    "Gọi món trong nhà hàng",
+    "Mua đồ và hỏi giá",
+    "Mặc cả khi đi chợ",
+    "Hỏi đường và chỉ đường",
+    "Đi taxi và nói địa điểm đến",
+    "Làm thủ tục tại khách sạn",
+    "Giao tiếp tại sân bay",
+    "Nói về gia đình",
+    "Nói về công việc và nghề nghiệp",
+    "Sở thích và hoạt động cuối tuần",
+    "Thời tiết hôm nay",
+    "Màu sắc và quần áo",
+    "Mua thuốc tại hiệu thuốc",
+    "Gọi điện thoại và nhắn tin",
+    "Mời bạn đi ăn",
+    "Khen ngợi và đáp lại lời khen",
+    "Từ chối lịch sự",
+    "Hỏi mật khẩu Wi-Fi",
+    "Giao tiếp trong lớp học",
+    "Phỏng vấn xin việc cơ bản",
+    "Những câu dùng khi du lịch",
+    "Các lỗi phát âm tiếng Trung người Việt hay gặp",
+]
+
+KNOWLEDGE_TOPIC_BANK = [
+    "Những bí ẩn thú vị về vũ trụ",
+    "Vì sao con người cần ngủ",
+    "Cách trí nhớ hoạt động",
+    "Những hiện tượng kỳ lạ dưới đại dương",
+    "Vì sao bầu trời có màu xanh",
+    "Cách Internet truyền dữ liệu",
+    "Những phát minh thay đổi thế giới",
+    "Cơ thể con người tự chữa lành như thế nào",
+    "Các loài động vật có khả năng đặc biệt",
+    "Những sự thật bất ngờ về Trái Đất",
+]
+
+
+def build_random_video_topics(count: int, content_mode: str = "knowledge") -> List[str]:
+    """Chọn đủ chủ đề ngẫu nhiên, ưu tiên không lặp trong cùng một lô."""
+    bank = CHINESE_TEACHING_TOPIC_BANK if content_mode == "chinese_teaching_vi" else KNOWLEDGE_TOPIC_BANK
+    requested = max(1, int(count))
+    picker = random.SystemRandom()
+    topics: List[str] = []
+    while len(topics) < requested:
+        shuffled = list(bank)
+        picker.shuffle(shuffled)
+        topics.extend(shuffled[:requested - len(topics)])
+    return topics
 
 
 def get_audio_duration(file_path: str) -> float:
@@ -110,6 +171,26 @@ def build_exact_tts_timestamps(scenes: List[Dict[str, Any]]) -> List[Dict[str, A
     return words_out
 
 
+def normalize_chinese_teaching_scenes(scenes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Chuẩn hóa dữ liệu bài học thành lời phụ đề hoàn chỉnh cho pipeline hiện có."""
+    normalized = []
+    for index, original in enumerate(scenes, start=1):
+        scene = dict(original)
+        narration_vi = str(scene.get("narration_vi", "")).strip()
+        chinese_text = str(scene.get("chinese_text", "")).strip()
+        pinyin = str(scene.get("pinyin", "")).strip()
+        usage_vi = str(scene.get("usage_vi", "")).strip()
+        scene["scene_num"] = int(scene.get("scene_num", index))
+        scene["narration"] = " ".join(part for part in [
+            narration_vi,
+            chinese_text,
+            f"Đọc là {pinyin}." if pinyin else "",
+            usage_vi,
+        ] if part).strip()
+        normalized.append(scene)
+    return normalized
+
+
 def produce_single_video_pipeline(
     topic: str,
     video_index: int,
@@ -126,6 +207,8 @@ def produce_single_video_pipeline(
     voice_reference_path: str = "",
     job_key: str = "",
     studio_mode: bool = True,
+    content_mode: str = "knowledge",
+    chinese_voice: str = TTS_VOICE_ZH_DEFAULT,
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
@@ -157,6 +240,7 @@ def produce_single_video_pipeline(
         style_preset=style_preset,
         language=language,
         target_scenes=target_scenes,
+        content_mode=content_mode,
     )
 
     if not success or "scenes" not in script_data or not script_data["scenes"]:
@@ -169,10 +253,13 @@ def produce_single_video_pipeline(
         scenes, editorial_report = run_studio_editorial_pipeline(
             topic=topic, script_data=script_data,
             target_scenes=max(1, int(target_scenes)), language=language,
+            content_mode=content_mode,
         )
         run_meta["editorial_report"] = editorial_report
     else:
         scenes = script_data["scenes"][:max(1, int(target_scenes))]
+        if content_mode == "chinese_teaching_vi":
+            scenes = normalize_chinese_teaching_scenes(scenes)
         run_meta["editorial_report"] = {"mode": "single_writer", "approved": True, "selected_skill_ids": []}
     num_scenes = len(scenes)
     notify(20, f"Đã lập kịch bản gồm {num_scenes} phân cảnh độc lập.")
@@ -181,7 +268,7 @@ def produce_single_video_pipeline(
     notify(25, "Đang sinh giọng đọc AI (TTS) cho các phân cảnh...")
     for i, sc in enumerate(scenes):
         sc_num = sc.get("scene_num", i + 1)
-        audio_ext = ".wav" if voice_mode == "clone_local" else ".mp3"
+        audio_ext = ".wav" if voice_mode == "clone_local" and content_mode != "chinese_teaching_vi" else ".mp3"
         audio_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}{audio_ext}")
         if os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000:
             safe_log(f"[✓] Tái sử dụng file âm thanh có sẵn cho cảnh {sc_num}: {audio_file}")
@@ -190,7 +277,20 @@ def produce_single_video_pipeline(
             notify(25 + (i + 1) / num_scenes * 15, f"Đã có giọng đọc phân cảnh {sc_num}/{num_scenes}")
             continue
 
-        if voice_mode == "clone_local":
+        if content_mode == "chinese_teaching_vi":
+            audio_ok, audio_result = generate_multivoice_tts(
+                [
+                    (str(sc.get("narration_vi", "")), voice, "+0%"),
+                    (str(sc.get("chinese_text", "")), chinese_voice, "-5%"),
+                    (str(sc.get("chinese_text", "")), chinese_voice, "-15%"),
+                    (" ".join(part for part in [
+                        f"Đọc là {sc.get('pinyin', '')}." if sc.get("pinyin") else "",
+                        str(sc.get("usage_vi", "")),
+                    ] if part), voice, "+0%"),
+                ],
+                audio_file,
+            )
+        elif voice_mode == "clone_local":
             audio_ok, audio_result = generate_cloned_tts(
                 text=sc["narration"], output_path=audio_file,
                 reference_audio=voice_reference_path, language=language,
@@ -361,6 +461,7 @@ def produce_single_video_pipeline(
     run_meta["scenes"] = scenes
     run_meta["media_mode"] = media_mode
     run_meta["studio_mode"] = studio_mode
+    run_meta["content_mode"] = content_mode
     notify(96, "Đang tạo tiêu đề, mô tả và hashtag phù hợp với nội dung...")
     _, publishing = generate_video_metadata(topic, scenes, language=language)
     run_meta["publishing"] = publishing

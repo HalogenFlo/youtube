@@ -35,15 +35,6 @@ from src.config import (
     DEFAULT_MAX_DURATION, DEFAULT_IMAGE_STYLE, TEMP_DIR, OUTPUT_DIR, WAN_DEFAULT_STEPS,
     get_gpu_benchmark_sec_per_step
 )
-from src.llm_service import generate_script, remake_script
-from src.tts_service import generate_tts
-from src.video_downloader import download_and_extract
-from src.whisper_service import transcribe_audio_to_text, get_word_timestamps
-from src.image_service import generate_single_image, generate_batch_images
-from src.flow_image_service import generate_flow_image, generate_flow_batch
-from src.video_gen_service import generate_single_video, generate_batch_videos
-from src.video_compiler import compile_video_pipeline
-
 # --- THIẾT LẬP TRANG STREAMLIT ---
 st.set_page_config(
     page_title="Xưởng Video Kiến Thức AI",
@@ -188,29 +179,11 @@ if "wan_measured_sec_per_step" not in st.session_state:
 feature_mode = st.sidebar.selectbox(
     "🎯 Chọn tính năng chính",
     [
-        "🎬 Sản xuất Video Ngắn (Local SD / Wan 2.1)",
-        "🧘 Học Tiếng Anh Self-heal",
-        "🎙️ Dịch & Lồng tiếng Video",
-        "📚 Bài dạy AI Slideshow",
-        "⚡ Xưởng Tự Động (Auto Batch Google Flow)"
+        "⚡ Xưởng Tự Động (Auto Batch Google Flow)",
+        "🎬 Sản xuất Video Ngắn (Local SD / Wan 2.1)"
     ],
     key="feature_mode"
 )
-
-if feature_mode == "🧘 Học Tiếng Anh Self-heal":
-    from src.app_selfheal import run_selfheal_ui
-    run_selfheal_ui()
-    st.stop()
-
-if feature_mode == "🎙️ Dịch & Lồng tiếng Video":
-    from src.app_dubbing import run_dubbing_ui
-    run_dubbing_ui()
-    st.stop()
-
-if feature_mode == "📚 Bài dạy AI Slideshow":
-    from src.app_educational import run_educational_ui
-    run_educational_ui()
-    st.stop()
 
 if feature_mode == "⚡ Xưởng Tự Động (Auto Batch Google Flow)":
     from src.app_batch import run_batch_ui
@@ -220,6 +193,16 @@ if feature_mode == "⚡ Xưởng Tự Động (Auto Batch Google Flow)":
 
 
 
+
+# Chỉ nạp các thư viện AI local nặng khi người dùng chọn luồng Local SD/Wan.
+from src.llm_service import generate_script, remake_script
+from src.tts_service import generate_tts
+from src.video_downloader import download_and_extract
+from src.whisper_service import transcribe_audio_to_text, get_word_timestamps
+from src.image_service import generate_single_image, generate_batch_images
+from src.flow_image_service import generate_flow_image, generate_flow_batch
+from src.video_gen_service import generate_single_video, generate_batch_videos
+from src.video_compiler import compile_video_pipeline
 
 # --- SIDEBAR CẤU HÌNH ---
 st.sidebar.markdown("### ⚙️ Cấu hình Hệ thống")
@@ -340,16 +323,12 @@ st.session_state.style_preset = st.sidebar.text_input(
     value=st.session_state.style_preset
 )
 
-# Nguồn sinh ảnh & Kỹ thuật chuyển động
+# Cấu hình Mô hình AI Local
 st.sidebar.markdown("---")
-st.sidebar.markdown("### 🎨 Nguồn sinh hình ảnh")
-image_engine = st.sidebar.radio(
-    "Mô hình tạo ảnh:",
-    ["🍌 Google Flow (Nano Banana Pro / CDP)", "💻 Stable Diffusion 1.5 (Local GPU/CPU)"],
-    index=0,
-    help="Google Flow sử dụng Nano Banana Pro trên cloud, khóa nhân vật Stickman và không tốn VRAM card rời."
-)
-st.session_state.image_engine = image_engine
+st.sidebar.markdown("### 💻 Mô hình AI Local")
+st.sidebar.caption("Chế độ này chạy hoàn toàn trên phần cứng máy tính cục bộ:")
+st.sidebar.markdown("- 🖼️ Ảnh AI: **Stable Diffusion 1.5**\n- 🎥 Video AI: **Wan 2.1**")
+st.session_state.image_engine = "💻 Stable Diffusion 1.5 (Local GPU/CPU)"
 
 # --- HEADER CHÍNH ---
 st.markdown("<div class='main-header'>AI VIDEO PRODUCER</div>", unsafe_allow_html=True)

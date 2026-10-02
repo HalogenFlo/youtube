@@ -3,7 +3,13 @@
 # Trích dẫn: Dựa trên sơ đồ kiến trúc và cấu trúc thư mục trong PLAN.md.
 
 import os
-import torch
+
+try:
+    import torch
+except (ImportError, OSError):
+    # Các luồng web/batch không cần PyTorch. Không để bản
+    # CUDA/DLL lỗi chặn toàn bộ ứng dụng ngay từ lúc import config.
+    torch = None
 
 # --- ĐƯỜNG DẪN THƯ MỤC ---
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -16,6 +22,22 @@ FONT_DIR = os.path.join(ASSETS_DIR, "fonts")
 
 # Đường dẫn font mặc định cho phụ đề
 FONT_PATH = os.path.join(FONT_DIR, "Montserrat-Bold.ttf")
+
+# --- NẠP BIẾN MÔI TRƯỜNG (.ENV) ---
+ENV_FILE = os.path.join(BASE_DIR, ".env")
+if os.path.exists(ENV_FILE):
+    try:
+        with open(ENV_FILE, "r", encoding="utf-8") as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if _line and not _line.startswith("#") and "=" in _line:
+                    _k, _v = _line.split("=", 1)
+                    os.environ.setdefault(_k.strip(), _v.strip())
+    except Exception:
+        pass
+
+GMAIL_YTB = os.getenv("gmailytb", "").strip()
+PASS_YTB = os.getenv("passytb", "").strip()
 
 # Tự động tạo các thư mục nếu chưa tồn tại
 for directory in [TEMP_DIR, DOWNLOAD_DIR, OUTPUT_DIR, ASSETS_DIR, FONT_DIR]:
@@ -48,12 +70,18 @@ TTS_VOICES_EN = {
     "Nữ Anh (en-GB-SoniaNeural)": "en-GB-SoniaNeural",
     "Nam Anh (en-GB-RyanNeural)": "en-GB-RyanNeural"
 }
+TTS_VOICES_ZH = {
+    "Nữ Trung Quốc (zh-CN-XiaoxiaoNeural)": "zh-CN-XiaoxiaoNeural",
+    "Nam Trung Quốc (zh-CN-YunxiNeural)": "zh-CN-YunxiNeural",
+}
 TTS_VOICE_DEFAULT = "vi-VN-HoaiMyNeural"
+TTS_VOICE_ZH_DEFAULT = "zh-CN-XiaoxiaoNeural"
 
 # Whisper Configuration
 WHISPER_MODEL_DEFAULT = "small"
-WHISPER_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-WHISPER_COMPUTE_TYPE = "float16" if torch.cuda.is_available() else "int8"
+CUDA_AVAILABLE = bool(torch is not None and torch.cuda.is_available())
+WHISPER_DEVICE = "cuda" if CUDA_AVAILABLE else "cpu"
+WHISPER_COMPUTE_TYPE = "float16" if CUDA_AVAILABLE else "int8"
 
 # Image Generation (Stable Diffusion 1.5)
 SD_MODEL_DEFAULT = "Lykon/dreamshaper-8"
@@ -76,7 +104,7 @@ def get_gpu_benchmark_sec_per_step() -> float:
     Xác định hiệu năng GPU hiện tại để ước lượng thời gian sinh video bằng Wan 2.1.
     Trả về số giây trên mỗi inference step (sec/step).
     """
-    if not torch.cuda.is_available():
+    if not CUDA_AVAILABLE:
         return 100.0
     
     try:
@@ -144,5 +172,3 @@ SPEAKER_COLORS = [
 # --- CẤU HÌNH EDUCATIONAL (BÀI DẠY AI SLIDESHOW) ---
 DEFAULT_EDUCATIONAL_STYLE = "modern tech illustration, flat design, clean UI, soft gradient background, 4k"
 DEFAULT_EDUCATIONAL_SCENES = 8
-
-

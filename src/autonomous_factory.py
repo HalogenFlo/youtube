@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from src.batch_producer import produce_single_video_pipeline, split_prompt_to_video_topics
-from src.config import DEFAULT_IMAGE_STYLE, OUTPUT_DIR, TEMP_DIR, TTS_VOICE_DEFAULT
+from src.config import DEFAULT_IMAGE_STYLE, OUTPUT_DIR, TEMP_DIR, TTS_VOICE_DEFAULT, TTS_VOICE_ZH_DEFAULT
 from src.flow_browser_service import get_flow_controller, get_flow_readiness
 from src.studio_skill_registry import record_skill_outcome
 
@@ -98,6 +98,8 @@ def add_factory_jobs(
     voice_mode: str = "edge",
     voice_reference_path: str = "",
     studio_mode: bool = True,
+    content_mode: str = "knowledge",
+    chinese_voice: str = TTS_VOICE_ZH_DEFAULT,
 ) -> List[str]:
     topics = split_prompt_to_video_topics(prompt, count, language)
     created_ids: List[str] = []
@@ -128,6 +130,8 @@ def add_factory_jobs(
                     "voice_mode": voice_mode,
                     "voice_reference_path": voice_reference_path,
                     "studio_mode": bool(studio_mode),
+                    "content_mode": content_mode,
+                    "chinese_voice": chinese_voice,
                 },
             })
         state["paused"] = False
@@ -264,6 +268,8 @@ def _worker_loop() -> None:
                 voice_reference_path=settings.get("voice_reference_path", ""),
                 job_key=job["id"],
                 studio_mode=bool(settings.get("studio_mode", True)),
+                content_mode=settings.get("content_mode", "knowledge"),
+                chinese_voice=settings.get("chinese_voice", TTS_VOICE_ZH_DEFAULT),
                 progress_callback=progress_callback,
             )
             skill_ids = metadata.get("editorial_report", {}).get("selected_skill_ids", []) if isinstance(metadata, dict) else []

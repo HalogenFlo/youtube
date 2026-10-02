@@ -3,16 +3,23 @@
 # Trích dẫn: Sử dụng thư viện faster-whisper.
 
 import gc
-import torch
 from typing import Tuple, List, Dict, Any
-from faster_whisper import WhisperModel
 from src.config import WHISPER_MODEL_DEFAULT, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE
 
-def _load_model(model_size: str) -> WhisperModel:
+try:
+    import torch
+except (ImportError, OSError):
+    torch = None
+
+def _load_model(model_size: str) -> Any:
     """
     Tải model Whisper một cách an toàn. Thử chạy trên GPU trước, 
     nếu thất bại (bao gồm lỗi thiếu DLL do lazy load) sẽ tự động fallback về CPU.
     """
+    try:
+        from faster_whisper import WhisperModel
+    except Exception as exc:
+        raise RuntimeError(f"Không thể nạp Faster-Whisper: {exc}") from exc
     try:
         # Thử load trên GPU
         model = WhisperModel(
@@ -62,7 +69,7 @@ def transcribe_audio_to_text(
         if model is not None:
             del model
         gc.collect()
-        if torch.cuda.is_available():
+        if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
 def get_word_timestamps(
@@ -104,7 +111,7 @@ def get_word_timestamps(
         if model is not None:
             del model
         gc.collect()
-        if torch.cuda.is_available():
+        if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
 def transcribe_with_segments(
@@ -139,6 +146,5 @@ def transcribe_with_segments(
         if model is not None:
             del model
         gc.collect()
-        if torch.cuda.is_available():
+        if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
-

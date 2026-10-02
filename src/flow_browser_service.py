@@ -86,6 +86,8 @@ def get_flow_readiness(port: int = 9222) -> str:
         return "disconnected"
 
     flow_urls = [str(tab.get("url", "")) for tab in tabs if "flow.google.com" in str(tab.get("url", ""))]
+    if any("/404" in url for url in flow_urls):
+        return "disconnected"
     if any("/project/" in url or "/tool/" in url for url in flow_urls):
         return "ready"
     # Người dùng đã đăng nhập có thể đang ở dashboard gốc `flow.google.com/?pli=1`.
@@ -108,6 +110,54 @@ class FlowBrowserController:
         self.page: Optional[Page] = None
         self.seen_video_urls: set = set()
         self.seen_video_hashes: set = set()
+
+    def _remember_project_url(self, url: str) -> None:
+        """Lưu project Flow vừa tạo/mở để các lần chạy sau đi thẳng vào đúng dự án."""
+        if "/project/" not in url:
+            return
+        project_url = url.split("/tool/", 1)[0].split("?", 1)[0].rstrip("/")
+        self.cfg["project_url"] = project_url
+        try:
+            disk_cfg = load_flow_config()
+            disk_cfg["project_url"] = project_url
+            temp_path = CONFIG_PATH.with_suffix(".json.tmp")
+            temp_path.write_text(json.dumps(disk_cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temp_path, CONFIG_PATH)
+        except Exception as exc:
+            safe_log(f"[WARNING] Không lưu được URL project Flow mới: {exc}")
+
+    def _open_or_create_project(self) -> Tuple[bool, str]:
+        """Từ dashboard Flow, tự mở/tạo project để đạt trải nghiệm một nút."""
+        if not self.page:
+            return False, "Không có trang Google Flow để mở project."
+        if "/project/" in self.page.url:
+            self.page.wait_for_timeout(4000)
+            if "/404" not in self.page.url and "/project/" in self.page.url:
+                self._remember_project_url(self.page.url)
+                return True, "Project Google Flow đã sẵn sàng."
+
+        if "/404" in self.page.url:
+            self.page.goto("https://flow.google.com/", wait_until="domcontentloaded", timeout=30000)
+        try:
+            self.page.wait_for_timeout(2500)
+            labels = ["Dự án mới", "New project", "Create project"]
+            for label in labels:
+                candidate = self.page.get_by_text(label, exact=True)
+                for index in range(candidate.count()):
+                    item = candidate.nth(index)
+                    if item.is_visible():
+                        safe_log(f"[*] Đang tự tạo project Google Flow bằng nút '{label}'...")
+                        item.click(timeout=10000)
+                        self.page.wait_for_url("**/project/**", wait_until="domcontentloaded", timeout=45000)
+                        self.page.wait_for_timeout(5000)
+                        if "/404" in self.page.url or "/project/" not in self.page.url:
+                            return False, "Google Flow chuyển project vừa mở sang trang 404."
+                        self._remember_project_url(self.page.url)
+                        return True, "Đã tự tạo project Google Flow mới."
+        except Exception as exc:
+            safe_log(f"[WARNING] Chưa thể tự tạo project Google Flow: {exc}")
+
+        return False, "Không tìm thấy nút 'Dự án mới' trên dashboard Google Flow."
 
     def is_video_response(self, res) -> bool:
         """Kiểm tra một network response có phải là luồng video hợp lệ từ Flow hay không (hỗ trợ HTTP 200/206)."""
@@ -185,11 +235,14 @@ class FlowBrowserController:
             if not self.context:
                 return False, "Không thể kết nối vào trình duyệt Chrome."
 
-            # Tìm tab đã mở flow.google.com
-            for p in self.context.pages:
-                if "flow.google.com" in p.url:
-                    self.page = p
-                    break
+            # Ưu tiên project hợp lệ; nếu chưa có thì dùng dashboard, bỏ qua tab 404 cũ.
+            flow_pages = [p for p in self.context.pages if "flow.google.com" in p.url]
+            project_pages = [p for p in flow_pages if "/project/" in p.url and "/404" not in p.url]
+            dashboard_pages = [
+                p for p in flow_pages
+                if "/404" not in p.url and "/about" not in p.url and "accounts.google.com" not in p.url
+            ]
+            self.page = (project_pages or dashboard_pages or flow_pages or [None])[0]
 
             if not self.page:
                 self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
@@ -199,8 +252,20 @@ class FlowBrowserController:
                 except Exception:
                     pass
 
+            # Flow có thể giữ route project cũ vài giây rồi mới chuyển sang 404.
+            if "/project/" in self.page.url:
+                self.page.wait_for_timeout(4000)
+
             if "/about" in self.page.url or "/accounts.google.com/" in self.page.url:
                 return False, "Google Flow đang mở nhưng profile riêng chưa đăng nhập. Hãy đăng nhập một lần trong cửa sổ Chrome Flow."
+
+            if "/404" in self.page.url or "/project/" not in self.page.url:
+                project_ok, project_message = self._open_or_create_project()
+                if not project_ok:
+                    return False, project_message
+                safe_log(f"[✓] {project_message}")
+            else:
+                self._remember_project_url(self.page.url)
 
             return True, "Kết nối thành công tới Google Flow."
 

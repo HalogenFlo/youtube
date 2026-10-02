@@ -33,10 +33,16 @@ if "%ERRORLEVEL%"=="0" (
     )
 )
 
+set "USER_DATA_DIR=%~dp0..\flow_chrome_profile"
+if not exist "%USER_DATA_DIR%" (
+    set "USER_DATA_DIR=%LOCALAPPDATA%\Google\Chrome\User Data"
+)
+
+echo [*] Su dung Chrome Profile tai: %USER_DATA_DIR%
 echo [*] Dang khoi chay Chrome voi cong CDP 9222...
-start "" "%CHROME_EXE%" --remote-debugging-port=9222 --user-data-dir="%LOCALAPPDATA%\Google\Chrome\User Data" --profile-directory="Default" --remote-allow-origins=* --no-first-run --no-default-browser-check "https://flow.google.com"
+start "" "%CHROME_EXE%" --remote-debugging-port=9222 --user-data-dir="%USER_DATA_DIR%" --profile-directory="Default" --remote-allow-origins=* --no-first-run --no-default-browser-check "https://flow.google.com"
 
 echo.
-echo [OK] Chrome da duoc kich hoat! Hay dang nhap tai khoan va mo flow.google.com tren Chrome.
+echo [OK] Chrome da duoc kich hoat tren cong 9222!
 echo.
 pause

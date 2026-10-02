@@ -70,7 +70,9 @@ class TestFlowVideoNoFallback(unittest.TestCase):
         mock_flow_vid.return_value = (False, "Hết thời gian chờ video từ Google Flow (1800s)")
 
         with patch("src.batch_producer.get_audio_duration", return_value=3.0), \
-             patch("os.path.exists", side_effect=lambda p: True if "scene_001.mp3" in p else False):
+             patch("os.path.exists", side_effect=lambda p: True if "scene_001.mp3" in p else False), \
+             patch("os.path.isfile", side_effect=lambda p: True if "scene_001.mp3" in p else False), \
+             patch("os.path.getsize", return_value=2000):
             success, err_msg, meta = produce_single_video_pipeline(
                 topic="Test No Fallback",
                 video_index=1,

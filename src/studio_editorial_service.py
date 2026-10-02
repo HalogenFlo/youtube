@@ -11,10 +11,20 @@ from src.config import OLLAMA_MODEL_DEFAULT
 from src.studio_skill_registry import select_studio_skills
 
 
-def _sanitize_scenes(scenes: List[Dict[str, Any]], target_scenes: int) -> List[Dict[str, Any]]:
+def _sanitize_scenes(
+    scenes: List[Dict[str, Any]], target_scenes: int, content_mode: str = "knowledge"
+) -> List[Dict[str, Any]]:
     cleaned = []
     for index, scene in enumerate(scenes[:max(1, target_scenes)], start=1):
         narration = str(scene.get("narration", "")).strip()
+        narration_vi = str(scene.get("narration_vi", "")).strip()
+        chinese_text = str(scene.get("chinese_text", "")).strip()
+        pinyin = str(scene.get("pinyin", "")).strip()
+        usage_vi = str(scene.get("usage_vi", "")).strip()
+        if content_mode == "chinese_teaching_vi":
+            narration = " ".join(part for part in [
+                narration_vi, chinese_text, f"Đọc là {pinyin}." if pinyin else "", usage_vi
+            ] if part).strip()
         visual = str(scene.get("video_prompt", "")).strip()
         # Bỏ các câu phủ định đã thêm từ vòng trước để chúng không tự kích hoạt bộ lọc.
         visual = re.sub(
@@ -41,7 +51,15 @@ def _sanitize_scenes(scenes: List[Dict[str, Any]], target_scenes: int) -> List[D
         no_text_rule = " No readable text, numbers, formulas, captions, logos, signs, or watermarks in the image."
         if no_text_rule.strip().lower() not in visual.lower():
             visual = f"{visual}{no_text_rule}".strip()
-        cleaned.append({"scene_num": index, "narration": narration, "video_prompt": visual})
+        cleaned_scene = {"scene_num": index, "narration": narration, "video_prompt": visual}
+        if content_mode == "chinese_teaching_vi":
+            cleaned_scene.update({
+                "narration_vi": narration_vi,
+                "chinese_text": chinese_text,
+                "pinyin": pinyin,
+                "usage_vi": usage_vi,
+            })
+        cleaned.append(cleaned_scene)
     return cleaned
 
 
@@ -51,13 +69,19 @@ def run_studio_editorial_pipeline(
     target_scenes: int,
     language: str = "vi",
     model: str = OLLAMA_MODEL_DEFAULT,
+    content_mode: str = "knowledge",
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Một vòng bàn biên tập: fact-check, hook, clarity, visual continuity, policy."""
-    original_scenes = _sanitize_scenes(script_data.get("scenes", []), target_scenes)
+    original_scenes = _sanitize_scenes(script_data.get("scenes", []), target_scenes, content_mode)
     selected = select_studio_skills(topic)
     selected_ids = [item["id"] for item in selected]
     selected_names = [item["name"] for item in selected]
 
+    chinese_rule = (
+        " Với chế độ dạy tiếng Trung, bắt buộc giữ đủ narration_vi, chinese_text, pinyin, usage_vi; "
+        "kiểm tra chữ Hán giản thể, thanh điệu pinyin và nghĩa tiếng Việt khớp nhau."
+        if content_mode == "chinese_teaching_vi" else ""
+    )
     system_prompt = (
         "Bạn là ban biên tập studio video ngắn gồm: nghiên cứu viên, kiểm chứng, biên kịch, "
         "biên tập giữ chân, đạo diễn hình ảnh và kiểm duyệt YouTube/TikTok. "
@@ -66,7 +90,7 @@ def run_studio_editorial_pipeline(
         "cảnh cuối kết luận. Kiến thức/toán phải chính xác. Không tạo tuyên bố chưa kiểm chứng. "
         "video_prompt phải bằng tiếng Anh và không được yêu cầu hiển thị chữ, số, công thức, biển hiệu hay phụ đề. "
         "report gồm scores (factual_accuracy, hook_strength, clarity, visual_continuity, policy_safety; 0-100), "
-        "issues_fixed, remaining_warnings và approved."
+        f"issues_fixed, remaining_warnings và approved.{chinese_rule}"
     )
     prompt = (
         f"Chủ đề: {topic}\nNgôn ngữ lời thoại: {language}\nSố cảnh bắt buộc: {target_scenes}\n"
@@ -75,8 +99,12 @@ def run_studio_editorial_pipeline(
     )
     success, edited = call_ollama(prompt, system_prompt, model)
     if success and isinstance(edited, dict) and isinstance(edited.get("scenes"), list):
-        edited_scenes = _sanitize_scenes(edited["scenes"], target_scenes)
-        scenes = edited_scenes if len(edited_scenes) == target_scenes else original_scenes
+        edited_scenes = _sanitize_scenes(edited["scenes"], target_scenes, content_mode)
+        chinese_fields_ok = content_mode != "chinese_teaching_vi" or all(
+            scene.get("narration_vi") and scene.get("chinese_text") and scene.get("pinyin") and scene.get("usage_vi")
+            for scene in edited_scenes
+        )
+        scenes = edited_scenes if len(edited_scenes) == target_scenes and chinese_fields_ok else original_scenes
         raw_report = edited.get("report", {}) if isinstance(edited.get("report"), dict) else {}
     else:
         scenes = original_scenes

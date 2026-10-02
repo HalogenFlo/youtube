@@ -2,6 +2,7 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 
 # Temporary and Cache Directories
 temp/
@@ -9,6 +10,7 @@ output/
 .tmp-*
 *.tar
 *.log
+*.log.*
 *.json_stats
 
 # Environments

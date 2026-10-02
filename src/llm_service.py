@@ -8,7 +8,7 @@ import requests
 from typing import Tuple, Dict, Any, List
 from src.config import OLLAMA_API_URL, OLLAMA_MODEL_DEFAULT
 
-def get_system_prompt(language: str = "vi") -> str:
+def get_system_prompt(language: str = "vi", content_mode: str = "knowledge") -> str:
     """Trả về prompt hệ thống định nghĩa nhiệm vụ của LLM."""
     lang_name = "tiếng Việt" if language == "vi" else "tiếng Anh (English)"
     lang_instruction = (
@@ -16,6 +16,18 @@ def get_system_prompt(language: str = "vi") -> str:
         if language == "vi"
         else "Narration text in English for scene 1. Short, punchy, and natural."
     )
+    if content_mode == "chinese_teaching_vi":
+        return (
+            "Bạn là giáo viên tiếng Trung chuyên làm video ngắn cho người Việt mới học.\n"
+            "Mỗi cảnh phải dạy đúng một từ, cụm từ hoặc câu tiếng Trung có liên quan trực tiếp đến chủ đề.\n"
+            "Chỉ trả về một đối tượng JSON hợp lệ có cấu trúc: "
+            '{"scenes":[{"scene_num":1,"narration_vi":"Lời dẫn hoặc giải thích ngắn bằng tiếng Việt",'
+            '"chinese_text":"Chữ Hán giản thể", "pinyin":"Pinyin có dấu thanh", '
+            '"usage_vi":"Nghĩa và tình huống sử dụng bằng tiếng Việt", '
+            '"video_prompt":"English visual description, no text in image"}]}.\n'
+            "Không dùng phiên âm Hán Việt thay cho pinyin. Chữ Hán, pinyin và nghĩa phải khớp chính xác. "
+            "video_prompt viết bằng tiếng Anh và không yêu cầu hình ảnh chứa chữ, số, phụ đề hay ký hiệu đọc được."
+        )
     return (
         "Bạn là một chuyên gia biên kịch video ngắn (Shorts, TikTok, Reels) chuyên nghiệp.\n"
         "Nhiệm vụ của bạn là tạo ra một kịch bản hấp dẫn, thu hút người xem ngay từ những giây đầu tiên.\n"
@@ -73,12 +85,21 @@ def generate_script(
     language: str = "vi",
     model: str = OLLAMA_MODEL_DEFAULT,
     target_scenes: int = 5,
+    content_mode: str = "knowledge",
 ) -> Tuple[bool, Any]:
     """
     Luồng A: Sinh kịch bản mới hoàn toàn từ chủ đề/ý tưởng.
     """
+    mode_instruction = ""
+    if content_mode == "chinese_teaching_vi":
+        mode_instruction = (
+            "Đây là video DẠY TIẾNG TRUNG CHO NGƯỜI VIỆT. Mỗi cảnh phải gồm lời dẫn tiếng Việt, "
+            "một mẫu tiếng Trung giản thể, pinyin có dấu thanh và giải thích cách dùng bằng tiếng Việt. "
+            "Sắp xếp từ dễ đến khó, tự nhiên như một giáo viên đang hướng dẫn.\n"
+        )
     user_prompt = (
         f"Hãy viết kịch bản video ngắn cho chủ đề/ý tưởng sau: \"{topic}\".\n"
+        f"{mode_instruction}"
         f"Phong cách hình ảnh yêu cầu cho các video prompt: \"{style_preset}\".\n"
         f"Kịch bản phải có ĐÚNG {max(1, int(target_scenes))} phân cảnh; mỗi cảnh khoảng 5-10 giây.\n"
         "Nếu là nội dung giáo dục, toán hoặc kỹ thuật: lời thoại phải giải thích kiến thức chính xác, "
@@ -87,7 +108,7 @@ def generate_script(
         "hãy dùng vật thể, ánh sáng, khối hình và hành động trực quan vì AI tạo hình thường viết sai chữ.\n"
         "Đảm bảo mạch câu chuyện liền mạch, hấp dẫn và cấu trúc đúng định dạng JSON."
     )
-    return call_ollama(user_prompt, get_system_prompt(language), model)
+    return call_ollama(user_prompt, get_system_prompt(language, content_mode), model)
 
 
 def _fallback_video_metadata(topic: str, language: str = "vi") -> Dict[str, Any]:

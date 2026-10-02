@@ -2,7 +2,13 @@
 
 import unittest
 from unittest.mock import patch, MagicMock
-from src.batch_producer import split_prompt_to_video_topics, get_audio_duration, build_exact_tts_timestamps
+from src.batch_producer import (
+    split_prompt_to_video_topics,
+    get_audio_duration,
+    build_exact_tts_timestamps,
+    normalize_chinese_teaching_scenes,
+    build_random_video_topics,
+)
 from src.llm_service import generate_video_metadata
 from src.llm_service import generate_script
 from src.voice_clone_service import generate_cloned_tts
@@ -70,6 +76,13 @@ class TestBatchProducer(unittest.TestCase):
         generate_script("Vũ trụ", language="vi", target_scenes=3)
         self.assertIn("ĐÚNG 3 phân cảnh", mock_call.call_args.args[0])
 
+    @patch("src.llm_service.call_ollama", return_value=(True, {"scenes": []}))
+    def test_chinese_teaching_script_requests_bilingual_fields(self, mock_call):
+        generate_script("Giao tiếp khi mua đồ", content_mode="chinese_teaching_vi")
+        self.assertIn("DẠY TIẾNG TRUNG CHO NGƯỜI VIỆT", mock_call.call_args.args[0])
+        self.assertIn("chinese_text", mock_call.call_args.args[1])
+        self.assertIn("pinyin", mock_call.call_args.args[1])
+
     def test_xtts_rejects_unsupported_vietnamese_before_loading_model(self):
         ok, message = generate_cloned_tts("Xin chào", "unused.wav", "missing.wav", "vi")
         self.assertFalse(ok)
@@ -81,6 +94,21 @@ class TestBatchProducer(unittest.TestCase):
         ])
         self.assertEqual([item["word"] for item in words], ["một", "cộng", "một", "bằng", "mười"])
         self.assertLess(words[-1]["end"], 5.0)
+
+    def test_chinese_scene_normalization_builds_subtitle_narration(self):
+        scenes = normalize_chinese_teaching_scenes([{
+            "narration_vi": "Khi gặp bạn bè, hãy nói",
+            "chinese_text": "你好",
+            "pinyin": "nǐ hǎo",
+            "usage_vi": "Nghĩa là xin chào.",
+        }])
+        self.assertIn("你好", scenes[0]["narration"])
+        self.assertIn("nǐ hǎo", scenes[0]["narration"])
+
+    def test_random_chinese_topics_fill_requested_batch_without_duplicates(self):
+        topics = build_random_video_topics(5, "chinese_teaching_vi")
+        self.assertEqual(len(topics), 5)
+        self.assertEqual(len(set(topics)), 5)
 
 
 if __name__ == "__main__":

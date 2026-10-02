@@ -42,3 +42,22 @@
   - Tầng UI phải cung cấp trải nghiệm mượt mà: nếu dịch vụ phụ thuộc chưa bật, tự động kích hoạt tiến trình trong nền và đưa yêu cầu vào hàng đợi.
   - Bổ sung cơ chế Heartbeat Auto-Refresh (ví dụ: `time.sleep(2.5)` + `st.rerun()`) để người dùng thấy tiến độ thay đổi theo thời gian thực mà không cần thao tác thêm.
 
+## 6. Trao Quyền Động Não Tự Động Hoàn Toàn Cho LLM (Autonomous LLM Ideation)
+- **Kinh nghiệm thực tế**: Người dùng yêu cầu hệ thống phải tự sáng tạo đề tài hoàn toàn mới lạ, không bị gò bó bởi danh sách hạt giống cứng (`ANIMAL_SEEDS`).
+- **Giải pháp tối ưu**:
+  - Sử dụng prompt vai trò Giám đốc Sáng tạo (Creative Director), kích hoạt năng lực tự do động não (*Autonomous Brainstorming*) của LLM (Gemini) để tự chọn con vật và tình huống đời thường bất ngờ.
+  - Áp dụng cấu trúc 4 phần giữ chân người xem cao nhất: `Hook` ➔ `Development` ➔ `Twist` ➔ `Ending`.
+  - Phối hợp với thuật toán Smart Gap-filling để tự động quét lịch YouTube Studio và lấp đầy các slot còn thiếu (08:00, 11:00, 18:00) một cách liền mạch.
+
+## 9. Nguyên Tắc Xử Lý Tuần Tự Tuyệt Đối (Strict Sequential Video-by-Video Lifecycle)
+- **Hiện tượng lỗi**: Chưa render và lưu xong video 1 đã vội gửi tiếp prompt video 2 vào cùng một tab Gemini Web, khiến Gemini bị ngắt tiến trình hoặc quá tải.
+- **Nguyên nhân gốc rễ**: Thiếu chốt chặn tuần tự khép kín (End-to-End per Video): không đợi hoàn tất cả 2 bước (Lưu video ➔ Đăng video) trước khi kích hoạt video tiếp theo.
+- **Quy tắc phòng ngừa**:
+  - Tuân thủ quy trình tuần tự nghiêm ngặt từng video:
+    1. Gửi prompt Video N lên Gemini Web.
+    2. Kiên nhẫn theo dõi Gemini render xong 100% ➔ Tải và lưu file `.mp4` vào `output/`.
+    3. Upload và đặt lịch hẹn giờ Video N lên YouTube Studio.
+    4. Mở cuộc trò chuyện mới (*New Chat*) trên Gemini Web để làm sạch ngữ cảnh.
+    5. **CHỈ KHI ĐÓ MỚI BẮT ĐẦU** Video N + 1.
+  - Nếu Video N gặp lỗi hoặc chưa tạo xong sau các lần thử lại: Dừng lại ngay lập tức, không gửi prompt của video tiếp theo.
+

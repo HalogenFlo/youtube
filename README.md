@@ -10,6 +10,10 @@ Giao diện chính hiện là một dây chuyền sản xuất video tự độn
 4. Bấm **Khởi động dây chuyền**. Có thể để máy chạy; hàng đợi được lưu tại `temp/video_factory_state.json`.
 5. Lấy video, tiêu đề, mô tả và hashtag trong tab **Kho thành phẩm**. Mỗi MP4 có một file JSON metadata cùng tên trong thư mục `output/`.
 
+### Chế độ dạy tiếng Trung cho người Việt
+
+Trong **Loại video**, chọn **Dạy tiếng Trung cho người Việt** rồi bấm **Khởi động dây chuyền**. Nếu ô chủ đề để trống, xưởng tự chọn ngẫu nhiên các bài như chào hỏi, mua sắm, gọi món, hỏi đường hoặc du lịch. Chỉ nhập vào ô này khi muốn sản xuất một chủ đề cụ thể. Ollama local sẽ tạo từng bài gồm lời giảng tiếng Việt, chữ Hán giản thể, pinyin có dấu và cách dùng. Phần giảng dùng giọng Việt; từ/câu mẫu được đọc hai lần bằng giọng Trung Quốc. Google Flow vẫn đảm nhiệm hình hoặc clip minh họa cho từng cảnh.
+
 ### Video, phân cảnh và giọng đọc
 
 - **Số video trong lô** là số file thành phẩm cần sản xuất.
@@ -130,19 +134,26 @@ youtube/
 │   ├── PLAN.md          # Kế hoạch phát triển
 │   ├── DOCKER_GUIDE.md  # Hướng dẫn chi tiết Docker
 │   └── GOOGLE_FLOW_GUIDE.md # Báo cáo phân tích Google Flow
-├── scripts/             # Script chạy phụ trợ (.bat cho Windows)
-│   ├── launch_flow_chrome.bat
-│   ├── run_view_booster_ui.bat
-│   └── run_view_booster_headless.bat
-├── src/                 # Toàn bộ mã nguồn cốt lõi
-├── tasks/               # Quản lý tiến độ (todo.md)
-├── temp/                # Dữ liệu tạm sinh ra khi chạy
-├── tests/               # Toàn bộ các bài kiểm thử tự động
+├── output/              # Kho video thành phẩm & log hệ thống
+├── scripts/             # Script chạy phụ trợ (.bat & .py cho Windows)
+│   ├── launch_flow_chrome.bat        # Khởi động Chrome CDP cho Google Flow
+│   ├── batch_video_producer.py      # Điểm chạy CLI tự động sản xuất hàng loạt
+│   ├── auto_start_flow_chrome.py    # Tự động hóa phát hiện Chrome Flow
+│   ├── run_view_booster_ui.bat      # Khởi động Booster UI
+│   ├── run_view_booster_headless.bat# Khởi động Booster CLI
+│   └── Mo_Chrome_Google_Flow.bat    # Script mở nhanh Chrome dự án
+├── src/                 # Toàn bộ mã nguồn cốt lõi (Streamlit UI, Engine, Factory)
+├── tasks/               # Quản lý tiến độ & bài học kinh nghiệm (todo.md, lessons.md)
+├── temp/                # Dữ liệu tạm thời & cache tác vụ
+├── tests/               # Toàn bộ các bài kiểm thử tự động (Unit & Integration)
 ├── booster_config.json  # Cấu hình YouTube Booster
 ├── cli_booster.py       # Điểm chạy nền Booster CLI
+├── Dockerfile           # Docker container file
+├── docker-compose.yml   # Docker compose configuration
 ├── flow_config.json     # Cấu hình Google Flow
 ├── requirements.txt     # Thư viện phụ thuộc
-├── run.bat              # Menu khởi chạy trung tâm 1-click
+├── run.bat              # Menu khởi chạy & dọn dẹp trung tâm 1-click
+├── run_web.bat          # Kịch bản 1-click mở Chrome Flow + Web UI
 └── README.md
 ```
 
@@ -193,11 +204,10 @@ Kết quả mong đợi: `Ran 9 tests ... OK (100% Passed)`.
 │   ├── resource_guard.py        # Giám sát RAM, CPU và dọn dẹp tiến trình Chrome zombie
 │   └── channel_scraper.py       # Trích xuất toàn bộ Shorts/Video từ kênh bằng yt-dlp
 ├── cli_booster.py               # Runner CLI 24/7 độc lập
-├── booster_config.json          # File cấu hình trung tâm
-├── test_booster.py              # Bộ kiểm thử tự động toàn diện
+├── tests/test_booster.py        # Bộ kiểm thử tự động toàn diện
 ├── Dockerfile                   # Dockerfile tối ưu Chrome Stable + Python 3.11
 ├── docker-compose.yml           # Cấu hình đa dịch vụ Docker (UI & CLI)
-├── DOCKER_GUIDE.md              # Hướng dẫn chi tiết triển khai container
+├── docs/DOCKER_GUIDE.md         # Hướng dẫn chi tiết triển khai container
 └── README.md                    # Tài liệu hướng dẫn sử dụng
 ```
 

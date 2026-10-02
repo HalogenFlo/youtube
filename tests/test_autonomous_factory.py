@@ -20,13 +20,17 @@ class TestAutonomousFactory(unittest.TestCase):
 
     @patch.object(factory, "ensure_factory_worker")
     def test_add_jobs_persists_queue_and_settings(self, worker_mock):
-        ids = factory.add_factory_jobs("Mặt Trăng", 3, language="vi", orientation="vertical")
+        ids = factory.add_factory_jobs(
+            "Mặt Trăng", 3, language="vi", orientation="vertical",
+            content_mode="chinese_teaching_vi",
+        )
         state = factory.get_factory_state()
 
         self.assertEqual(len(ids), 3)
         self.assertEqual(len(state["jobs"]), 3)
         self.assertTrue(all(job["status"] == "queued" for job in state["jobs"]))
         self.assertEqual(state["jobs"][0]["settings"]["language"], "vi")
+        self.assertEqual(state["jobs"][0]["settings"]["content_mode"], "chinese_teaching_vi")
         worker_mock.assert_called_once()
 
     def test_recover_interrupted_job(self):

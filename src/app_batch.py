@@ -18,9 +18,10 @@ from src.autonomous_factory import (
     retry_failed_jobs,
     set_factory_paused,
 )
-from src.config import ASSETS_DIR, DEFAULT_IMAGE_STYLE, TTS_VOICES_EN, TTS_VOICES_VI
+from src.config import ASSETS_DIR, DEFAULT_IMAGE_STYLE, TTS_VOICES_EN, TTS_VOICES_VI, TTS_VOICES_ZH
 from src.flow_browser_service import get_flow_readiness, get_flow_controller
 from src.voice_clone_service import XTTS_LANGUAGES, voice_clone_available
+from src.batch_producer import build_random_video_topics
 
 
 def check_chrome_flow_status() -> bool:
@@ -166,12 +167,26 @@ def run_batch_ui():
     with left:
         st.markdown("<div class='section-kicker'>Kho ý tưởng</div><div class='section-title'>Tạo lệnh sản xuất mới</div><div class='section-copy'>Mỗi dòng là một video riêng. Nếu chỉ có một chủ đề, AI sẽ tự chia thành nhiều tập.</div>", unsafe_allow_html=True)
         with st.form("factory_order_form", clear_on_submit=False):
-            prompt = st.text_area("Chủ đề hoặc danh sách chủ đề", value="Những bí ẩn khoa học khiến con người phải suy nghĩ lại", height=135, help="Có thể nhập nhiều dòng, mỗi dòng là một video.")
+            content_mode_label = st.selectbox(
+                "Loại video",
+                ["Dạy tiếng Trung cho người Việt", "Video kiến thức thông thường"],
+            )
+            content_mode = "chinese_teaching_vi" if content_mode_label.startswith("Dạy tiếng Trung") else "knowledge"
+            prompt = st.text_area(
+                "Chủ đề cụ thể (không bắt buộc)",
+                value="",
+                height=110,
+                placeholder="Để trống để xưởng tự chọn chủ đề ngẫu nhiên. Chỉ nhập khi bạn muốn làm một chủ đề cụ thể.",
+                help="Để trống: tự chọn ngẫu nhiên. Có thể nhập nhiều dòng, mỗi dòng là một video cụ thể.",
+            )
             st.info("Số video là số thành phẩm trong lô; số phân cảnh là số đoạn ghép bên trong mỗi video.")
             c1, c2 = st.columns(2)
             count = c1.number_input("Số video trong lô", min_value=1, max_value=100, value=1, step=1)
             language_label = c2.selectbox("Ngôn ngữ", ["Tiếng Việt", "English"])
             language = "vi" if language_label == "Tiếng Việt" else "en"
+            if content_mode == "chinese_teaching_vi":
+                language = "vi"
+                st.caption("Chế độ này giảng bằng tiếng Việt, phát âm mẫu bằng giọng Trung Quốc và hiển thị chữ Hán + pinyin.")
             c3, c4 = st.columns(2)
             orientation_label = c3.selectbox("Khung hình", ["Dọc 9:16", "Ngang 16:9"])
             orientation = "vertical" if orientation_label.startswith("Dọc") else "horizontal"
@@ -210,6 +225,11 @@ def run_batch_ui():
             )
             voice_mode = "clone_local" if voice_mode_label.startswith("Clone") else "edge"
             voice_label = st.selectbox("Giọng có sẵn", list(voices.keys()))
+            chinese_voice_label = st.selectbox(
+                "Giọng phát âm tiếng Trung",
+                list(TTS_VOICES_ZH.keys()),
+                disabled=content_mode != "chinese_teaching_vi",
+            )
             voice_upload = st.file_uploader(
                 "File giọng mẫu cho chế độ clone (6-30 giây)", type=["wav", "mp3", "m4a"],
                 help="Chỉ được dùng giọng của bạn hoặc giọng đã được chủ sở hữu cho phép.",
@@ -222,13 +242,16 @@ def run_batch_ui():
             submitted = st.form_submit_button("Khởi động dây chuyền", type="primary", use_container_width=True)
 
         if submitted:
-            if not prompt.strip():
-                st.warning("Hãy nhập ít nhất một chủ đề.")
-            elif voice_mode == "clone_local" and language not in XTTS_LANGUAGES:
+            if voice_mode == "clone_local" and language not in XTTS_LANGUAGES:
                 st.error("XTTS-v2 không hỗ trợ tiếng Việt. Hãy đổi video sang English hoặc chọn giọng có sẵn.")
             elif voice_mode == "clone_local" and (voice_upload is None or not voice_consent):
                 st.error("Clone giọng cần file mẫu và xác nhận quyền sử dụng giọng.")
             else:
+                production_prompt = prompt.strip()
+                random_topics = []
+                if not production_prompt:
+                    random_topics = build_random_video_topics(int(count), content_mode)
+                    production_prompt = "\n".join(random_topics)
                 # Trải nghiệm 1-Click: Nếu Flow chưa mở, tự động khởi chạy Chrome ngay lập tức
                 if not flow_ready and media_mode in ("flow_image", "flow_video", "hybrid"):
                     with st.spinner("Đang tự động khởi chạy Chrome Google Flow..."):
@@ -248,15 +271,23 @@ def run_batch_ui():
                     reference_file.write_bytes(voice_bytes)
                     reference_path = str(reference_file)
                 add_factory_jobs(
-                    prompt=prompt.strip(), count=int(count), language=language,
+                    prompt=production_prompt, count=int(count), language=language,
                     voice=voices[voice_label], style_preset=style_preset,
                     orientation=orientation, image_engine="flow",
                     media_mode=media_mode,
                     target_scenes=int(target_scenes), voice_mode=voice_mode,
                     voice_reference_path=reference_path,
                     studio_mode=studio_mode,
+                    content_mode=content_mode,
+                    chinese_voice=TTS_VOICES_ZH[chinese_voice_label],
                 )
-                st.success(f"✅ Đã đưa {int(count)} video × {int(target_scenes)} phân cảnh vào dây chuyền. Đang tự động sản xuất...")
+                if random_topics:
+                    st.success(
+                        f"✅ Xưởng đã tự chọn {int(count)} chủ đề và bắt đầu sản xuất: "
+                        + "; ".join(random_topics)
+                    )
+                else:
+                    st.success(f"✅ Đã đưa {int(count)} video × {int(target_scenes)} phân cảnh vào dây chuyền. Đang tự động sản xuất...")
                 time.sleep(1)
                 st.rerun()
 
@@ -325,4 +356,3 @@ def run_batch_ui():
     if counts["running"] > 0 or counts["queued"] > 0:
         time.sleep(2.5)
         st.rerun()
-
