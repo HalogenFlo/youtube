@@ -425,3 +425,36 @@ Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow
   - [x] Chạy full test suite (`pytest`) đạt 121/121 passed (100%).
 - [x] **Task 5: Ghi chép bài học kinh nghiệm vào `tasks/lessons.md`**
 
+
+---
+
+## 19. Sửa Lỗi Render WinError 32 File Lock, Thu Nhỏ & Dời Phụ Đề Xuống Đáy, Liền Mạch Mạch Truyện
+
+### 1. Phân tích nguyên nhân gốc rễ
+1. **Lỗi render [WinError 32]**:
+   - `write_videofile` dùng `temp_audiofile=temp-audio-part{part_num}.m4a` cố định với `remove_temp=True`. Trên Windows, FFmpeg process/handle chưa giải phóng kịp thời khi MoviePy gọi `os.remove()`, gây `PermissionError / WinError 32: The process cannot access the file because it is being used by another process`.
+2. **Phụ đề che phần lớn hình ảnh**:
+   - Trong `src/subtitle_builder.py`, `font_size` đặt tới `72`, `alignment = 5` (giữa màn hình), `vertical_margin = 960` (ngay tâm 1920). Phụ đề đè thẳng lên mặt/thân nhân vật và chiếm diện tích lớn giữa khung hình.
+3. **Mạch truyện bị rời rạc, chắp vá ("lúc này lúc kia")**:
+   - LLM sinh các phân cảnh độc lập không có câu chuyển tiếp bắc cầu (Transitional Bridges).
+   - Vẫn còn sót chuỗi `f"Đọc là {pinyin}."` trong `_sanitize_scenes` và `normalize_chinese_teaching_scenes` chêm ngang vào giữa lời dẫn gây ngắt quãng.
+
+### 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Khắc phục triệt để WinError 32 trong `src/video_compiler.py`**
+  - [x] Sinh tên file tạm ngẫu nhiên duy nhất với UUID/Timestamp (`temp-audio-{uuid}-part{part_num}.m4a`).
+  - [x] Đặt `remove_temp=False` trong `write_videofile` để MoviePy không xóa đồng bộ gây lỗi.
+  - [x] Xây dựng hàm `_safe_delete_file` có cơ chế retry / giải phóng handle an toàn trên Windows.
+- [x] **Task 2: Thu nhỏ font & chuyển phụ đề xuống đáy an toàn (Bottom Safe Zone) trong `src/subtitle_builder.py`**
+  - [x] Chuyển `alignment = 2` (Bottom Center) thay vì 5.
+  - [x] Đặt `vertical_margin = 260` (cách đáy 260px, nằm ở 1/6 dưới cùng màn hình, cách xa thanh điều hướng và giải phóng 80% vùng trên).
+  - [x] Thu nhỏ `font_size` từ 72 về **44** (tinh tế, thanh thoát), `outline = 3`, `shadow = 1`.
+  - [x] Cập nhật tương tự cho `build_bilingual_ass_subtitle`: dời tọa độ Y xuống vùng 1520-1640, thu nhỏ font size.
+- [x] **Task 3: Tối ưu mạch truyện liền mạch (Seamless Narrative Coherence)**
+  - [x] Cập nhật System Prompt & User Prompt trong `src/llm_service.py`: Ép buộc mạch truyện liên tục, có từ chuyển tiếp bắc cầu, cấm nhảy ý rời rạc.
+  - [x] Cập nhật `src/studio_editorial_service.py`: Bổ sung tiêu chuẩn biên tập `narrative_flow_coherence`, loại bỏ triệt để `f"Đọc là {pinyin}."`.
+  - [x] Loại bỏ `f"Đọc là {pinyin}."` trong `src/batch_producer.py`.
+- [x] **Task 4: Kiểm chứng tự động (Unit Test & Full Regression Test)**
+  - [x] Viết test xác minh phụ đề ở đáy và font nhỏ (`tests/test_subtitle_bottom_layout.py` - PASS 3/3).
+  - [x] Chạy test compile video (`tests/test_audio_and_output.py`, `tests/test_turbo_batch_e2e.py` - PASS 3/3).
+  - [x] Chạy full test suite (`pytest`) đạt 124/124 passed (100%).
+- [x] **Task 5: Ghi chép bài học vào `tasks/lessons.md`**

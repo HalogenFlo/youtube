@@ -222,7 +222,6 @@ def normalize_chinese_teaching_scenes(scenes: List[Dict[str, Any]]) -> List[Dict
         scene["narration"] = " ".join(part for part in [
             narration_vi,
             chinese_text,
-            f"Đọc là {pinyin}." if pinyin else "",
             usage_vi,
         ] if part).strip()
         normalized.append(scene)

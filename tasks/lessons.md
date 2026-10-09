@@ -131,3 +131,24 @@
      - Sau 20s nếu chưa thấy URL mới, tự động quét lại toàn bộ thẻ video trên trang để kiểm tra xem có video nào có hash mới chưa từng lưu không.
   3. **Rút ngắn Timeout về mức hợp lý**:
      - Cấu hình `video_timeout_seconds = 300` (5 phút), đủ an toàn cho Veo 2 (thường sinh trong 60-150s) và không làm người dùng chờ đợi vô ích.
+
+## 16. Ngăn Chặn WinError 32 File Lock Trên Windows và Thiết Kế Phụ Đề Chuẩn Safe Zone Cho Video Dọc
+- **Hiện tượng lỗi**:
+  1. *Lỗi render [WinError 32]*: Khi biên tập video, MoviePy `write_videofile` ném ngoại lệ: `[WinError 32] The process cannot access the file because it is being used by another process: '...\\temp\\temp-audio-part1.m4a'`.
+  2. *Phụ đề che phần lớn hình ảnh*: Chữ phụ đề quá to (`font_size = 72`), căn giữa màn hình (`Alignment = 5`, `y = 960` trên khung hình 1920), đè ngay giữa nhân vật và hình ảnh chính.
+  3. *Mạch truyện ngắt quãng*: Câu thoại giữa các cảnh nhảy ý đột ngột ("lúc này lúc kia"), thiếu liên từ chuyển tiếp.
+- **Nguyên nhân gốc rễ**:
+  1. *Cơ chế dọn dẹp file tạm của MoviePy trên Windows*: Tham số `remove_temp=True` khiến MoviePy gọi `os.remove(temp_audiofile)` ngay khi ffmpeg process vừa kết thúc. Trên Windows, handle file audio thường chưa được giải phóng hoàn toàn tại thời điểm đó, dẫn đến PermissionError / WinError 32. Ngoài ra, việc dùng tên cố định `temp-audio-part1.m4a` dễ gây xung đột giữa các lần chạy.
+  2. *Thiết kế phụ đề kiểu cũ*: Căn giữa tâm màn hình (Center) với font quá lớn làm mất thẩm mỹ và che khuất chủ thể video AI.
+  3. *Prompt LLM thiếu quy tắc bắc cầu*: Các cảnh được sinh như các đoạn độc lập mà không có chỉ thị về tính liên tục một dòng chảy (continuous narrative flow).
+- **Quy tắc phòng ngừa**:
+  1. **Tạo tên file tạm ngẫu nhiên UUID và dọn dẹp an toàn**:
+     - Luôn sinh tên ngẫu nhiên: `f"temp-audio-{uuid.uuid4().hex[:8]}-part{part_num}.m4a"`.
+     - Đặt `remove_temp=False` trong `write_videofile` để MoviePy không xóa đồng bộ.
+     - Đóng toàn bộ handle clips (`part_video_raw.close()`, `c.close()`, `gc.collect()`), sau đó dùng hàm `_safe_delete_file` với retry có độ trễ để dọn dẹp file tạm mà không làm crash pipeline.
+  2. **Chuẩn hóa Phụ đề Safe Zone ở đáy màn hình**:
+     - Cho video dọc (9:16 Shorts/Reels/TikTok): `Alignment = 2` (Bottom Center), `MarginV = 260` (cách đáy 260px, ở 1/6 dưới cùng màn hình).
+     - Thu nhỏ `font_size` từ 72 về **44** (tinh tế, thanh thoát), `Outline = 3`, `Shadow = 1`.
+  3. **Ép buộc mạch truyện liền mạch một dòng chảy**:
+     - Thêm chỉ thị bắt buộc trong System Prompt và User Prompt: Toàn bộ video là MỘT CÂU CHUYỆN LIÊN TỤC, từ cảnh 2 trở đi bắt buộc phải có từ nối / liên từ bắc cầu (*thế nhưng, chính vì vậy, điều bất ngờ là, để làm được điều đó...*).
+     - Loại bỏ triệt để chuỗi `f"Đọc là {pinyin}."` khỏi câu thoại nói để không gây gián đoạn luồng nghe.

@@ -99,25 +99,25 @@ def build_ass_subtitle(
             # Video dọc (ví dụ 1080x1920)
             play_res_x = 1080
             play_res_y = 1920
-            font_size = 72
-            # Đặt phụ đề ở giữa màn hình (tránh nút UI của TikTok/Shorts ở dưới)
-            vertical_margin = 960  # Căn giữa theo chiều dọc
-            alignment = 5          # Alignment 5: Căn giữa chính giữa màn hình
-            max_words_per_line = 4
+            font_size = 44  # Thu nhỏ từ 72 xuống 44 để không che khuất hình ảnh
+            # Đặt phụ đề ở phía dưới màn hình (Safe Zone cách đáy 260px, không đè nhân vật)
+            vertical_margin = 260
+            alignment = 2   # Alignment 2: Căn giữa ở đáy màn hình
+            max_words_per_line = 5
         else:
             # Video ngang (ví dụ 1920x1080)
             play_res_x = 1920
             play_res_y = 1080
-            font_size = 54
-            vertical_margin = 150  # Cách đáy 150px
-            alignment = 2          # Alignment 2: Căn giữa ở đáy
+            font_size = 38  # Thu nhỏ từ 54 xuống 38
+            vertical_margin = 90  # Cách đáy 90px
+            alignment = 2   # Alignment 2: Căn giữa ở đáy
             max_words_per_line = 7
 
         # Khởi tạo nội dung file ASS
         # Style định nghĩa:
         # PrimaryColor: Trắng (&H00FFFFFF) - chữ chưa đọc
         # SecondaryColor: Vàng neon (&H0000FFFF) - màu karaoke khi chạy qua
-        # OutlineColor: Đen (&H00000000) - viền đen dày nổi bật
+        # OutlineColor: Đen (&H00000000) - viền đen mỏng sắc nét
         # BackColor: Đen trong suốt (&H80000000) - bóng đổ
         ass_content = [
             "[Script Info]",
@@ -130,7 +130,7 @@ def build_ass_subtitle(
             "",
             "[V4+ Styles]",
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-            f"Style: Default,Montserrat,{font_size},&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,5,2,{alignment},50,50,{vertical_margin},1",
+            f"Style: Default,Montserrat,{font_size},&H00FFFFFF,&H0000FFFF,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,3,1,{alignment},50,50,{vertical_margin},1",
             "",
             "[Events]",
             "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
@@ -320,24 +320,24 @@ def build_bilingual_ass_subtitle(
         if orientation == "vertical":
             play_res_x = 1080
             play_res_y = 1920
-            font_size = 64
-            font_size_vi = 40
-            font_size_next = 48
+            font_size = 44
+            font_size_vi = 30
+            font_size_next = 32
             x_pos = 540
-            y_current = 900
-            y_vi = 980
-            y_next = 1080
-            max_words_per_line = 4
+            y_current = 1520
+            y_vi = 1580
+            y_next = 1640
+            max_words_per_line = 5
         else:
             play_res_x = 1920
             play_res_y = 1080
-            font_size = 54
-            font_size_vi = 36
-            font_size_next = 40
+            font_size = 38
+            font_size_vi = 26
+            font_size_next = 28
             x_pos = 960
-            y_current = 700
-            y_vi = 775
-            y_next = 870
+            y_current = 880
+            y_vi = 930
+            y_next = 980
             max_words_per_line = 7
 
         # Khởi tạo nội dung file ASS

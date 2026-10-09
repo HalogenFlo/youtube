@@ -25,7 +25,7 @@ def _sanitize_scenes(
             narration_vi = re.sub(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+', '', narration_vi).strip(" ,;:-_")
             usage_vi = re.sub(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+', '', usage_vi).strip(" ,;:-_")
             narration = " ".join(part for part in [
-                narration_vi, chinese_text, f"Đọc là {pinyin}." if pinyin else "", usage_vi
+                narration_vi, chinese_text, usage_vi
             ] if part).strip()
         visual = str(scene.get("video_prompt", "")).strip()
         # Bỏ các câu phủ định đã thêm từ vòng trước để chúng không tự kích hoạt bộ lọc.
@@ -90,6 +90,7 @@ def run_studio_editorial_pipeline(
         "Hãy sửa trực tiếp kịch bản, không chỉ nhận xét. Chỉ trả JSON hợp lệ gồm scenes và report. "
         "Giữ ĐÚNG số cảnh yêu cầu. Cảnh 1 phải đi thẳng vào giá trị/hook; các cảnh giữa giải thích cụ thể; "
         "cảnh cuối kết luận. Kiến thức/toán phải chính xác. Không tạo tuyên bố chưa kiểm chứng. "
+        "BẮT BUỘC: Giữ mạch truyện liền mạch (narrative_flow_coherence), các cảnh phải kết nối bằng liên từ bắc cầu tự nhiên, không ngắt quãng hay chắp vá. "
         "video_prompt phải bằng tiếng Anh và không được yêu cầu hiển thị chữ, số, công thức, biển hiệu hay phụ đề. "
         "report gồm scores (factual_accuracy, hook_strength, clarity, visual_continuity, policy_safety; 0-100), "
         f"issues_fixed, remaining_warnings và approved.{chinese_rule}"

@@ -57,6 +57,10 @@ def get_system_prompt(language: str = "vi", content_mode: str = "knowledge") -> 
         "Bạn là một chuyên gia biên kịch video ngắn (Shorts, TikTok, Reels) chuyên nghiệp.\n"
         "Nhiệm vụ của bạn là tạo ra một kịch bản hấp dẫn, thu hút người xem ngay từ những giây đầu tiên.\n"
         "Kịch bản phải được chia thành các phân cảnh tuần tự liền mạch (mỗi cảnh dài khoảng 5 giây).\n"
+        "QUY TẮC BẮT BUỘC VỀ TÍNH LIỀN MẠCH MỘT DÒNG CHẢY (NARRATIVE COHERENCE & BRIDGING):\n"
+        "- Toàn bộ video phải là MỘT CÂU CHUYỆN LIỀN MẠCH THỐNG NHẤT, nghe trôi chảy như một dòng suy nghĩ liên tục từ đầu đến cuối.\n"
+        "- Tuyệt đối KHÔNG viết các câu thoại chắp vá, rời rạc hoặc nhảy đề tài đột ngột ('lúc này lúc kia').\n"
+        "- Mỗi phân cảnh từ cảnh 2 trở đi BẮT BUỘC phải có từ nối / cụm từ chuyển tiếp bắc cầu (như: 'Thế nhưng...', 'Chính vì vậy...', 'Điều bất ngờ là...', 'Để giải quyết việc đó...', 'Kết quả là...') liên kết chặt chẽ với câu thoại trước đó.\n"
         "Đầu ra BẮT BUỘC phải là một đối tượng JSON hợp lệ duy nhất có cấu trúc như sau:\n"
         "{\n"
         "  \"scenes\": [\n"
@@ -158,7 +162,8 @@ def generate_script(
         "có ít nhất một ví dụ cụ thể và đi đến đáp án; không viết lời dẫn chung chung.\n"
         "Mọi video_prompt TUYỆT ĐỐI không được yêu cầu vẽ chữ, số, công thức, bảng viết, phụ đề hay ký hiệu đọc được; "
         "hãy dùng vật thể, ánh sáng, khối hình và hành động trực quan vì AI tạo hình thường viết sai chữ.\n"
-        "Đảm bảo mạch câu chuyện liền mạch, hấp dẫn và cấu trúc đúng định dạng JSON."
+        "ĐẶC BIỆT: Lời thoại giữa các phân cảnh phải tạo thành MỘT CÂU CHUYỆN LIỀN MẠCH DUY NHẤT, có từ nối chuyển cảnh tự nhiên, "
+        "tuyệt đối không nhảy đề tài hay nói chắp vá ngắt quãng. Cấu trúc đúng định dạng JSON."
     )
     return call_ollama(user_prompt, get_system_prompt(language, content_mode), model)
 

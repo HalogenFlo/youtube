@@ -4,6 +4,8 @@
 
 import os
 import gc
+import time
+import uuid
 import subprocess
 from typing import List, Dict, Any, Tuple
 import PIL.Image
@@ -18,6 +20,18 @@ import moviepy.video.fx.all as vfx
 from src.config import TEMP_DIR, OUTPUT_DIR, DEFAULT_FPS, FONT_PATH
 from src.subtitle_builder import build_ass_subtitle
 from src.visual_beats import apply_visual_beat_motion
+
+def _safe_delete_file(filepath: str, max_retries: int = 4, delay: float = 0.25) -> None:
+    """Xóa file tạm thời an toàn trên Windows, chống xung đột process lock (WinError 32)."""
+    if not filepath or not os.path.exists(filepath):
+        return
+    for _ in range(max_retries):
+        try:
+            os.remove(filepath)
+            return
+        except Exception:
+            time.sleep(delay)
+    # Nếu sau các lần thử vẫn bị process giữ handle, bỏ qua để không crash toàn bộ pipeline
 
 # Vá lỗi Moviepy decorator use_clip_fps_by_default làm mất fps trên Python 3.12
 try:
@@ -303,21 +317,23 @@ def compile_video_pipeline(
 
             # Xuất video thô
             raw_output_path = os.path.join(TEMP_DIR, f"part_{part_num}_raw.mp4")
-            temp_files.append(raw_output_path)
-            
+            # Tạo tên file audio tạm thời ngẫu nhiên độc nhất chống xung đột và lỗi khóa file trên Windows
+            temp_audio_name = f"temp-audio-{uuid.uuid4().hex[:8]}-part{part_num}.m4a"
+            part_temp_audio = os.path.join(TEMP_DIR, temp_audio_name)
+
             print(f"Đang render video thô cho Phần {part_num}...")
             part_video_raw.write_videofile(
                 raw_output_path,
                 fps=DEFAULT_FPS,
                 codec="libx264",
                 audio_codec="aac",
-                temp_audiofile=os.path.join(TEMP_DIR, f"temp-audio-part{part_num}.m4a"),
-                remove_temp=True,
+                temp_audiofile=part_temp_audio,
+                remove_temp=False,
                 verbose=False,
                 logger=None
             )
             
-            # Đóng các clip để giải phóng bộ nhớ
+            # Đóng các clip để giải phóng bộ nhớ và giải phóng handle file trước khi xóa
             part_video_raw.close()
             for c in scene_clips:
                 try:
@@ -329,6 +345,10 @@ def compile_video_pipeline(
                     a.close()
                 except Exception:
                     pass
+            gc.collect()
+
+            # Xóa an toàn file temp audio chống lỗi WinError 32
+            _safe_delete_file(part_temp_audio)
             
             # 4. Tạo phụ đề ASS cho phần này
             ass_path = os.path.join(TEMP_DIR, f"part_{part_num}.ass")
