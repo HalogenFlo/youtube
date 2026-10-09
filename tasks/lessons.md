@@ -86,16 +86,25 @@
   2. **Chạy linter/syntax check ngay sau khi sửa**: Luôn chạy `python -m py_compile <file>` hoặc unit test tối thiểu ngay sau mỗi thao tác chỉnh sửa khối code lớn để phát hiện lỗi cú pháp tức thì.
   3. **Kiểm thử tích hợp End-to-End (E2E) với mock boundary**: Viết bài kiểm thử e2e bao trọn chu trình từ đầu vào Topic đến đầu ra file MP4 cho cả 2 nhánh (`turbo_mode=True` và `turbo_mode=False`), đảm bảo mọi nhánh rẽ đều được thực thi và xác nhận tính toàn vẹn.
 
-## 13. Cô Lập Đa Ngôn Ngữ Tuyệt Đối Trong Pipeline TTS (Multivoice Language Isolation)
-- **Hiện tượng lỗi**: Giọng đọc tiếng Việt (`vi-VN-HoaiMyNeural`) cố phát âm chữ Hán giản thể (CJK) khi LLM chèn chữ Hán vào các trường dẫn giải tiếng Việt (`narration_vi` hoặc `usage_vi`), dẫn đến phát âm kỳ dị, sai lệch hoặc nuốt chữ.
-- **Nguyên nhân gốc rễ**: Khi mô hình sinh kịch bản dạy học tiếng Trung, nó thường tự nhiên kèm theo chữ Hán vào câu giải thích tiếng Việt (ví dụ: *"Từ 你好 dùng khi chào hỏi"*). Nếu phân đoạn này được giao cho giọng tiếng Việt, engine TTS của Microsoft Edge sẽ cố phân tích chữ Hán bằng âm đọc tiếng Việt sai lệch.
+## 13. Cô Lập Đa Ngôn Ngữ và Triệt Tiêu Pinyin Khỏi Giọng Tiếng Việt (Multivoice & Pinyin Isolation)
+- **Hiện tượng lỗi**: 
+  1. Giọng tiếng Việt cố đọc chữ Hán gây méo tiếng.
+  2. Giọng tiếng Việt phát âm bập bẹ "nờ ho là xin chào" khi cố đọc phiên âm Pinyin Latin có thanh điệu Unicode (`nǐ hǎo`, `zǎo`...).
+- **Nguyên nhân gốc rễ**: 
+  - Microsoft Edge TTS `vi-VN` không hỗ trợ phân tích Pinyin tiếng Trung có thanh điệu (`ǐ`, `ǎo`, `ā`...). Khi gặp ký tự Latin lạ, engine đánh vần rời rạc từng chữ cái Latin thành "nờ-ho".
+  - Mã nguồn cũ còn ghép `f"Đọc là {pinyin}."` và các đoạn Pinyin trong ngoặc đơn `(nǐ hǎo)` vào phân đoạn do giọng `vi-VN` đọc.
 - **Quy tắc phòng ngừa**:
-  1. **Phòng thủ đa lớp (Defense-in-Depth)**:
-     - *Lớp 1 (Data Boundary)*: Làm sạch ở tầng kịch bản `normalize_chinese_teaching_scenes` (`batch_producer.py`) và `_sanitize_scenes` (`studio_editorial_service.py`) bằng regex loại bỏ ký tự CJK `[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+`.
-     - *Lớp 2 (Engine Guardrail)*: Trong `generate_multivoice_tts` (`tts_service.py`), mọi phân đoạn gửi tới giọng `vi-VN` đều bắt buộc chạy qua `clean_vietnamese_tts_text`; phân đoạn chữ Hán chỉ giao độc quyền 100% cho giọng Trung Quốc (`zh-CN-XiaoxiaoNeural`).
-  2. **Phân định trách nhiệm phát âm rõ ràng**:
-     - Giọng `vi-VN`: Độc quyền lời dẫn tiếng Việt và phiên âm Pinyin (mẫu `"Đọc là <pinyin>."`).
-     - Giọng `zh-CN`: Độc quyền chữ Hán giản thể chuẩn xác (`chinese_text`).
+  1. **Tuyệt đối KHÔNG để giọng tiếng Việt đọc Pinyin**:
+     - Bỏ hoàn toàn chuỗi `"Đọc là <pinyin>"`.
+     - Pinyin CHỈ dùng để hiển thị trên phụ đề màn hình (visual subtitle) để mắt người xem theo dõi.
+  2. **Quy chuẩn 4 phân đoạn âm thanh chuẩn (4-Segment Flow)**:
+     - Đoạn 1: Lời dẫn tiếng Việt thuần túy (`clean_narr_vi`, giọng `vi-VN`, tốc độ `+0%`).
+     - Đoạn 2: Giọng bản ngữ Trung Quốc phát âm chuẩn lần 1 (`chinese_text`, giọng `zh-CN-XiaoxiaoNeural`, tốc độ `-5%`).
+     - Đoạn 3: Giọng bản ngữ Trung Quốc phát âm rõ ràng lần 2 (`chinese_text`, giọng `zh-CN-XiaoxiaoNeural`, tốc độ `-18%`).
+     - Đoạn 4: Lời giải nghĩa / cách dùng thuần Việt (`clean_use_vi`, giọng `vi-VN`, tốc độ `+0%`).
+  3. **Bộ lọc an toàn `clean_vietnamese_tts_text`**:
+     - Lọc sạch chữ Hán CJK và các đoạn Pinyin trong ngoặc đơn.
+     - Lọc các từ chứa ký tự Pinyin độc quyền (`[āēīōūǎěǐǒǔüǖǘǚǜ]`), TUYỆT ĐỐI không lọc nhầm nguyên âm tiếng Việt (`à, á, è, é...`).
 
 ## 14. Đồng Bộ Chữ Ký Hàm (Signature Parity & Keyword Argument Aliasing)
 - **Hiện tượng lỗi**: `TypeError: generate_flow_batch_queue() got an unexpected keyword argument 'output_dir'`.
@@ -103,4 +112,5 @@
 - **Quy tắc phòng ngừa**:
   1. Hỗ trợ bí danh tham số (Keyword Argument Aliasing): Tại các điểm ranh giới module công khai, luôn hỗ trợ cả hai tên gọi thông dụng: `effective_dir = temp_dir or output_dir`, `effective_callback = status_callback or progress_callback`.
   2. Đồng bộ chữ ký hàm chặt chẽ trên toàn bộ codebase và có bài kiểm thử unit test / E2E với đầy đủ các keyword arguments thực tế.
+
 
