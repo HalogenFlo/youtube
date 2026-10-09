@@ -100,6 +100,9 @@ def add_factory_jobs(
     studio_mode: bool = True,
     content_mode: str = "knowledge",
     chinese_voice: str = TTS_VOICE_ZH_DEFAULT,
+    turbo_mode: bool = False,
+    flow_workers: int = 4,
+    tts_workers: int = 4,
 ) -> List[str]:
     topics = split_prompt_to_video_topics(prompt, count, language)
     created_ids: List[str] = []
@@ -132,6 +135,9 @@ def add_factory_jobs(
                     "studio_mode": bool(studio_mode),
                     "content_mode": content_mode,
                     "chinese_voice": chinese_voice,
+                    "turbo_mode": bool(turbo_mode),
+                    "flow_workers": max(1, int(flow_workers)),
+                    "tts_workers": max(1, int(tts_workers)),
                 },
             })
         state["paused"] = False
@@ -270,6 +276,9 @@ def _worker_loop() -> None:
                 studio_mode=bool(settings.get("studio_mode", True)),
                 content_mode=settings.get("content_mode", "knowledge"),
                 chinese_voice=settings.get("chinese_voice", TTS_VOICE_ZH_DEFAULT),
+                turbo_mode=bool(settings.get("turbo_mode", False)),
+                flow_workers=int(settings.get("flow_workers", 4)),
+                tts_workers=int(settings.get("tts_workers", 4)),
                 progress_callback=progress_callback,
             )
             skill_ids = metadata.get("editorial_report", {}).get("selected_skill_ids", []) if isinstance(metadata, dict) else []

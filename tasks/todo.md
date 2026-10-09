@@ -221,6 +221,151 @@ Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow
   1. `⚡ Xưởng Tự Động (Auto Batch Google Flow)`
   2. `🎬 Sản xuất Video Ngắn (Local SD / Wan 2.1)`
 
+---
+
+## 10. Kế Hoạch Milestone 1: Flow Batch Queue Engine (Turbo Batch Mode)
+
+### 1. Mục tiêu & Thiết kế
+- Tích hợp cơ chế sinh ảnh hàng loạt song song (Flow Batch Queue Engine) vào `src/flow_image_service.py` theo Requirement R1.
+- Concurrency an toàn 1-4 workers phù hợp với Google Flow CDP và hạn mức server.
+- Staggered dispatch 1.5s ngăn ngừa race condition trên giao diện web.
+- Tự động retry kèm exponential backoff trên từng task.
+- Bảo toàn tuyệt đối thứ tự phân cảnh ban đầu (scenes 1..N).
+- Cơ chế Tự Phục Hồi (Self-Healing Fallback): Tự động kế thừa ảnh hợp lệ liền trước khi gặp lỗi High Demand timeout.
+- Cập nhật trực tiếp `scenes` in-place và trả về báo cáo task execution.
+
+### 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Xây dựng Data Model `FlowImageTask`**
+  - [x] Dataclass theo dõi trạng thái `pending`, `running`, `completed`, `failed`, `fallback`.
+  - [x] Lưu trữ metadata, elapsed_sec, retries, output_path, orientation, prompt.
+- [x] **Task 2: Triển khai `FlowBatchQueueEngine`**
+  - [x] Giới hạn số worker an toàn $[1, 4]$.
+  - [x] Điều phối luồng qua `ThreadPoolExecutor` với giãn cách staggered dispatch.
+  - [x] Xử lý retry per-task với exponential backoff.
+  - [x] Sắp xếp kết quả trả về bảo toàn thứ tự phân cảnh 1..N.
+  - [x] Cơ chế Self-Healing kế thừa bối cảnh hợp lệ gần nhất.
+- [x] **Task 3: Cung cấp API `generate_flow_batch_queue` & Tương thích ngược**
+  - [x] Cập nhật danh sách `scenes` in-place (`image_path`, `use_video_ai=False`).
+  - [x] Tương thích ngược với `generate_flow_batch` qua cờ `turbo_queue`.
+- [x] **Task 4: Kiểm chứng Red -> Green -> Refactor**
+  - [x] Viết unit tests chuyên biệt trong `tests/test_flow_batch_queue.py` (9/9 passed).
+  - [x] Chạy kiểm thử hồi quy toàn bộ hệ thống (50/50 passed 100%).
+
+---
+
+## 11. Kế Hoạch Milestone 2: Parallel TTS Pipeline (Turbo Batch Mode)
+
+### 1. Mục tiêu & Thiết kế
+- Tối ưu hóa thời gian sinh giọng đọc âm thanh cho các phân cảnh video thông qua `ThreadPoolExecutor` trong `src/tts_service.py` theo Requirement R2.
+- Sử dụng `ThreadPoolExecutor` thay vì `asyncio` để tránh xung đột event loop Streamlit và tận dụng nền tảng subprocess CLI edge-tts sẵn có.
+- Ánh xạ tương quan `future_to_index` để bảo toàn tuyệt đối 100% thứ tự các phân cảnh (scenes 1..N).
+- Tái sử dụng cache âm thanh hợp lệ (>1000 bytes) trên đĩa, tránh gọi lại TTS không cần thiết.
+- Tính toán chính xác thời lượng `audio_duration` và gán in-place vào từng phân cảnh.
+- Báo cáo tiến độ realtime qua callback `progress_callback(done_count, total_scenes, msg)`.
+- Tương thích ngược toàn diện với các chế độ `chinese_teaching_vi` và `clone_local`.
+
+### 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Thiết kế bộ unit test `tests/test_parallel_tts.py` (Red State)**
+  - [x] Kiểm thử chữ ký hàm và tham số `generate_scenes_tts_parallel`.
+  - [x] Kiểm thử bảo toàn tuyệt đối thứ tự phân cảnh với thời gian trễ nhân tạo nghịch đảo (scene 1 chậm nhất, scene 4 nhanh nhất).
+  - [x] Kiểm thử tái sử dụng cache âm thanh hợp lệ (>1000 bytes) bỏ qua sinh mới.
+  - [x] Kiểm thử xử lý lỗi fail-fast và báo cáo lỗi chính xác khi có phân cảnh thất bại.
+  - [x] Kiểm thử giới hạn số lượng `max_workers` trong `ThreadPoolExecutor`.
+  - [x] Kiểm thử gửi cập nhật tiến độ qua `progress_callback`.
+  - [x] Kiểm thử điều hướng `content_mode="chinese_teaching_vi"` và `voice_mode="clone_local"`.
+  - [x] Kiểm thử xử lý danh sách rỗng an toàn.
+  - [x] Xác nhận trạng thái Red ban đầu (`ImportError`).
+- [x] **Task 2: Triển khai hàm `get_audio_duration` và `generate_scenes_tts_parallel` trong `src/tts_service.py` (Green State)**
+  - [x] Triển khai hàm đo thời lượng `get_audio_duration` (mutagen, wave, moviepy fallback).
+  - [x] Triển khai `generate_scenes_tts_parallel` với `ThreadPoolExecutor` và `future_to_index`.
+  - [x] Xử lý cache check và in-place mutation `audio_path`, `audio_duration`.
+  - [x] Tích hợp progress callback realtime.
+  - [x] Xác nhận trạng thái Green cho 9/9 tests trong `tests/test_parallel_tts.py`.
+- [x] **Task 3: Kiểm thử hồi quy toàn bộ hệ thống (Regression Check)**
+  - [x] Chạy `unittest discover -s tests -p "test_*.py"`.
+  - [x] Kết quả: Đạt 70/70 tests passed (100% OK trong 49.9s).
+
+---
+
+## 12. Kế Hoạch Milestone 3: Web UI, Config & Batch Producer Integration (Turbo Batch Mode)
+
+### 1. Mục tiêu & Thiết kế
+- Bổ sung cấu hình toàn cục `TURBO_BATCH_ENABLED`, `TURBO_FLOW_QUEUE_SIZE_DEFAULT`, `TURBO_TTS_WORKERS_DEFAULT` vào `src/config.py`.
+- Tích hợp tham số `turbo_mode: bool = False`, `flow_workers: int = 4`, `tts_workers: int = 4` vào `produce_single_video_pipeline` và `run_batch_video_loop` trong `src/batch_producer.py`.
+- Khi bật `turbo_mode`:
+  + Bước 2 gọi `generate_scenes_tts_parallel` sinh giọng đọc song song cho tất cả các phân cảnh.
+  + Bước 3 gọi `generate_flow_batch_queue` gom tạo ảnh đồng thời qua hàng đợi Flow Batch Queue.
+  + Khi tắt `turbo_mode`: Giữ nguyên 100% logic tuần tự cũ.
+- Tích hợp giao diện người dùng Web UI:
+  + Thêm checkbox `⚡ Chế độ Turbo Batch (Tăng tốc song song x4)` và expander tinh chỉnh luồng trong `src/app_batch.py`.
+  + Hiển thị huy hiệu `⚡ Turbo` trên danh thiếp trạng thái công việc trong xưởng tự động.
+  + Cập nhật `src/autonomous_factory.py` nhận và lưu trữ `turbo_mode`, `flow_workers`, `tts_workers`.
+
+### 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Cập nhật hằng số cấu hình trong `src/config.py`**
+- [x] **Task 2: Tích hợp logic Turbo vào `src/batch_producer.py`**
+- [x] **Task 3: Cập nhật `src/autonomous_factory.py` để lưu và truyền cài đặt Turbo**
+- [x] **Task 4: Thêm điều khiển UI và huy hiệu Turbo trong `src/app_batch.py`**
+- [x] **Task 5: Viết bộ unit test `tests/test_turbo_config_ui.py` (Đạt 4/4 passed)**
+
+---
+
+## 14. Bổ Sung 2 Thể Loại Dạy Học Theo Cốt Truyện (Story-Led Educational Modes)
+
+### 1. Mục tiêu & Thiết kế
+- Tích hợp 2 thể loại video độc đáo từ repo `hongphuoc6104/tiktok-ytb`:
+  1. `english_vocab_story`: Dạy từ vựng tiếng Anh qua cốt truyện Micro-Drama (tình huống đời thường dở khóc dở cười, cấu trúc 5 cảnh Gen-Z).
+  2. `story_explainer`: Kể chuyện kiến thức / lịch sử dẫn dắt theo cốt truyện lôi cuốn (Story-Led Explainer).
+- Bổ sung kho chủ đề mẫu `ENGLISH_VOCAB_TOPIC_BANK` và `STORY_EXPLAINER_TOPIC_BANK` vào `src/batch_producer.py`.
+- Tích hợp trực tiếp vào menu "Loại video" trong Web UI `src/app_batch.py`.
+- Viết unit tests kiểm thử tại `tests/test_story_modes.py` (6/6 passed).
+- Đạt 109/109 tests passed 100% toàn dự án.
 
 
+### 1. Mục tiêu & Thiết kế
+- Xác minh toàn bộ luồng sản xuất video hoạt động trơn tru từ đầu đến cuối (E2E) với chế độ Turbo Batch.
+- Đảm bảo kịch bản sinh ra, audio song song khớp thời lượng, ảnh tạo ra đúng thứ tự, phụ đề được trích xuất và FFmpeg/MoviePy render thành công video `.mp4` hoàn chỉnh kèm metadata.
+- Đảm bảo tính tương thích ngược tuyệt đối với chế độ tuần tự ban đầu.
 
+### 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Xây dựng bộ test tích hợp End-to-End `tests/test_turbo_batch_e2e.py`**
+  + [x] `test_turbo_mode_e2e_successful_export`: Kiểm thử pipeline hoàn chỉnh khi bật Turbo Batch.
+  + [x] `test_sequential_mode_backward_compatibility`: Kiểm thử tính tương thích ngược khi tắt Turbo Batch.
+- [x] **Task 2: Xác minh kiểm thử và nghiệm thu**
+  + [x] `tests/test_turbo_batch_e2e.py` đạt 2/2 passed.
+  + [x] Chạy kiểm thử hồi quy toàn bộ codebase (full test suite).
+
+---
+
+## 15. Khắc Phục Triệt Để Phát Âm Tiếng Trung Giản Thể & Cô Lập Ngôn Ngữ Tuyệt Đối
+
+### 1. Mục tiêu & Nguyên nhân gốc rễ
+- **Nguyên nhân**: Khi LLM sinh trường `narration_vi` hoặc `usage_vi`, mô hình thường tự chèn chữ Hán (ví dụ: *"Từ 你好 dùng khi chào hỏi"*). Khi kịch bản được đưa vào hệ thống TTS, nếu đoạn dẫn tiếng Việt chứa chữ Hán CJK, giọng `vi-VN-HoaiMyNeural` sẽ cố gắng đọc các ký tự này dẫn đến phát âm kỳ dị, sai lệch hoặc đọc chữ Hán bằng âm sai.
+- **Giải pháp**:
+  + Thêm hàm tiền xử lý `clean_vietnamese_tts_text(text)` sử dụng regex `[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+` để loại bỏ 100% chữ Hán giản thể/phồn thể khỏi bất kỳ phân đoạn nào được gán cho giọng đọc tiếng Việt (`vi-VN`).
+  + Trong `generate_multivoice_tts`: thiết lập chốt chặn 2 lớp (defense-in-depth): mọi phân đoạn có giọng `vi-VN` đều tự động được làm sạch qua `clean_vietnamese_tts_text`; phân đoạn chữ Hán chỉ được đọc độc quyền 100% bởi giọng Trung Quốc (`zh-CN-XiaoxiaoNeural`).
+  + Áp dụng làm sạch tại tầng chuẩn hóa dữ liệu `normalize_chinese_teaching_scenes` (`src/batch_producer.py`) và `_sanitize_scenes` (`src/studio_editorial_service.py`).
+  + Hỗ trợ đồng bộ cả ở chế độ chạy tuần tự lẫn chế độ song song `generate_scenes_tts_parallel`.
+
+### 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Xây dựng hàm `clean_vietnamese_tts_text` và chốt chặn an toàn trong `src/tts_service.py`**
+- [x] **Task 2: Áp dụng lọc chữ Hán trong `normalize_chinese_teaching_scenes` và `produce_single_video_pipeline` (`src/batch_producer.py`)**
+- [x] **Task 3: Áp dụng lọc chữ Hán trong `_sanitize_scenes` (`src/studio_editorial_service.py`)**
+- [x] **Task 4: Cập nhật luồng TTS song song `generate_scenes_tts_parallel` (`src/tts_service.py`)**
+- [x] **Task 5: Viết bộ unit tests chuyên biệt `tests/test_chinese_tts_isolation.py` (Đạt 6/6 passed)**
+- [x] **Task 6: Chạy kiểm thử hồi quy toàn bộ hệ thống (`pytest`) - Đạt 115/115 passed (100%)**
+
+---
+
+## 16. Thiết Lập Phân Cảnh Chuẩn: 3 Cảnh Cho Video Dạy Tiếng Trung & 5 Cảnh Cho Video Cốt Truyện
+
+### 1. Mục tiêu & Thiết kế
+- **Video dạy tiếng Trung (`chinese_teaching_vi`)**: Chuẩn hóa đúng 3 phân cảnh (khoảng 20-30 giây Shorts):
+  + Cảnh 1: Giới thiệu từ vựng/mẫu câu & ý nghĩa cơ bản.
+  + Cảnh 2: Hướng dẫn phát âm chuẩn, phân tích pinyin & thanh điệu.
+  + Cảnh 3: Đặt câu ví dụ & tình huống thực tế trong giao tiếp hàng ngày.
+- **Video cốt truyện (`english_vocab_story` & `story_explainer`)**: Chuẩn hóa đúng 5 phân cảnh (khoảng 40-55 giây):
+  + Tiếng Anh Micro-Drama: Hook tình huống oái oăm -> Nghĩa từ vựng cốt lõi -> Ví dụ diễn biến truyện -> Thử thách tương tác -> Cái kết bất ngờ (Twist).
+  + Kể chuyện dẫn dắt Story Explainer: Hook bí ẩn -> Bối cảnh nhân vật -> Nút thắt xung đột -> Bước ngoặt giải mã -> Bài học & thông điệp.
+- **Tự động hóa giao diện Web UI (`src/app_batch.py`)**: Khi người dùng chọn loại video trên dropdown, trường "Số phân cảnh mỗi video" tự động chuyển về 3 cảnh cho tiếng Trung và 5 cảnh cho cốt truyện.
+- **Kiểm thử**: Cập nhật `tests/test_story_modes.py` (7/7 passed), toàn hệ thống đạt 116/116 passed.

@@ -22,6 +22,8 @@ def _sanitize_scenes(
         pinyin = str(scene.get("pinyin", "")).strip()
         usage_vi = str(scene.get("usage_vi", "")).strip()
         if content_mode == "chinese_teaching_vi":
+            narration_vi = re.sub(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+', '', narration_vi).strip(" ,;:-_")
+            usage_vi = re.sub(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+', '', usage_vi).strip(" ,;:-_")
             narration = " ".join(part for part in [
                 narration_vi, chinese_text, f"Đọc là {pinyin}." if pinyin else "", usage_vi
             ] if part).strip()

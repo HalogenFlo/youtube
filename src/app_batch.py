@@ -72,8 +72,9 @@ def _status_counts(jobs):
 
 def _render_job(job):
     labels = {"queued": "Chờ sản xuất", "running": "Đang sản xuất", "completed": "Hoàn tất", "failed": "Cần xử lý"}
+    turbo_badge = " · <span style='color:#49ddb2;font-weight:bold;'>⚡ Turbo</span>" if job.get("settings", {}).get("turbo_mode") else ""
     st.markdown(
-        f"<div class='job-card'><div class='job-title'>#{job.get('video_index')} · {html.escape(job.get('topic',''))}</div>"
+        f"<div class='job-card'><div class='job-title'>#{job.get('video_index')} · {html.escape(job.get('topic',''))}{turbo_badge}</div>"
         f"<div class='job-meta'>{labels.get(job.get('status'), job.get('status'))} · {html.escape(job.get('message',''))}</div></div>",
         unsafe_allow_html=True,
     )
@@ -166,12 +167,30 @@ def run_batch_ui():
 
     with left:
         st.markdown("<div class='section-kicker'>Kho ý tưởng</div><div class='section-title'>Tạo lệnh sản xuất mới</div><div class='section-copy'>Mỗi dòng là một video riêng. Nếu chỉ có một chủ đề, AI sẽ tự chia thành nhiều tập.</div>", unsafe_allow_html=True)
+        content_mode_label = st.selectbox(
+            "Loại video",
+            [
+                "Dạy tiếng Anh qua cốt truyện (Micro-Drama)",
+                "Kể chuyện kiến thức dẫn dắt (Story Explainer)",
+                "Dạy tiếng Trung cho người Việt",
+                "Video kiến thức thông thường",
+            ],
+            key="factory_content_mode_selector",
+        )
+        if content_mode_label.startswith("Dạy tiếng Anh"):
+            content_mode = "english_vocab_story"
+            default_scenes = 5
+        elif content_mode_label.startswith("Kể chuyện kiến thức"):
+            content_mode = "story_explainer"
+            default_scenes = 5
+        elif content_mode_label.startswith("Dạy tiếng Trung"):
+            content_mode = "chinese_teaching_vi"
+            default_scenes = 3
+        else:
+            content_mode = "knowledge"
+            default_scenes = 5
+
         with st.form("factory_order_form", clear_on_submit=False):
-            content_mode_label = st.selectbox(
-                "Loại video",
-                ["Dạy tiếng Trung cho người Việt", "Video kiến thức thông thường"],
-            )
-            content_mode = "chinese_teaching_vi" if content_mode_label.startswith("Dạy tiếng Trung") else "knowledge"
             prompt = st.text_area(
                 "Chủ đề cụ thể (không bắt buộc)",
                 value="",
@@ -184,15 +203,19 @@ def run_batch_ui():
             count = c1.number_input("Số video trong lô", min_value=1, max_value=100, value=1, step=1)
             language_label = c2.selectbox("Ngôn ngữ", ["Tiếng Việt", "English"])
             language = "vi" if language_label == "Tiếng Việt" else "en"
-            if content_mode == "chinese_teaching_vi":
+            if content_mode == "english_vocab_story":
+                st.caption("🎬 Kịch bản tình huống đời thường (Micro-Drama), lồng ghép từ vựng tiếng Anh theo mạch truyện đúng 5 cảnh.")
+            elif content_mode == "story_explainer":
+                st.caption("📖 Dẫn dắt người xem qua câu chuyện khám phá có nhân vật, có nút thắt và bài học theo 5 cảnh.")
+            elif content_mode == "chinese_teaching_vi":
                 language = "vi"
-                st.caption("Chế độ này giảng bằng tiếng Việt, phát âm mẫu bằng giọng Trung Quốc và hiển thị chữ Hán + pinyin.")
+                st.caption("Chế độ này giảng bằng tiếng Việt, mẫu tiếng Trung chuẩn 3 cảnh: Giới thiệu -> Phát âm/Pinyin -> Cách dùng.")
             c3, c4 = st.columns(2)
             orientation_label = c3.selectbox("Khung hình", ["Dọc 9:16", "Ngang 16:9"])
             orientation = "vertical" if orientation_label.startswith("Dọc") else "horizontal"
             target_scenes = c4.number_input(
-                "Số phân cảnh mỗi video", min_value=1, max_value=12, value=5, step=1,
-                help="5 cảnh thường tương đương khoảng 25-50 giây. Đây không phải 5 video.",
+                "Số phân cảnh mỗi video", min_value=1, max_value=12, value=default_scenes, step=1,
+                help="Chuẩn 3 cảnh cho tiếng Trung, 5 cảnh cho video cốt truyện.",
             )
 
             media_mode_label = st.selectbox(
@@ -210,6 +233,19 @@ def run_batch_ui():
                 value=True,
                 help="Thêm vòng kiểm chứng, sửa hook, độ rõ ràng, tính nhất quán hình ảnh và chính sách trước khi sản xuất.",
             )
+            turbo_mode = st.checkbox(
+                "⚡ Chế độ Turbo Batch (Tăng tốc song song x4)",
+                value=True,
+                help="Tăng tốc tối đa: sinh giọng đọc TTS song song và gom tạo ảnh Flow dạng batch (tối đa 4 luồng).",
+            )
+            flow_workers = 4
+            tts_workers = 4
+            if turbo_mode:
+                with st.expander("⚙️ Tinh chỉnh luồng Turbo (Nâng cao)"):
+                    tc1, tc2 = st.columns(2)
+                    flow_workers = int(tc1.number_input("Luồng tạo ảnh (Flow)", min_value=1, max_value=8, value=4, step=1))
+                    tts_workers = int(tc2.number_input("Luồng tạo audio (TTS)", min_value=1, max_value=8, value=4, step=1))
+
             if media_mode_label.startswith("🎬 Video Flow") or "mọi cảnh" in media_mode_label:
                 media_mode = "flow_video"
             elif media_mode_label.startswith("Hybrid"):
@@ -280,6 +316,9 @@ def run_batch_ui():
                     studio_mode=studio_mode,
                     content_mode=content_mode,
                     chinese_voice=TTS_VOICES_ZH[chinese_voice_label],
+                    turbo_mode=turbo_mode,
+                    flow_workers=flow_workers,
+                    tts_workers=tts_workers,
                 )
                 if random_topics:
                     st.success(

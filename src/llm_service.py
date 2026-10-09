@@ -5,7 +5,7 @@
 import json
 import re
 import requests
-from typing import Tuple, Dict, Any, List
+from typing import Tuple, Dict, Any, List, Optional
 from src.config import OLLAMA_API_URL, OLLAMA_MODEL_DEFAULT
 
 def get_system_prompt(language: str = "vi", content_mode: str = "knowledge") -> str:
@@ -27,6 +27,31 @@ def get_system_prompt(language: str = "vi", content_mode: str = "knowledge") -> 
             '"video_prompt":"English visual description, no text in image"}]}.\n'
             "Không dùng phiên âm Hán Việt thay cho pinyin. Chữ Hán, pinyin và nghĩa phải khớp chính xác. "
             "video_prompt viết bằng tiếng Anh và không yêu cầu hình ảnh chứa chữ, số, phụ đề hay ký hiệu đọc được."
+        )
+    if content_mode == "english_vocab_story":
+        return (
+            "Bạn là đạo diễn kiêm chuyên gia biên kịch video dạy từ vựng tiếng Anh theo thể loại Micro-Drama ngắn (Gen-Z tình huống đời thường).\n"
+            "Video tập trung vào 1 từ/cụm từ tiếng Anh cốt lõi và được dẫn dắt theo cấu trúc câu chuyện 5 cảnh:\n"
+            "- Cảnh 1 (Hook tình huống): Một tình huống đời thường dở khóc dở cười, éo le hoặc gây tò mò dẫn thẳng tới từ khóa.\n"
+            "- Cảnh 2 (Giải thích cốt lõi): Nhân vật chính làm rõ nghĩa của từ vựng trong ngữ cảnh tình huống đó.\n"
+            "- Cảnh 3 (Diễn biến câu chuyện): Đưa 2 câu ví dụ tiếng Anh tự nhiên lồng vào mạch diễn biến câu chuyện.\n"
+            "- Cảnh 4 (Tương tác / Thử thách): Người xem được thử thách nói hoặc đoán từ với khoảng dừng ngắn và lời khen khích lệ.\n"
+            "- Cảnh 5 (Cái kết bất ngờ / Twist): Kết thúc câu chuyện đầy hài hước và đọng lại ấn tượng sâu sắc.\n"
+            "Chỉ trả về đối tượng JSON hợp lệ duy nhất có cấu trúc: "
+            '{"scenes":[{"scene_num":1,"narration":"Lời thoại đọc (kết hợp tiếng Việt tự nhiên và câu tiếng Anh mẫu)","video_prompt":"English description of visual action and minimalist stickman character CH01, expressive emotion, cinematic, no text on image"}]}.\n'
+            "video_prompt viết bằng tiếng Anh, mô tả hành động trực quan của nhân vật CH01 và tuyệt đối không chứa chữ viết."
+        )
+    if content_mode == "story_explainer":
+        return (
+            "Bạn là chuyên gia biên kịch video tài liệu / kể chuyện kiến thức (Story-Led Explainer).\n"
+            "Thay vì liệt kê kiến thức khô khan, bạn dẫn dắt người xem qua một câu chuyện khám phá lôi cuốn:\n"
+            "- Có nhân vật dẫn dắt hoặc điểm nhìn trải nghiệm sống động.\n"
+            "- Mở đầu bằng bí ẩn/nghịch lý kích thích tò mò (Hook).\n"
+            "- Dẫn dắt từng bước khám phá với tình tiết leo thang và nút thắt bất ngờ.\n"
+            "- Kết thúc bằng góc nhìn sâu sắc và bài học truyền cảm hứng.\n"
+            "Chỉ trả về đối tượng JSON hợp lệ duy nhất có cấu trúc: "
+            '{"scenes":[{"scene_num":1,"narration":"Lời dẫn kể chuyện truyền cảm, cuốn hút, giàu hình ảnh bằng ' + lang_name + '","video_prompt":"English visual description, cinematic, dramatic lighting, detailed scenery, no text on image"}]}.\n'
+            "video_prompt viết bằng tiếng Anh, mô tả bối cảnh điện ảnh và tuyệt đối không chứa chữ viết."
         )
     return (
         "Bạn là một chuyên gia biên kịch video ngắn (Shorts, TikTok, Reels) chuyên nghiệp.\n"
@@ -84,24 +109,51 @@ def generate_script(
     style_preset: str = "cinematic, detailed, 4k", 
     language: str = "vi",
     model: str = OLLAMA_MODEL_DEFAULT,
-    target_scenes: int = 5,
+    target_scenes: Optional[int] = None,
     content_mode: str = "knowledge",
 ) -> Tuple[bool, Any]:
     """
     Luồng A: Sinh kịch bản mới hoàn toàn từ chủ đề/ý tưởng.
+    - Video tiếng Trung: Mặc định 3 phân cảnh (Giới thiệu -> Phát âm/Pinyin -> Cách dùng giao tiếp).
+    - Video cốt truyện (Micro-drama / Story explainer): Mặc định 5 phân cảnh.
     """
+    if target_scenes is None:
+        actual_scenes = 3 if content_mode == "chinese_teaching_vi" else 5
+    else:
+        actual_scenes = max(1, int(target_scenes))
+
     mode_instruction = ""
     if content_mode == "chinese_teaching_vi":
         mode_instruction = (
-            "Đây là video DẠY TIẾNG TRUNG CHO NGƯỜI VIỆT. Mỗi cảnh phải gồm lời dẫn tiếng Việt, "
-            "một mẫu tiếng Trung giản thể, pinyin có dấu thanh và giải thích cách dùng bằng tiếng Việt. "
-            "Sắp xếp từ dễ đến khó, tự nhiên như một giáo viên đang hướng dẫn.\n"
+            f"Đây là video DẠY TIẾNG TRUNG CHO NGƯỜI VIỆT gồm đúng {actual_scenes} phân cảnh ngắn gọn, súc tích (khoảng 20-30 giây). "
+            "Cấu trúc bài giảng: "
+            "Cảnh 1: Giới thiệu từ vựng/mẫu câu và ý nghĩa cơ bản. "
+            "Cảnh 2: Hướng dẫn phát âm chuẩn, phân tích pinyin và thanh điệu. "
+            "Cảnh 3: Đặt câu ví dụ và tình huống sử dụng thực tế trong giao tiếp hàng ngày. "
+            "Mỗi cảnh bắt buộc gồm lời dẫn tiếng Việt (narration_vi), một mẫu tiếng Trung giản thể (chinese_text), "
+            "pinyin có dấu thanh (pinyin) và giải thích cách dùng bằng tiếng Việt (usage_vi).\n"
+        )
+    elif content_mode == "english_vocab_story":
+        mode_instruction = (
+            f"Đây là video DẠY TỪ VỰNG TIẾNG ANH THEO CỐT TRUYỆN MICRO-DRAMA (tình huống đời thường) gồm đúng {actual_scenes} phân cảnh. "
+            "Xoay quanh 1 từ vựng cốt lõi theo cấu trúc: "
+            "Cảnh 1 (Hook tình huống oái oăm) -> Cảnh 2 (Giải thích nghĩa từ vựng cốt lõi) -> "
+            "Cảnh 3 (Áp dụng từ vựng vào diễn biến hài hước) -> Cảnh 4 (Thử thách người xem) -> "
+            "Cảnh 5 (Twist kết thúc bất ngờ, đọng lại ấn tượng).\n"
+        )
+    elif content_mode == "story_explainer":
+        mode_instruction = (
+            f"Đây là video KỂ CHUYỆN KIẾN THỨC / LỊCH SỬ DẪN DẮT THEO CỐT TRUYỆN (Story-Led Explainer) gồm đúng {actual_scenes} phân cảnh. "
+            "Kể câu chuyện lôi cuốn theo cấu trúc 5 bước: "
+            "Cảnh 1 (Hook bí ẩn/nghịch lý) -> Cảnh 2 (Nhân vật & bối cảnh đối mặt thử thách) -> "
+            "Cảnh 3 (Xung đột cao trào) -> Cảnh 4 (Bước ngoặt giải mã bí ẩn) -> "
+            "Cảnh 5 (Bài học & thông điệp truyền cảm hứng).\n"
         )
     user_prompt = (
         f"Hãy viết kịch bản video ngắn cho chủ đề/ý tưởng sau: \"{topic}\".\n"
         f"{mode_instruction}"
         f"Phong cách hình ảnh yêu cầu cho các video prompt: \"{style_preset}\".\n"
-        f"Kịch bản phải có ĐÚNG {max(1, int(target_scenes))} phân cảnh; mỗi cảnh khoảng 5-10 giây.\n"
+        f"Kịch bản phải có ĐÚNG {actual_scenes} phân cảnh; mỗi cảnh khoảng 5-10 giây.\n"
         "Nếu là nội dung giáo dục, toán hoặc kỹ thuật: lời thoại phải giải thích kiến thức chính xác, "
         "có ít nhất một ví dụ cụ thể và đi đến đáp án; không viết lời dẫn chung chung.\n"
         "Mọi video_prompt TUYỆT ĐỐI không được yêu cầu vẽ chữ, số, công thức, bảng viết, phụ đề hay ký hiệu đọc được; "

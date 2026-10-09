@@ -8,8 +8,16 @@ import sys
 import tempfile
 import subprocess
 import time
-from typing import List, Tuple
-from src.config import TTS_VOICE_DEFAULT
+from typing import List, Tuple, Dict, Any, Optional, Callable
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from src.config import TTS_VOICE_DEFAULT, TTS_VOICE_ZH_DEFAULT
+
+try:
+    from src.voice_clone_service import generate_cloned_tts
+except Exception:
+    generate_cloned_tts = None
+
 
 # Đảm bảo in log trên Windows không bị UnicodeEncodeError
 if hasattr(sys.stdout, 'reconfigure'):
@@ -197,15 +205,30 @@ def generate_tts(
                 print(f"[TTS] Lần thử {attempt + 1}/{max_attempts} với giọng '{current_voice}' thất bại: {last_err}")
             except Exception:
                 pass
-            time.sleep(1.0)
+            # Backoff giãn cách có tăng dần để giải tỏa nghẽn kết nối WebSocket của Microsoft
+            retry_sleep = 1.5 * (attempt + 1)
+            time.sleep(retry_sleep)
 
         if v_idx < len(voices_to_try) - 1:
             try:
                 print(f"[TTS] Giọng '{current_voice}' không phản hồi, tự động chuyển sang giọng dự phòng '{voices_to_try[v_idx + 1]}'...")
             except Exception:
                 pass
+            time.sleep(0.8)
 
     return False, f"Lỗi sinh giọng đọc edge-tts CLI: {last_err}"
+
+
+def clean_vietnamese_tts_text(text: str) -> str:
+    """
+    Loại bỏ hoàn toàn các ký tự chữ Hán / tiếng Trung giản thể (CJK) khỏi lời dẫn tiếng Việt.
+    Đảm bảo 100% giọng tiếng Việt không bao giờ phát âm chữ Hán sai lệch.
+    """
+    if not text:
+        return ""
+    cleaned = re.sub(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+', '', str(text))
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip(" ,;:-_")
+    return cleaned
 
 
 def generate_multivoice_tts(
@@ -221,7 +244,23 @@ def generate_multivoice_tts(
     temp_paths = []
     clips = []
     try:
-        usable_segments = [(text.strip(), voice, rate) for text, voice, rate in segments if text and text.strip()]
+        usable_segments = []
+        for text, voice, rate in segments:
+            if not text or not str(text).strip():
+                continue
+            clean_t = str(text).strip()
+            # BẢO ĐẢM TUYỆT ĐỐI: Giọng tiếng Việt KHÔNG BAO GIỜ đọc chữ Hán giản thể
+            if voice.startswith("vi-") or "vi-VN" in voice:
+                clean_t = clean_vietnamese_tts_text(clean_t)
+            # BẢO ĐẢM TUYỆT ĐỐI: Giọng tiếng Trung chỉ đọc chữ Hán, loại bỏ rác nếu có
+            elif voice.startswith("zh-") or "zh-CN" in voice:
+                # Nếu text có ký tự Hán, giữ lại chuẩn xác
+                hanzi = re.findall(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+', clean_t)
+                if hanzi:
+                    clean_t = "".join(hanzi)
+            if clean_t and clean_t.strip():
+                usable_segments.append((clean_t, voice, rate))
+
         if not usable_segments:
             return False, "Không có nội dung để sinh giọng đọc đa ngôn ngữ."
         for index, (text, voice, rate) in enumerate(usable_segments, start=1):
@@ -249,3 +288,186 @@ def generate_multivoice_tts(
                     os.remove(temp_path)
             except OSError:
                 pass
+
+
+def get_audio_duration(file_path: str) -> float:
+    """
+    Đo thời lượng file audio chính xác bằng mutagen, wave hoặc moviepy.
+    """
+    if not file_path or not os.path.exists(file_path):
+        return 0.0
+    try:
+        from mutagen.mp3 import MP3
+        return float(MP3(file_path).info.length)
+    except Exception:
+        pass
+    try:
+        import wave
+        with wave.open(file_path, 'r') as wf:
+            frames = wf.getnframes()
+            rate = wf.getframerate()
+            if rate > 0:
+                return float(frames / rate)
+    except Exception:
+        pass
+    try:
+        from moviepy.editor import AudioFileClip
+        clip = AudioFileClip(file_path)
+        dur = float(clip.duration)
+        clip.close()
+        return dur
+    except Exception:
+        return 5.0
+
+
+def generate_scenes_tts_parallel(
+    scenes: List[Dict[str, Any]],
+    video_work_dir: str,
+    voice: str = TTS_VOICE_DEFAULT,
+    voice_mode: str = "edge",
+    content_mode: str = "knowledge",
+    chinese_voice: str = TTS_VOICE_ZH_DEFAULT,
+    voice_reference_path: str = "",
+    rate: str = "+0%",
+    max_workers: int = 4,
+    progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    language: str = "vi",
+) -> Tuple[bool, str]:
+    """
+    Sinh giọng đọc song song cho tất cả các phân cảnh trong kịch bản.
+    Đảm bảo:
+    1. Tối ưu hóa thời gian xử lý thông qua ThreadPoolExecutor (max_workers=max_workers).
+    2. Bảo toàn 100% thứ tự phân cảnh (scene 1, scene 2, ... N) qua mapping future_to_index.
+    3. Tái sử dụng file âm thanh có sẵn nếu đã tồn tại hợp lệ (>1000 bytes).
+    4. Cập nhật sc['audio_path'] và sc['audio_duration'] in-place.
+    5. Báo cáo tiến độ realtime qua progress_callback(done_count, total_scenes, message).
+    """
+    if not scenes:
+        return True, "Không có phân cảnh nào cần xử lý."
+
+    os.makedirs(video_work_dir, exist_ok=True)
+    total_scenes = len(scenes)
+    completed_count = 0
+    lock = threading.Lock()
+
+    tasks_to_run = []
+
+    for idx, sc in enumerate(scenes):
+        sc_num = sc.get("scene_num") or (idx + 1)
+        audio_ext = ".wav" if voice_mode == "clone_local" and content_mode != "chinese_teaching_vi" else ".mp3"
+        audio_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}{audio_ext}")
+
+        # Kiểm tra cache tái sử dụng
+        if os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000:
+            sc["audio_path"] = audio_file
+            sc["audio_duration"] = get_audio_duration(audio_file)
+            with lock:
+                completed_count += 1
+                curr_done = completed_count
+            if progress_callback:
+                try:
+                    progress_callback(curr_done, total_scenes, f"Đã có giọng đọc phân cảnh {curr_done}/{total_scenes} (cảnh {sc_num})")
+                except Exception:
+                    pass
+        else:
+            tasks_to_run.append((idx, sc, audio_file))
+
+    if not tasks_to_run:
+        return True, "Đã có sẵn giọng đọc cho toàn bộ phân cảnh."
+
+    def _worker(task_tuple: Tuple[int, Dict[str, Any], str], delay: float = 0.0) -> Tuple[int, bool, str, str, float]:
+        if delay > 0:
+            time.sleep(delay)
+        t_idx, t_sc, t_audio_file = task_tuple
+        t_sc_num = t_sc.get("scene_num") or (t_idx + 1)
+        try:
+            if content_mode == "chinese_teaching_vi":
+                clean_narr_vi = clean_vietnamese_tts_text(str(t_sc.get("narration_vi", "")))
+                clean_use_vi = clean_vietnamese_tts_text(str(t_sc.get("usage_vi", "")))
+                audio_ok, audio_result = generate_multivoice_tts(
+                    [
+                        (clean_narr_vi, voice, "+0%"),
+                        (str(t_sc.get("chinese_text", "")), chinese_voice, "-5%"),
+                        (str(t_sc.get("chinese_text", "")), chinese_voice, "-15%"),
+                        (" ".join(part for part in [
+                            f"Đọc là {t_sc.get('pinyin', '')}." if t_sc.get("pinyin") else "",
+                            clean_use_vi,
+                        ] if part), voice, "+0%"),
+                    ],
+                    t_audio_file,
+                )
+            elif voice_mode == "clone_local":
+                clone_fn = globals().get("generate_cloned_tts")
+                if clone_fn is None:
+                    try:
+                        from src.voice_clone_service import generate_cloned_tts as _gct
+                        clone_fn = _gct
+                    except Exception:
+                        clone_fn = None
+                if clone_fn is None:
+                    return t_idx, False, "Chức năng nhân bản giọng đọc (voice clone) không khả dụng.", "", 0.0
+
+                audio_ok, audio_result = clone_fn(
+                    text=t_sc.get("narration", ""),
+                    output_path=t_audio_file,
+                    reference_audio=voice_reference_path,
+                    language=language,
+                )
+            else:
+                audio_ok, audio_result = generate_tts(
+                    text=t_sc.get("narration", ""),
+                    output_path=t_audio_file,
+                    voice=voice,
+                    rate=rate,
+                )
+
+            if not audio_ok or not os.path.exists(t_audio_file):
+                err = f"Lỗi giọng đọc cảnh {t_sc_num}: {audio_result}"
+                return t_idx, False, err, "", 0.0
+
+            dur = get_audio_duration(t_audio_file)
+            return t_idx, True, "", t_audio_file, dur
+        except Exception as exc:
+            return t_idx, False, f"Lỗi giọng đọc cảnh {t_sc_num}: {exc}", "", 0.0
+
+    worker_count = max_workers if max_workers and max_workers > 0 else 4
+    first_error = None
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        future_to_idx = {
+            executor.submit(_worker, task, i * 0.35): task[0]
+            for i, task in enumerate(tasks_to_run)
+        }
+
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                res_idx, success, err_msg, out_file, duration = future.result()
+            except Exception as e:
+                res_idx = idx
+                success = False
+                err_msg = f"Lỗi giọng đọc cảnh {scenes[idx].get('scene_num') or (idx + 1)}: {e}"
+                out_file = ""
+                duration = 0.0
+
+            if not success:
+                if not first_error:
+                    first_error = err_msg
+            else:
+                scenes[res_idx]["audio_path"] = out_file
+                scenes[res_idx]["audio_duration"] = duration
+                with lock:
+                    completed_count += 1
+                    curr_done = completed_count
+                if progress_callback:
+                    sc_num = scenes[res_idx].get("scene_num") or (res_idx + 1)
+                    try:
+                        progress_callback(curr_done, total_scenes, f"Đã sinh giọng đọc phân cảnh {curr_done}/{total_scenes} (cảnh {sc_num})")
+                    except Exception:
+                        pass
+
+    if first_error:
+        return False, first_error
+
+    return True, f"Hoàn thành sinh giọng đọc cho {total_scenes} phân cảnh."
+

@@ -36,8 +36,10 @@ from src.config import (
     TEMP_DIR, OUTPUT_DIR, TTS_VOICE_DEFAULT, TTS_VOICE_ZH_DEFAULT, DEFAULT_IMAGE_STYLE
 )
 from src.llm_service import generate_script, generate_video_metadata
-from src.tts_service import generate_tts, generate_multivoice_tts
-from src.flow_image_service import generate_flow_image, generate_flow_video
+from src.tts_service import (
+    generate_tts, generate_multivoice_tts, generate_scenes_tts_parallel, clean_vietnamese_tts_text
+)
+from src.flow_image_service import generate_flow_image, generate_flow_video, generate_flow_batch_queue
 from src.whisper_service import get_word_timestamps
 from src.video_compiler import compile_video_pipeline
 from src.voice_clone_service import generate_cloned_tts
@@ -90,10 +92,42 @@ KNOWLEDGE_TOPIC_BANK = [
     "Những sự thật bất ngờ về Trái Đất",
 ]
 
+ENGLISH_VOCAB_TOPIC_BANK = [
+    "Từ vựng 'A few' (một vài) - Tình huống mượn tiền bạn thân",
+    "Từ vựng 'Run out of' (hết sạch) - Tình huống hết tiền cuối tháng",
+    "Từ vựng 'Look for' (tìm kiếm) - Tình huống tìm chìa khóa nhà lúc vội",
+    "Từ vựng 'Give up' (bỏ cuộc) - Tình huống ngày đầu đi tập gym",
+    "Từ vựng 'Show off' (khoe khoang) - Tình huống bạn bè flex đồ hiệu",
+    "Từ vựng 'Hang out' (đi chơi) - Tình huống rủ đứa bạn hướng nội ra ngoài",
+    "Từ vựng 'Put off' (trì hoãn) - Tình huống nước đến chân mới nhảy",
+    "Từ vựng 'Turn down' (từ chối) - Tình huống từ chối lời mời ăn đám cưới",
+    "Từ vựng 'Count on' (trông cậy) - Tình huống nhờ bạn gánh team bài tập",
+    "Từ vựng 'Break down' (hỏng hóc/suy sụp) - Tình huống xe hỏng giữa đường mưa",
+]
+
+STORY_EXPLAINER_TOPIC_BANK = [
+    "Hành trình con người thuần hóa lửa thời tiền sử",
+    "Cuộc đào tẩu huyền thoại khỏi nhà tù Alcatraz",
+    "Bí ẩn chiếc máy tính cổ đại Antikythera dưới đáy biển",
+    "Cách người cổ đại vận chuyển đá xây dựng Kim Tự Tháp",
+    "Chuyến hải trình đầu tiên vòng quanh thế giới của Magellan",
+    "Hành trình một hạt mưa rơi từ mây xuống lòng đại dương",
+    "Cuộc giải cứu kỳ diệu đội bóng nhí trong hang Tham Luang",
+    "Bí mật bức họa Mona Lisa và nụ cười không tuổi",
+]
+
 
 def build_random_video_topics(count: int, content_mode: str = "knowledge") -> List[str]:
-    """Chọn đủ chủ đề ngẫu nhiên, ưu tiên không lặp trong cùng một lô."""
-    bank = CHINESE_TEACHING_TOPIC_BANK if content_mode == "chinese_teaching_vi" else KNOWLEDGE_TOPIC_BANK
+    """Chọn đủ chủ đề ngẫu nhiên theo thể loại video, ưu tiên không lặp trong cùng một lô."""
+    if content_mode == "chinese_teaching_vi":
+        bank = CHINESE_TEACHING_TOPIC_BANK
+    elif content_mode == "english_vocab_story":
+        bank = ENGLISH_VOCAB_TOPIC_BANK
+    elif content_mode == "story_explainer":
+        bank = STORY_EXPLAINER_TOPIC_BANK
+    else:
+        bank = KNOWLEDGE_TOPIC_BANK
+
     requested = max(1, int(count))
     picker = random.SystemRandom()
     topics: List[str] = []
@@ -176,11 +210,15 @@ def normalize_chinese_teaching_scenes(scenes: List[Dict[str, Any]]) -> List[Dict
     normalized = []
     for index, original in enumerate(scenes, start=1):
         scene = dict(original)
-        narration_vi = str(scene.get("narration_vi", "")).strip()
+        narration_vi = clean_vietnamese_tts_text(str(scene.get("narration_vi", "")).strip())
         chinese_text = str(scene.get("chinese_text", "")).strip()
         pinyin = str(scene.get("pinyin", "")).strip()
-        usage_vi = str(scene.get("usage_vi", "")).strip()
+        usage_vi = clean_vietnamese_tts_text(str(scene.get("usage_vi", "")).strip())
         scene["scene_num"] = int(scene.get("scene_num", index))
+        scene["narration_vi"] = narration_vi
+        scene["usage_vi"] = usage_vi
+        scene["chinese_text"] = chinese_text
+        scene["pinyin"] = pinyin
         scene["narration"] = " ".join(part for part in [
             narration_vi,
             chinese_text,
@@ -209,13 +247,16 @@ def produce_single_video_pipeline(
     studio_mode: bool = True,
     content_mode: str = "knowledge",
     chinese_voice: str = TTS_VOICE_ZH_DEFAULT,
+    turbo_mode: bool = False,
+    flow_workers: int = 4,
+    tts_workers: int = 4,
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     Sản xuất 1 video hoàn chỉnh từ Topic:
     1. Sinh kịch bản phân cảnh với LLM (Ollama)
-    2. Sinh audio TTS cho từng phân cảnh
-    3. Sinh bối cảnh AI RIÊNG BIỆT cho từng phân cảnh qua Google Flow
+    2. Sinh audio TTS cho từng phân cảnh (hỗ trợ Turbo Parallel TTS)
+    3. Sinh bối cảnh AI RIÊNG BIỆT cho từng phân cảnh (hỗ trợ Turbo Flow Batch Queue)
     4. Trích xuất word timestamps qua Faster-Whisper
     5. Biên tập và Render video hoàn chỉnh kèm phụ đề
     """
@@ -265,171 +306,216 @@ def produce_single_video_pipeline(
     notify(20, f"Đã lập kịch bản gồm {num_scenes} phân cảnh độc lập.")
 
     # 2. SINH GIỌNG ĐỌC & TÍNH TOÁN TIMING
-    notify(25, "Đang sinh giọng đọc AI (TTS) cho các phân cảnh...")
-    for i, sc in enumerate(scenes):
-        sc_num = sc.get("scene_num", i + 1)
-        audio_ext = ".wav" if voice_mode == "clone_local" and content_mode != "chinese_teaching_vi" else ".mp3"
-        audio_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}{audio_ext}")
-        if os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000:
-            safe_log(f"[✓] Tái sử dụng file âm thanh có sẵn cho cảnh {sc_num}: {audio_file}")
-            sc["audio_path"] = audio_file
-            sc["audio_duration"] = get_audio_duration(audio_file)
-            notify(25 + (i + 1) / num_scenes * 15, f"Đã có giọng đọc phân cảnh {sc_num}/{num_scenes}")
-            continue
+    if turbo_mode:
+        notify(25, f"Đang sinh giọng đọc AI (TTS) song song ({tts_workers} workers) cho {num_scenes} phân cảnh...")
+        def _tts_parallel_cb(cur: int, tot: int, msg: str):
+            notify(25 + (cur / max(1, tot)) * 15, msg)
 
-        if content_mode == "chinese_teaching_vi":
-            audio_ok, audio_result = generate_multivoice_tts(
-                [
-                    (str(sc.get("narration_vi", "")), voice, "+0%"),
-                    (str(sc.get("chinese_text", "")), chinese_voice, "-5%"),
-                    (str(sc.get("chinese_text", "")), chinese_voice, "-15%"),
-                    (" ".join(part for part in [
-                        f"Đọc là {sc.get('pinyin', '')}." if sc.get("pinyin") else "",
-                        str(sc.get("usage_vi", "")),
-                    ] if part), voice, "+0%"),
-                ],
-                audio_file,
-            )
-        elif voice_mode == "clone_local":
-            audio_ok, audio_result = generate_cloned_tts(
-                text=sc["narration"], output_path=audio_file,
-                reference_audio=voice_reference_path, language=language,
-            )
-        else:
-            audio_ok, audio_result = generate_tts(
-                text=sc["narration"], output_path=audio_file, voice=voice, rate="+0%"
-            )
-        if not audio_ok or not os.path.exists(audio_file):
-            err = f"Lỗi giọng đọc cảnh {sc_num}: {audio_result}"
+        audio_ok, audio_result = generate_scenes_tts_parallel(
+            scenes=scenes,
+            video_work_dir=video_work_dir,
+            voice=voice,
+            voice_mode=voice_mode,
+            content_mode=content_mode,
+            chinese_voice=chinese_voice,
+            voice_reference_path=voice_reference_path,
+            max_workers=tts_workers,
+            progress_callback=_tts_parallel_cb,
+        )
+        if not audio_ok:
+            err = f"Lỗi giọng đọc song song: {audio_result}"
             notify(25, err)
             return False, err, run_meta
-        sc["audio_path"] = audio_file
-        sc["audio_duration"] = get_audio_duration(audio_file)
-        notify(25 + (i + 1) / num_scenes * 15, f"Đã sinh giọng đọc phân cảnh {sc_num}/{num_scenes}")
+        notify(40, f"Đã sinh giọng đọc AI song song cho toàn bộ {num_scenes} phân cảnh.")
+    else:
+        notify(25, "Đang sinh giọng đọc AI (TTS) cho các phân cảnh...")
+        for i, sc in enumerate(scenes):
+            sc_num = sc.get("scene_num", i + 1)
+            audio_ext = ".wav" if voice_mode == "clone_local" and content_mode != "chinese_teaching_vi" else ".mp3"
+            audio_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}{audio_ext}")
+            if os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000:
+                safe_log(f"[✓] Tái sử dụng file âm thanh có sẵn cho cảnh {sc_num}: {audio_file}")
+                sc["audio_path"] = audio_file
+                sc["audio_duration"] = get_audio_duration(audio_file)
+                notify(25 + (i + 1) / num_scenes * 15, f"Đã có giọng đọc phân cảnh {sc_num}/{num_scenes}")
+                continue
+
+            if content_mode == "chinese_teaching_vi":
+                clean_narr_vi = clean_vietnamese_tts_text(str(sc.get("narration_vi", "")))
+                clean_use_vi = clean_vietnamese_tts_text(str(sc.get("usage_vi", "")))
+                audio_ok, audio_result = generate_multivoice_tts(
+                    [
+                        (clean_narr_vi, voice, "+0%"),
+                        (str(sc.get("chinese_text", "")), chinese_voice, "-5%"),
+                        (str(sc.get("chinese_text", "")), chinese_voice, "-15%"),
+                        (" ".join(part for part in [
+                            f"Đọc là {sc.get('pinyin', '')}." if sc.get("pinyin") else "",
+                            clean_use_vi,
+                        ] if part), voice, "+0%"),
+                    ],
+                    audio_file,
+                )
+            elif voice_mode == "clone_local":
+                audio_ok, audio_result = generate_cloned_tts(
+                    text=sc["narration"], output_path=audio_file,
+                    reference_audio=voice_reference_path, language=language,
+                )
+            else:
+                audio_ok, audio_result = generate_tts(
+                    text=sc["narration"], output_path=audio_file, voice=voice, rate="+0%"
+                )
+            if not audio_ok or not os.path.exists(audio_file):
+                err = f"Lỗi giọng đọc cảnh {sc_num}: {audio_result}"
+                notify(25, err)
+                return False, err, run_meta
+            sc["audio_path"] = audio_file
+            sc["audio_duration"] = get_audio_duration(audio_file)
+            notify(25 + (i + 1) / num_scenes * 15, f"Đã sinh giọng đọc phân cảnh {sc_num}/{num_scenes}")
 
     # 3. SINH BỐI CẢNH AI RIÊNG BIỆT CHO TỪNG PHÂN CẢNH (GOOGLE FLOW / FALLBACK)
-    notify(45, "Bắt đầu sinh bối cảnh hình ảnh AI riêng biệt cho từng phân cảnh...")
-    for i, sc in enumerate(scenes):
-        sc_num = sc.get("scene_num", i + 1)
-        prompt = sc.get("video_prompt") or sc.get("narration") or "Stickman cinematic scene"
-        step_pct = 45 + (i / num_scenes) * 30
-        notify(step_pct, f"Đang tạo bối cảnh phân cảnh {sc_num}/{num_scenes}...")
+    if turbo_mode and image_engine == "flow" and media_mode == "flow_image":
+        notify(45, f"Bắt đầu sinh bối cảnh hình ảnh AI dạng Turbo Batch ({flow_workers} workers) cho {num_scenes} phân cảnh...")
+        def _flow_batch_cb(cur: int, msg: str):
+            notify(45 + (cur / max(1, num_scenes)) * 30, msg)
 
-        vid_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}.mp4")
-        img_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}_bg.png")
-
-        # Kiểm tra xem phân cảnh đã có sẵn file hợp lệ từ lần chạy trước hay không (tái sử dụng thông minh)
-        if os.path.exists(vid_file) and os.path.getsize(vid_file) > 10000:
-            safe_log(f"[✓] Tái sử dụng clip video có sẵn cho cảnh {sc_num}: {vid_file}")
-            sc["video_path"] = vid_file
-            sc["use_video_ai"] = True
-            continue
-
-        if os.path.exists(img_file) and os.path.getsize(img_file) > 5000:
-            safe_log(f"[✓] Tái sử dụng ảnh có sẵn cho cảnh {sc_num}: {img_file}")
-            sc["image_path"] = img_file
-            sc["use_video_ai"] = False
-            continue
-
-        media_ok = False
-        try_flow_video = image_engine == "flow" and (
-            media_mode == "flow_video" or (media_mode == "hybrid" and i == 0)
+        flow_batch_ok, _, _ = generate_flow_batch_queue(
+            scenes=scenes,
+            temp_dir=video_work_dir,
+            output_dir=video_work_dir,
+            max_workers=flow_workers,
+            orientation=orientation,
+            style_preset=style_preset,
+            progress_callback=_flow_batch_cb,
+            status_callback=_flow_batch_cb,
         )
+        if not flow_batch_ok:
+            err = "Lỗi sinh ảnh Turbo Batch: Không thể tạo đủ ảnh hợp lệ cho các phân cảnh."
+            notify(45, err)
+            return False, err, run_meta
+        notify(75, f"Đã hoàn thành sinh bối cảnh Turbo Batch cho toàn bộ {num_scenes} phân cảnh.")
+    else:
+        notify(45, "Bắt đầu sinh bối cảnh hình ảnh AI riêng biệt cho từng phân cảnh...")
+        for i, sc in enumerate(scenes):
+            sc_num = sc.get("scene_num", i + 1)
+            prompt = sc.get("video_prompt") or sc.get("narration") or "Stickman cinematic scene"
+            step_pct = 45 + (i / num_scenes) * 30
+            notify(step_pct, f"Đang tạo bối cảnh phân cảnh {sc_num}/{num_scenes}...")
 
-        if try_flow_video:
-            # Sinh video qua Google Flow (kiên trì chờ lấy video trực tiếp, KHÔNG fallback sang ảnh)
-            notify(step_pct, f"Đang kết nối Google Flow sinh video cho cảnh {sc_num}/{num_scenes} (chế độ chờ video trực tiếp)...")
+            vid_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}.mp4")
+            img_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}_bg.png")
 
-            def flow_status_cb(sec: int, text: str):
-                notify(step_pct, f"Cảnh {sc_num}/{num_scenes}: Google Flow đang render clip ({sec}s)... Vui lòng đợi.")
-
-            ok_vid, res_vid = generate_flow_video(
-                prompt=prompt,
-                output_path=vid_file,
-                orientation=orientation,
-                style_preset=style_preset,
-                status_callback=flow_status_cb,
-            )
-            if ok_vid and os.path.exists(vid_file) and os.path.getsize(vid_file) > 0:
+            # Kiểm tra xem phân cảnh đã có sẵn file hợp lệ từ lần chạy trước hay không (tái sử dụng thông minh)
+            if os.path.exists(vid_file) and os.path.getsize(vid_file) > 10000:
+                safe_log(f"[✓] Tái sử dụng clip video có sẵn cho cảnh {sc_num}: {vid_file}")
                 sc["video_path"] = vid_file
                 sc["use_video_ai"] = True
-                media_ok = True
-                safe_log(f"[✓] Cảnh {sc_num} hoàn tất bằng Google Flow video clip.")
-            else:
-                # Người dùng yêu cầu: KHÔNG fallback sang ảnh, không fallback sang SD hay khung hình rỗng!
-                err_msg = f"Lỗi sinh video Flow cảnh {sc_num}: {res_vid}. Hệ thống dừng theo yêu cầu không fallback sang ảnh."
-                safe_log(f"[X] {err_msg}")
-                notify(step_pct, err_msg)
-                return False, err_msg, run_meta
+                continue
 
-        elif image_engine == "flow":
-            notify(step_pct, f"Đang tạo ảnh Flow cho cảnh {sc_num}/{num_scenes}...")
-            res_img = ""
-            for flow_attempt in range(1, 4):
-                ok_img, res_img = generate_flow_image(
+            if os.path.exists(img_file) and os.path.getsize(img_file) > 5000:
+                safe_log(f"[✓] Tái sử dụng ảnh có sẵn cho cảnh {sc_num}: {img_file}")
+                sc["image_path"] = img_file
+                sc["use_video_ai"] = False
+                continue
+
+            media_ok = False
+            try_flow_video = image_engine == "flow" and (
+                media_mode == "flow_video" or (media_mode == "hybrid" and i == 0)
+            )
+
+            if try_flow_video:
+                # Sinh video qua Google Flow (kiên trì chờ lấy video trực tiếp, KHÔNG fallback sang ảnh)
+                notify(step_pct, f"Đang kết nối Google Flow sinh video cho cảnh {sc_num}/{num_scenes} (chế độ chờ video trực tiếp)...")
+
+                def flow_status_cb(sec: int, text: str):
+                    notify(step_pct, f"Cảnh {sc_num}/{num_scenes}: Google Flow đang render clip ({sec}s)... Vui lòng đợi.")
+
+                ok_vid, res_vid = generate_flow_video(
                     prompt=prompt,
-                    output_path=img_file,
+                    output_path=vid_file,
                     orientation=orientation,
                     style_preset=style_preset,
+                    status_callback=flow_status_cb,
                 )
-                if ok_img and os.path.exists(img_file) and os.path.getsize(img_file) > 0:
-                    sc["image_path"] = img_file
-                    sc["use_video_ai"] = False
+                if ok_vid and os.path.exists(vid_file) and os.path.getsize(vid_file) > 0:
+                    sc["video_path"] = vid_file
+                    sc["use_video_ai"] = True
                     media_ok = True
-                    safe_log(f"[✓] Cảnh {sc_num} hoàn tất bằng ảnh Google Flow + chuyển động dựng.")
-                    break
-                if flow_attempt < 3:
-                    wait_seconds = 15 * flow_attempt
-                    notify(step_pct, f"Flow chưa trả ảnh cảnh {sc_num}; tự thử lại {flow_attempt + 1}/3 sau {wait_seconds} giây...")
-                    time.sleep(wait_seconds)
-            if not media_ok:
-                # Cơ chế Tự Phục Hồi (Self-Healing): Nếu Google Flow quá tải hoặc nghẽn mạng,
-                # tự động kế thừa ảnh bối cảnh hợp lệ liền trước kết hợp Visual Beats để tiếp tục dây chuyền,
-                # TUYỆT ĐỐI KHÔNG HỦY BỎ TIẾN TRÌNH, đảm bảo video luôn hoàn thành 100% kèm giọng đọc và phụ đề.
-                fallback_source = None
-                for prev_sc in reversed(scenes[:i]):
-                    prev_img = prev_sc.get("image_path")
-                    if prev_img and os.path.exists(prev_img) and os.path.getsize(prev_img) > 0:
-                        fallback_source = prev_img
-                        break
-
-                if fallback_source:
-                    import shutil
-                    shutil.copy2(fallback_source, img_file)
-                    sc["image_path"] = img_file
-                    sc["use_video_ai"] = False
-                    media_ok = True
-                    safe_log(f"[!] Cảnh {sc_num}: Google Flow quá tải ({res_img}). Tự động phục hồi bối cảnh để tiếp tục dây chuyền xuất video.")
-                    notify(step_pct, f"Cảnh {sc_num}: Google Flow quá tải. Tự động phục hồi bối cảnh để hoàn thành video...")
+                    safe_log(f"[✓] Cảnh {sc_num} hoàn tất bằng Google Flow video clip.")
                 else:
-                    err_msg = f"Lỗi sinh ảnh Flow cảnh {sc_num}: {res_img}."
+                    # Người dùng yêu cầu: KHÔNG fallback sang ảnh, không fallback sang SD hay khung hình rỗng!
+                    err_msg = f"Lỗi sinh video Flow cảnh {sc_num}: {res_vid}. Hệ thống dừng theo yêu cầu không fallback sang ảnh."
                     safe_log(f"[X] {err_msg}")
                     notify(step_pct, err_msg)
                     return False, err_msg, run_meta
 
-        elif not media_ok:
-            # Chỉ dùng SD 1.5 khi người dùng chủ động chọn engine local khác Flow
-            notify(step_pct, f"Đang tạo hình ảnh phân cảnh {sc_num} bằng engine local...")
-            try:
-                from src.image_service import generate_single_image
-                ok_sd, res_sd = generate_single_image(
-                    prompt=prompt,
-                    output_path=img_file,
-                    orientation=orientation,
-                    style_preset=style_preset
-                )
-                if ok_sd and os.path.exists(img_file) and os.path.getsize(img_file) > 0:
-                    sc["image_path"] = img_file
-                    sc["use_video_ai"] = False
-                    media_ok = True
-            except Exception as e_sd:
-                safe_log(f"[!] Fallback SD lỗi: {e_sd}")
+            elif image_engine == "flow":
+                notify(step_pct, f"Đang tạo ảnh Flow cho cảnh {sc_num}/{num_scenes}...")
+                res_img = ""
+                for flow_attempt in range(1, 4):
+                    ok_img, res_img = generate_flow_image(
+                        prompt=prompt,
+                        output_path=img_file,
+                        orientation=orientation,
+                        style_preset=style_preset,
+                    )
+                    if ok_img and os.path.exists(img_file) and os.path.getsize(img_file) > 0:
+                        sc["image_path"] = img_file
+                        sc["use_video_ai"] = False
+                        media_ok = True
+                        safe_log(f"[✓] Cảnh {sc_num} hoàn tất bằng ảnh Google Flow + chuyển động dựng.")
+                        break
+                    if flow_attempt < 3:
+                        wait_seconds = 15 * flow_attempt
+                        notify(step_pct, f"Flow chưa trả ảnh cảnh {sc_num}; tự thử lại {flow_attempt + 1}/3 sau {wait_seconds} giây...")
+                        time.sleep(wait_seconds)
+                if not media_ok:
+                    # Cơ chế Tự Phục Hồi (Self-Healing): Nếu Google Flow quá tải hoặc nghẽn mạng,
+                    # tự động kế thừa ảnh bối cảnh hợp lệ liền trước kết hợp Visual Beats để tiếp tục dây chuyền,
+                    # TUYỆT ĐỐI KHÔNG HỦY BỎ TIẾN TRÌNH, đảm bảo video luôn hoàn thành 100% kèm giọng đọc và phụ đề.
+                    fallback_source = None
+                    for prev_sc in reversed(scenes[:i]):
+                        prev_img = prev_sc.get("image_path")
+                        if prev_img and os.path.exists(prev_img) and os.path.getsize(prev_img) > 0:
+                            fallback_source = prev_img
+                            break
 
-        # Nếu không có tài nguyên hình ảnh hợp lệ, báo lỗi rõ ràng, tuyệt đối không tạo khung hình giả
-        if not media_ok:
-            err = f"Lỗi sinh ảnh phân cảnh {sc_num}: Không tạo được bối cảnh hợp lệ từ engine."
-            notify(step_pct, err)
-            return False, err, run_meta
+                    if fallback_source:
+                        import shutil
+                        shutil.copy2(fallback_source, img_file)
+                        sc["image_path"] = img_file
+                        sc["use_video_ai"] = False
+                        media_ok = True
+                        safe_log(f"[!] Cảnh {sc_num}: Google Flow quá tải ({res_img}). Tự động phục hồi bối cảnh để tiếp tục dây chuyền xuất video.")
+                        notify(step_pct, f"Cảnh {sc_num}: Google Flow quá tải. Tự động phục hồi bối cảnh để hoàn thành video...")
+                    else:
+                        err_msg = f"Lỗi sinh ảnh Flow cảnh {sc_num}: {res_img}."
+                        safe_log(f"[X] {err_msg}")
+                        notify(step_pct, err_msg)
+                        return False, err_msg, run_meta
+
+            elif not media_ok:
+                # Chỉ dùng SD 1.5 khi người dùng chủ động chọn engine local khác Flow
+                notify(step_pct, f"Đang tạo hình ảnh phân cảnh {sc_num} bằng engine local...")
+                try:
+                    from src.image_service import generate_single_image
+                    ok_sd, res_sd = generate_single_image(
+                        prompt=prompt,
+                        output_path=img_file,
+                        orientation=orientation,
+                        style_preset=style_preset
+                    )
+                    if ok_sd and os.path.exists(img_file) and os.path.getsize(img_file) > 0:
+                        sc["image_path"] = img_file
+                        sc["use_video_ai"] = False
+                        media_ok = True
+                except Exception as e_sd:
+                    safe_log(f"[!] Fallback SD lỗi: {e_sd}")
+
+            # Nếu không có tài nguyên hình ảnh hợp lệ, báo lỗi rõ ràng, tuyệt đối không tạo khung hình giả
+            if not media_ok:
+                err = f"Lỗi sinh ảnh phân cảnh {sc_num}: Không tạo được bối cảnh hợp lệ từ engine."
+                notify(step_pct, err)
+                return False, err, run_meta
 
     # 4. PHÂN TÍCH TIMESTAMPS PHỤ ĐỀ (WHISPER)
     notify(78, "Đang tạo phụ đề chính xác từ lời thoại nguồn...")
@@ -481,6 +567,9 @@ def run_batch_video_loop(
     style_preset: str = DEFAULT_IMAGE_STYLE,
     orientation: str = "vertical",
     image_engine: str = "flow",
+    turbo_mode: bool = False,
+    flow_workers: int = 4,
+    tts_workers: int = 4,
     progress_callback: Optional[Callable[[int, int, float, str], None]] = None
 ) -> Tuple[List[str], List[Dict[str, Any]]]:
     """
@@ -489,7 +578,7 @@ def run_batch_video_loop(
     Trả về: (danh_sách_file_video_thành_công, danh_sách_thông_tin_meta)
     """
     safe_log("=" * 65)
-    safe_log(f"🚀 BẮT ĐẦU VÒNG LẶP SẢN XUẤT HÀNG LOẠT ({count} VIDEO)")
+    safe_log(f"🚀 BẮT ĐẦU VÒNG LẶP SẢN XUẤT HÀNG LOẠT ({count} VIDEO) [Turbo={turbo_mode}]")
     safe_log(f"   Prompt gốc: \"{prompt[:60]}...\"")
     safe_log(f"   Engine sinh bối cảnh: {image_engine.upper()}")
     safe_log("=" * 65)
@@ -520,6 +609,9 @@ def run_batch_video_loop(
             style_preset=style_preset,
             orientation=orientation,
             image_engine=image_engine,
+            turbo_mode=turbo_mode,
+            flow_workers=flow_workers,
+            tts_workers=tts_workers,
             progress_callback=single_video_callback
         )
 

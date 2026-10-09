@@ -32,4 +32,5 @@ scratch/
 flow_screen.png
 flow_after_click.png
 debug_*.png
+.agents/
 
