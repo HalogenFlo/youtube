@@ -350,9 +350,9 @@ def generate_flow_batch_queue(
     os.makedirs(effective_dir, exist_ok=True)
     tasks = []
     for i, sc in enumerate(scenes):
-        scene_idx = sc.get("scene_num") or (i + 1)
+        scene_idx = (sc.get("scene_num") if isinstance(sc, dict) else None) or (i + 1)
         out_path = os.path.join(effective_dir, f"scene_flow_{scene_idx}.png")
-        prompt = sc.get("video_prompt") or sc.get("narration") or "Cinematic scene"
+        prompt = (sc.get("video_prompt") or sc.get("narration") if isinstance(sc, dict) else str(sc)) or "Cinematic scene"
         task = FlowImageTask(
             scene_index=scene_idx,
             prompt=prompt,
@@ -382,8 +382,9 @@ def generate_flow_batch_queue(
         image_paths.append(task.output_path)
         task_reports.append(asdict(task))
         if task.status in ("completed", "fallback") and os.path.exists(task.output_path):
-            sc["image_path"] = task.output_path
-            sc["use_video_ai"] = False
+            if isinstance(sc, dict):
+                sc["image_path"] = task.output_path
+                sc["use_video_ai"] = False
 
     return success, image_paths, task_reports
 
@@ -411,7 +412,7 @@ def generate_flow_batch(
     image_paths = []
     for i, sc in enumerate(scenes):
         out_path = os.path.join(temp_dir, f"scene_flow_{i+1}.png")
-        prompt = sc.get("video_prompt") or sc.get("narration") or "Cinematic scene"
+        prompt = (sc.get("video_prompt") or sc.get("narration") if isinstance(sc, dict) else str(sc)) or "Cinematic scene"
         ok, res = generate_flow_image(
             prompt=prompt,
             output_path=out_path,

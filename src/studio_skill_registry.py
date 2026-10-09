@@ -70,10 +70,13 @@ def record_skill_outcome(skill_ids: List[str], success: bool) -> None:
     """Cập nhật điểm EMA từ kết quả sản xuất thật."""
     with _LOCK:
         scores = _load_scores()
+        if not isinstance(scores, dict):
+            scores = {}
         outcome = 100.0 if success else 35.0
         for skill_id in skill_ids:
             base = next((item["base_score"] for item in SKILL_CATALOG if item["id"] == skill_id), 75)
-            current = scores.get(skill_id, {"score": base, "runs": 0})
+            raw_current = scores.get(skill_id)
+            current = raw_current if isinstance(raw_current, dict) else {"score": base, "runs": 0}
             runs = int(current.get("runs", 0)) + 1
             alpha = 0.18
             score = (1 - alpha) * float(current.get("score", base)) + alpha * outcome

@@ -400,14 +400,15 @@ def generate_scenes_tts_parallel(
     tasks_to_run = []
 
     for idx, sc in enumerate(scenes):
-        sc_num = sc.get("scene_num") or (idx + 1)
+        sc_num = (sc.get("scene_num") if isinstance(sc, dict) else None) or (idx + 1)
         audio_ext = ".wav" if voice_mode == "clone_local" and content_mode != "chinese_teaching_vi" else ".mp3"
         audio_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}{audio_ext}")
 
         # Kiểm tra cache tái sử dụng
         if os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000:
-            sc["audio_path"] = audio_file
-            sc["audio_duration"] = get_audio_duration(audio_file)
+            if isinstance(sc, dict):
+                sc["audio_path"] = audio_file
+                sc["audio_duration"] = get_audio_duration(audio_file)
             with lock:
                 completed_count += 1
                 curr_done = completed_count
@@ -422,16 +423,16 @@ def generate_scenes_tts_parallel(
     if not tasks_to_run:
         return True, "Đã có sẵn giọng đọc cho toàn bộ phân cảnh."
 
-    def _worker(task_tuple: Tuple[int, Dict[str, Any], str], delay: float = 0.0) -> Tuple[int, bool, str, str, float]:
+    def _worker(task_tuple: Tuple[int, Any, str], delay: float = 0.0) -> Tuple[int, bool, str, str, float]:
         if delay > 0:
             time.sleep(delay)
         t_idx, t_sc, t_audio_file = task_tuple
-        t_sc_num = t_sc.get("scene_num") or (t_idx + 1)
+        t_sc_num = (t_sc.get("scene_num") if isinstance(t_sc, dict) else None) or (t_idx + 1)
         try:
             if content_mode == "chinese_teaching_vi":
-                clean_narr_vi = clean_vietnamese_tts_text(str(t_sc.get("narration_vi", "")))
-                clean_use_vi = clean_vietnamese_tts_text(str(t_sc.get("usage_vi", "")))
-                chinese_text = str(t_sc.get("chinese_text", "")).strip()
+                clean_narr_vi = clean_vietnamese_tts_text(str(t_sc.get("narration_vi", "") if isinstance(t_sc, dict) else t_sc))
+                clean_use_vi = clean_vietnamese_tts_text(str(t_sc.get("usage_vi", "") if isinstance(t_sc, dict) else ""))
+                chinese_text = str(t_sc.get("chinese_text", "") if isinstance(t_sc, dict) else "").strip()
                 audio_ok, audio_result = generate_multivoice_tts(
                     [
                         (clean_narr_vi, voice, "+0%"),
@@ -452,15 +453,17 @@ def generate_scenes_tts_parallel(
                 if clone_fn is None:
                     return t_idx, False, "Chức năng nhân bản giọng đọc (voice clone) không khả dụng.", "", 0.0
 
+                narr_text = t_sc.get("narration", "") if isinstance(t_sc, dict) else str(t_sc)
                 audio_ok, audio_result = clone_fn(
-                    text=t_sc.get("narration", ""),
+                    text=narr_text,
                     output_path=t_audio_file,
                     reference_audio=voice_reference_path,
                     language=language,
                 )
             else:
+                narr_text = t_sc.get("narration", "") if isinstance(t_sc, dict) else str(t_sc)
                 audio_ok, audio_result = generate_tts(
-                    text=t_sc.get("narration", ""),
+                    text=narr_text,
                     output_path=t_audio_file,
                     voice=voice,
                     rate=rate,

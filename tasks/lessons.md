@@ -191,3 +191,25 @@
      - Tự động quét và đưa các running job mồ côi (không có active worker thread) về `queued` để giải phóng hàng đợi, đảm bảo dây chuyền luôn tuần tự bốc việc tiếp theo ngay khi có chỗ trống.
   4. **Cung cấp nút reset chủ động trên UI**:
      - Bổ sung nút `🔄 Khởi động lại dây chuyền (Reset Worker)` để người dùng có thể tự giải phóng trạng thái kẹt và đánh thức worker bất cứ lúc nào.
+
+
+## 19. Xử Lý Phòng Thủ Kiểu Dữ Liệu LLM & State JSON (Chống Lỗi 'str' object has no attribute 'get')
+- **Hiện tượng lỗi**:
+  - Dây chuyền sản xuất tự động dừng lại đột ngột với thông báo: `Dây chuyền gặp lỗi: 'str' object has no attribute 'get'` (thể hiện trên giao diện là: `Cần xử lý · Dây chuyền gặp lỗi: 'str' object has no attribute 'get'`).
+- **Nguyên nhân gốc rễ**:
+  1. *Tính phi tất định của LLM (LLM Non-Determinism)*: Khi yêu cầu Ollama sinh hoặc biên tập kịch bản phân cảnh (`scenes`), mặc dù system prompt yêu cầu JSON object, mô hình đôi khi trả về danh sách các chuỗi thô: `{"scenes": ["Cảnh 1: Lời dẫn...", "Cảnh 2: Lời dẫn..."]}` thay vì danh sách các dict `[{"scene_num": 1, "narration": "..."}]`.
+  2. *Giả định ngây thơ về cấu trúc dữ liệu*: Các hàm xử lý kịch bản (`_sanitize_scenes`, `build_exact_tts_timestamps`, `split_scenes_into_parts`, `compile_video_pipeline`, `generate_video_metadata`, `generate_scenes_tts_parallel`, `generate_flow_batch_queue`) lặp qua các phần tử của `scenes` và gọi trực tiếp `scene.get(...)` mà không kiểm tra `isinstance(scene, dict)`.
+  3. *Truy xuất thuộc tính lồng nhau không an toàn*: Trong `autonomous_factory.py`: `metadata.get("editorial_report", {}).get(...)` nếu `metadata["editorial_report"]` tồn tại và mang kiểu chuỗi `str`, giá trị fallback `{}` bị bỏ qua, dẫn đến việc gọi `.get()` trên `str`.
+  4. *Dữ liệu ngoại vi thoái hóa*: File lưu điểm kỹ năng (`studio_skill_scores.json`) hoặc danh sách tabs từ Chrome CDP (`/json/list`) có thể chứa giá trị string hoặc phần tử không phải dict.
+- **Quy tắc phòng ngừa**:
+  1. **Chuẩn hóa phòng thủ (Defensive Data Normalization) ngay tại biên (Boundary)**:
+     - Trong `_sanitize_scenes` và `produce_single_video_pipeline`: Kiểm tra từng phần tử `raw_item`. Nếu là `str`, tự động bọc thành dict hợp lệ `{"scene_num": i, "narration": raw_item, "video_prompt": ...}` trước khi chuyển tiếp cho bất kỳ module nào khác.
+  2. **Luôn kiểm tra `isinstance(target, dict)` trước khi gọi `.get()`**:
+     - Thay vì `metadata.get("editorial_report", {}).get(...)`, luôn tách thành:
+       ```python
+       editorial_report = metadata.get("editorial_report") if isinstance(metadata, dict) else {}
+       skill_ids = editorial_report.get("selected_skill_ids", []) if isinstance(editorial_report, dict) else []
+       ```
+     - Trong các hàm xử lý scenes, audio, timestamps, metadata: Sử dụng `s.get(...) if isinstance(s, dict) else fallback`.
+  3. **Ghi nhận Full Traceback khi bắt Exception**:
+     - Trong vòng lặp worker của `autonomous_factory.py`: Khi có ngoại lệ, ghi lại `traceback.format_exc()` vào safe_log để lập tức phát hiện chính xác dòng và file phát sinh lỗi, không bị giấu thông tin.

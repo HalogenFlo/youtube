@@ -184,7 +184,7 @@ def split_scenes_into_parts(
     current_duration = 0.0
     
     for scene in scenes:
-        scene_dur = scene.get("audio_duration", 5.0)
+        scene_dur = float(scene.get("audio_duration", 5.0)) if isinstance(scene, dict) else 5.0
         
         # Nếu thêm scene này vào vượt quá giới hạn và phần hiện tại đã có kịch bản
         if current_duration + scene_dur > max_duration and current_part:
@@ -232,7 +232,7 @@ def compile_video_pipeline(
             print(f"--- Đang xử lý Phần {part_num}/{total_parts} ---")
             
             # Tính thời lượng phần hiện tại
-            part_duration = sum(s.get("audio_duration", 5.0) for s in part_scenes)
+            part_duration = sum((float(s.get("audio_duration", 5.0)) if isinstance(s, dict) else 5.0) for s in part_scenes)
             part_start_time = cumulative_time
             part_end_time = part_start_time + part_duration
             
@@ -262,8 +262,8 @@ def compile_video_pipeline(
             from moviepy.audio.AudioClip import AudioClip
 
             for scene in part_scenes:
-                audio_path = scene.get("audio_path", "")
-                audio_dur = float(scene.get("audio_duration", 5.0))
+                audio_path = scene.get("audio_path", "") if isinstance(scene, dict) else ""
+                audio_dur = float(scene.get("audio_duration", 5.0)) if isinstance(scene, dict) else 5.0
                 
                 # Load audio
                 audio_clip = None
@@ -284,7 +284,7 @@ def compile_video_pipeline(
 
                 # Load hình ảnh hoặc video
                 visual_clip = None
-                if scene.get("use_video_ai", False):
+                if isinstance(scene, dict) and scene.get("use_video_ai", False):
                     video_path = scene.get("video_path", "")
                     if video_path and os.path.exists(video_path) and os.path.getsize(video_path) > 0:
                         try:
@@ -296,7 +296,7 @@ def compile_video_pipeline(
                             visual_clip = None
 
                 if visual_clip is None:
-                    image_path = scene.get("image_path", "")
+                    image_path = scene.get("image_path", "") if isinstance(scene, dict) else ""
                     if image_path and os.path.exists(image_path) and os.path.getsize(image_path) > 0:
                         try:
                             visual_clip = apply_visual_beat_motion(image_path, audio_dur, orientation)

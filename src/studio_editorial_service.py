@@ -12,10 +12,28 @@ from src.studio_skill_registry import select_studio_skills
 
 
 def _sanitize_scenes(
-    scenes: List[Dict[str, Any]], target_scenes: int, content_mode: str = "knowledge"
+    scenes: Any, target_scenes: int, content_mode: str = "knowledge"
 ) -> List[Dict[str, Any]]:
     cleaned = []
-    for index, scene in enumerate(scenes[:max(1, target_scenes)], start=1):
+    if not isinstance(scenes, list):
+        scenes = [scenes] if scenes else []
+
+    for index, raw_item in enumerate(scenes[:max(1, target_scenes)], start=1):
+        if isinstance(raw_item, dict):
+            scene = dict(raw_item)
+        elif isinstance(raw_item, str):
+            scene = {
+                "scene_num": index,
+                "narration": raw_item.strip(),
+                "video_prompt": f"Scene {index}: distinct cinematic visual action, natural lighting",
+            }
+        else:
+            scene = {
+                "scene_num": index,
+                "narration": str(raw_item).strip(),
+                "video_prompt": f"Scene {index}: distinct cinematic visual action",
+            }
+
         narration = str(scene.get("narration", "")).strip()
         narration_vi = str(scene.get("narration_vi", "")).strip()
         chinese_text = str(scene.get("chinese_text", "")).strip()

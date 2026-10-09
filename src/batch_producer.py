@@ -204,13 +204,18 @@ def split_prompt_to_video_topics(main_prompt: str, count: int, language: str = "
     return topics
 
 
-def build_exact_tts_timestamps(scenes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def build_exact_tts_timestamps(scenes: List[Any]) -> List[Dict[str, Any]]:
     """Tạo timestamp từ đúng lời thoại nguồn, tránh Whisper viết sai thuật ngữ/toán học."""
     words_out: List[Dict[str, Any]] = []
     offset = 0.0
     for scene in scenes:
-        narration_words = str(scene.get("narration", "")).split()
-        duration = max(0.1, float(scene.get("audio_duration", 5.0)))
+        if isinstance(scene, dict):
+            narration_words = str(scene.get("narration", "")).split()
+            duration = max(0.1, float(scene.get("audio_duration", 5.0)))
+        else:
+            narration_words = str(scene).split()
+            duration = 5.0
+
         if narration_words:
             usable_duration = duration * 0.94
             word_duration = usable_duration / len(narration_words)
@@ -224,11 +229,17 @@ def build_exact_tts_timestamps(scenes: List[Dict[str, Any]]) -> List[Dict[str, A
     return words_out
 
 
-def normalize_chinese_teaching_scenes(scenes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def normalize_chinese_teaching_scenes(scenes: List[Any]) -> List[Dict[str, Any]]:
     """Chuẩn hóa dữ liệu bài học thành lời phụ đề hoàn chỉnh cho pipeline hiện có."""
     normalized = []
     for index, original in enumerate(scenes, start=1):
-        scene = dict(original)
+        scene = dict(original) if isinstance(original, dict) else {
+            "scene_num": index,
+            "narration_vi": str(original),
+            "chinese_text": "",
+            "pinyin": "",
+            "usage_vi": "",
+        }
         narration_vi = clean_vietnamese_tts_text(str(scene.get("narration_vi", "")).strip())
         chinese_text = str(scene.get("chinese_text", "")).strip()
         pinyin = str(scene.get("pinyin", "")).strip()
@@ -324,12 +335,27 @@ def produce_single_video_pipeline(
             target_scenes=max(1, int(target_scenes)), language=language,
             content_mode=content_mode,
         )
-        run_meta["editorial_report"] = editorial_report
+        run_meta["editorial_report"] = editorial_report if isinstance(editorial_report, dict) else {}
     else:
         scenes = script_data["scenes"][:max(1, int(target_scenes))]
         if content_mode == "chinese_teaching_vi":
             scenes = normalize_chinese_teaching_scenes(scenes)
         run_meta["editorial_report"] = {"mode": "single_writer", "approved": True, "selected_skill_ids": []}
+
+    # Đảm bảo 100% scenes là danh sách các dict hợp lệ, không bao giờ để sót string
+    normalized_scenes: List[Dict[str, Any]] = []
+    for idx, sc in enumerate(scenes, start=1):
+        if isinstance(sc, dict):
+            sc_dict = dict(sc)
+            sc_dict["scene_num"] = int(sc_dict.get("scene_num") or idx)
+            normalized_scenes.append(sc_dict)
+        else:
+            normalized_scenes.append({
+                "scene_num": idx,
+                "narration": str(sc).strip(),
+                "video_prompt": f"Scene {idx}: cinematic visual representation of {str(sc).strip()[:50]}",
+            })
+    scenes = normalized_scenes
     num_scenes = len(scenes)
     notify(20, f"Đã lập kịch bản gồm {num_scenes} phân cảnh độc lập.")
     if _is_cancelled():

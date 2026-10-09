@@ -83,21 +83,25 @@ def get_flow_readiness(port: int = 9222) -> str:
         request = urllib.request.Request(f"http://127.0.0.1:{port}/json/list", method="GET")
         with urllib.request.urlopen(request, timeout=2.0) as response:
             tabs = json.loads(response.read().decode("utf-8"))
+        if not isinstance(tabs, list):
+            return "disconnected"
+
+        flow_urls = [
+            str(tab.get("url", ""))
+            for tab in tabs
+            if isinstance(tab, dict) and "flow.google.com" in str(tab.get("url", ""))
+        ]
+        if any("/404" in url for url in flow_urls):
+            return "disconnected"
+        if any("/project/" in url or "/tool/" in url for url in flow_urls):
+            return "ready"
+        if any("/about" not in url and "accounts.google.com" not in url for url in flow_urls):
+            return "ready"
+        if flow_urls:
+            return "login_required"
+        return "login_required"
     except Exception:
         return "disconnected"
-
-    flow_urls = [str(tab.get("url", "")) for tab in tabs if "flow.google.com" in str(tab.get("url", ""))]
-    if any("/404" in url for url in flow_urls):
-        return "disconnected"
-    if any("/project/" in url or "/tool/" in url for url in flow_urls):
-        return "ready"
-    # Người dùng đã đăng nhập có thể đang ở dashboard gốc `flow.google.com/?pli=1`.
-    # Phiên chưa đăng nhập bị chuyển rõ ràng sang `/about` hoặc accounts.google.com.
-    if any("/about" not in url and "accounts.google.com" not in url for url in flow_urls):
-        return "ready"
-    if flow_urls:
-        return "login_required"
-    return "login_required"
 
 
 class FlowBrowserController:

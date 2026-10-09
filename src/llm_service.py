@@ -244,12 +244,15 @@ def _metadata_risk_flags(topic: str, narration: str) -> List[str]:
 
 def generate_video_metadata(
     topic: str,
-    scenes: List[Dict[str, Any]],
+    scenes: List[Any],
     language: str = "vi",
     model: str = OLLAMA_MODEL_DEFAULT,
 ) -> Tuple[bool, Dict[str, Any]]:
     """Sinh tiêu đề, mô tả và hashtag sẵn sàng để đăng cùng video."""
-    narration = " ".join(str(scene.get("narration", "")) for scene in scenes)
+    narration = " ".join(
+        (str(scene.get("narration", "")) if isinstance(scene, dict) else str(scene))
+        for scene in (scenes or [])
+    )
     lang_name = "tiếng Việt" if language == "vi" else "English"
     system_prompt = (
         "Bạn là chuyên gia metadata cho video kiến thức ngắn, tuân thủ chính sách YouTube và TikTok. "

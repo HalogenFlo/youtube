@@ -421,7 +421,8 @@ def _worker_loop() -> None:
                     )
                     continue
 
-                skill_ids = metadata.get("editorial_report", {}).get("selected_skill_ids", []) if isinstance(metadata, dict) else []
+                editorial_report = metadata.get("editorial_report") if isinstance(metadata, dict) else {}
+                skill_ids = editorial_report.get("selected_skill_ids", []) if isinstance(editorial_report, dict) else []
                 record_skill_outcome(skill_ids, success)
                 if success:
                     _update_job(
@@ -431,6 +432,8 @@ def _worker_loop() -> None:
                 else:
                     _update_job(job["id"], status="failed", progress=0, message=str(result), error=str(result))
             except Exception as exc:
+                import traceback
+                safe_log(f"[FACTORY WORKER] Ngoại lệ khi thực thi job {job.get('id')}:\n{traceback.format_exc()}")
                 with _LOCK:
                     was_skipped = current_job_id in _SKIP_REQUESTED_JOB_IDS
                     _SKIP_REQUESTED_JOB_IDS.discard(current_job_id)

@@ -517,3 +517,34 @@ Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow
   - [x] Viết unit test xác minh hủy việc tức thì và tự động giải phóng hàng đợi (`tests/test_instant_cancellation.py` - PASS 4/4).
   - [x] Chạy full test suite (`pytest`) đảm bảo 100% passed.
 - [x] **Task 5: Ghi chép bài học vào `tasks/lessons.md`** (Bài học 18)
+
+---
+
+## 22. Khắc Phục Triệt Để Lỗi Dây Chuyền: 'str' object has no attribute 'get' (Defensive Data Types & LLM Parsing)
+
+### 1. Phân tích nguyên nhân gốc rễ
+1. **Ollama / LLM trả về mảng chuỗi (`list[str]`) thay vì mảng từ điển (`list[dict]`)**:
+   - Khi Ollama sinh hoặc biên tập kịch bản phân cảnh (`scenes`), model đôi khi trả về `["Cảnh 1: Lời dẫn...", "Cảnh 2: ..."]`.
+   - Các hàm `_sanitize_scenes` (`studio_editorial_service.py`), `build_exact_tts_timestamps`, `produce_single_video_pipeline` (`batch_producer.py`), `tts_service.py`, `video_compiler.py`, `flow_image_service.py` giả định các phần tử trong `scenes` là `dict` và gọi `.get("narration")`, `.get("scene_num")`, `.get("audio_duration")`, gây ra `AttributeError: 'str' object has no attribute 'get'`.
+2. **Metadata hoặc Editorial Report bị trả về hoặc gán dạng `str`**:
+   - Trong `autonomous_factory.py`: `metadata.get("editorial_report", {}).get(...)` nếu `editorial_report` là `str`, hoặc trong `app_batch.py` nếu `metadata` là `str`.
+3. **Studio Skill Scores JSON hoặc CDP Tabs trả về kiểu không phải dict**:
+   - Trong `studio_skill_registry.py` và `flow_browser_service.py`: các lời gọi `.get()` trên phần tử khi dữ liệu bị thoái hóa thành `str`.
+
+### 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Viết Unit Test Tái Hiện (Red Phase)**
+  - [x] Tạo `tests/test_defensive_data_types.py` kiểm thử các trường hợp dữ liệu thô (string scenes, non-dict editorial_report, non-dict CDP tabs, string scores) - Đã tái hiện 5/5 FAILED ở Red Phase.
+- [x] **Task 2: Xử lý phòng thủ (Defensive Data Normalization) trong Core Services (Green Phase)**
+  - [x] `src/studio_editorial_service.py`: Chuẩn hóa `_sanitize_scenes` nhận cả `str` lẫn `dict`, tự động bọc chuỗi thành scene dict hợp lệ.
+  - [x] `src/batch_producer.py`: Chuẩn hóa an toàn `scenes` trong `produce_single_video_pipeline`, `build_exact_tts_timestamps`, `normalize_chinese_teaching_scenes`.
+  - [x] `src/autonomous_factory.py`: Bọc an toàn `metadata.get("editorial_report")`, log full traceback khi xảy ra ngoại lệ.
+  - [x] `src/app_batch.py`: Kiểm tra type-safe `isinstance(metadata, dict)` trước khi truy xuất các trường publishing/platforms/editorial.
+  - [x] `src/studio_skill_registry.py`: Kiểm tra type-safe `isinstance(current, dict)` trước khi cập nhật điểm.
+  - [x] `src/flow_browser_service.py`: Kiểm tra `isinstance(tab, dict)` trước khi đọc `tab.get("url")`.
+  - [x] `src/video_compiler.py`: Kiểm tra `isinstance(scene, dict)` trước khi đọc `scene.get("audio_duration")`.
+  - [x] `src/tts_service.py`: Kiểm tra `isinstance(sc, dict)` trước khi đọc `sc.get("scene_num")`.
+- [x] **Task 3: Khôi phục Job #5 về queued và kiểm chứng**
+  - [x] Đặt Job #5 về `status: "queued"`.
+  - [x] Chạy full test suite (`pytest`) đạt 100% passed (65/65 tests passed).
+- [x] **Task 4: Ghi chép sổ tay bài học (`tasks/lessons.md`)** (Bài học 19)
+

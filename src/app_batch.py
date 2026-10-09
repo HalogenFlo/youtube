@@ -95,18 +95,25 @@ def _render_job(job):
 
 
 def _render_completed_card(job, index):
-    metadata = job.get("metadata", {})
-    publishing = metadata.get("publishing", {})
+    raw_metadata = job.get("metadata")
+    metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
+    raw_publishing = metadata.get("publishing")
+    publishing = raw_publishing if isinstance(raw_publishing, dict) else {}
     output_path = job.get("output_path", "")
     title = publishing.get("title") or job.get("topic", "Video kiến thức")
-    hashtags = " ".join(publishing.get("hashtags", []))
-    platforms = publishing.get("platforms", {})
-    youtube_meta = platforms.get("youtube", {})
-    tiktok_meta = platforms.get("tiktok", {})
+    raw_hashtags = publishing.get("hashtags", [])
+    hashtags = " ".join(raw_hashtags) if isinstance(raw_hashtags, list) else str(raw_hashtags)
+    raw_platforms = publishing.get("platforms")
+    platforms = raw_platforms if isinstance(raw_platforms, dict) else {}
+    raw_yt = platforms.get("youtube")
+    youtube_meta = raw_yt if isinstance(raw_yt, dict) else {}
+    raw_tt = platforms.get("tiktok")
+    tiktok_meta = raw_tt if isinstance(raw_tt, dict) else {}
     youtube_title = youtube_meta.get("title", title)
     youtube_description = youtube_meta.get("description", publishing.get("description", ""))
     tiktok_caption = tiktok_meta.get("caption", publishing.get("tiktok_caption", youtube_description))
-    editorial = metadata.get("editorial_report", {})
+    raw_editorial = metadata.get("editorial_report")
+    editorial = raw_editorial if isinstance(raw_editorial, dict) else {}
     st.markdown(f"#### {index}. {title}")
     if output_path and os.path.exists(output_path):
         st.video(output_path)
