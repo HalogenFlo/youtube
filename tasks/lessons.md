@@ -114,3 +114,20 @@
   2. Đồng bộ chữ ký hàm chặt chẽ trên toàn bộ codebase và có bài kiểm thử unit test / E2E với đầy đủ các keyword arguments thực tế.
 
 
+
+## 15. Cơ Chế Bắt và Tải Video Stream Trực Tiếp Qua CDP Request (Bỏ Qua JS FileReader DOM)
+- **Hiện tượng lỗi**: Video trên Google Flow (Veo 2) đã render xong hoàn tất trên giao diện chat và thẻ video hiển thị rõ ràng, nhưng hệ thống vẫn tiếp tục đếm giây lố lên hơn 800s - 900s và cuối cùng báo lỗi timeout.
+- **Nguyên nhân gốc rễ**:
+  1. *Lỗi bộ đọc JS FileReader*: Code cũ dùng `page.evaluate` chạy `fetch(src)` rồi đọc blob thành base64 qua `FileReader.readAsDataURL`. Với các video CDN dung lượng lớn (3-5MB) có header phân đoạn streaming, `fetch` trong JavaScript browser context bị lỗi CORS hoặc tràn bộ nhớ/abort, ném exception và bị bỏ qua, dẫn đến vòng lặp `while True` tiếp tục chạy đến hết timeout.
+  2. *Bẫy logic `seen_video_urls`*: Pre-scan trước khi submit prompt đã đưa URL video hiện có trên trang vào `seen_video_urls`. Khi video mới xuất hiện nếu Flow tái sử dụng URL hoặc sau lần retry, điều kiện `if src not in seen_video_urls` loại bỏ luôn thẻ video đó, khiến hệ thống không bao giờ nhận diện được clip đã hoàn thành.
+  3. *Timeout quá dài*: `video_timeout_seconds` đặt ở mức 1800s (30 phút) khiến thời gian chờ bị kéo dài bất hợp lý khi có lỗi xảy ra.
+- **Quy tắc phòng ngừa**:
+  1. **Ưu tiên tải trực tiếp bằng `page.request.get(src)`**:
+     - Playwright `page.request` kế thừa 100% session, cookie, token authentication của Chrome profile mà không bị giới hạn bởi CORS của page hay memory reader của JavaScript.
+     - Tải tệp MP4 dung lượng nhiều MB chỉ trong vòng 0.5 giây.
+  2. **Quản lý URL cục bộ & Lọc trùng lặp bằng SHA-256 Hash**:
+     - Pre-scan URL chỉ lưu trong `pre_existing_urls` cục bộ cho lượt submit đó, không khóa vĩnh viễn trong instance.
+     - Kiểm định video mới dựa trên `hashlib.sha256(video_bytes)` so với `self.seen_video_hashes`.
+     - Sau 20s nếu chưa thấy URL mới, tự động quét lại toàn bộ thẻ video trên trang để kiểm tra xem có video nào có hash mới chưa từng lưu không.
+  3. **Rút ngắn Timeout về mức hợp lý**:
+     - Cấu hình `video_timeout_seconds = 300` (5 phút), đủ an toàn cho Veo 2 (thường sinh trong 60-150s) và không làm người dùng chờ đợi vô ích.

@@ -17,10 +17,10 @@ from src.flow_browser_service import load_flow_config, FlowBrowserController
 class TestFlowVideoNoFallback(unittest.TestCase):
 
     def test_flow_config_has_video_timeout(self):
-        """Kiểm tra flow_config có cấu hình video_timeout_seconds >= 1800."""
+        """Kiểm tra flow_config có cấu hình video_timeout_seconds hợp lý (>= 300s)."""
         cfg = load_flow_config()
         self.assertIn("video_timeout_seconds", cfg)
-        self.assertGreaterEqual(cfg["video_timeout_seconds"], 1800)
+        self.assertGreaterEqual(cfg["video_timeout_seconds"], 300)
 
     def test_network_response_matcher(self):
         """Kiểm tra logic nhận diện URL/Content-Type video (hỗ trợ HTTP 200 và 206 Partial Content)."""
@@ -85,6 +85,37 @@ class TestFlowVideoNoFallback(unittest.TestCase):
         self.assertFalse(success)
         mock_flow_img.assert_not_called()
         self.assertIn("Hệ thống dừng theo yêu cầu không fallback", err_msg)
+
+    def test_download_video_bytes_direct_request(self):
+        """Kiểm tra _download_video_bytes ưu tiên tải qua page.request.get cho URL HTTP/HTTPS."""
+        controller = FlowBrowserController()
+        mock_page = MagicMock()
+        mock_resp = MagicMock()
+        mock_resp.status = 200
+        mock_resp.body.return_value = b"A" * 15000  # Giả lập video bytes > 10KB
+        mock_page.request.get.return_value = mock_resp
+
+        data = controller._download_video_bytes(mock_page, "https://flow-content.google/video/test123")
+        self.assertIsNotNone(data)
+        self.assertEqual(len(data), 15000)
+        mock_page.request.get.assert_called_once_with("https://flow-content.google/video/test123", timeout=25000)
+        mock_page.evaluate.assert_not_called()
+
+    def test_download_video_bytes_fallback_evaluate(self):
+        """Kiểm tra _download_video_bytes fallback sang evaluate khi là blob: URL."""
+        import base64
+        controller = FlowBrowserController()
+        mock_page = MagicMock()
+        # Giả lập base64 data url từ FileReader
+        fake_content = b"VIDEO_BLOB_CONTENT_SAMPLE" * 1000
+        b64_str = base64.b64encode(fake_content).decode("utf-8")
+        mock_page.evaluate.return_value = f"data:video/mp4;base64,{b64_str}"
+
+        data = controller._download_video_bytes(mock_page, "blob:https://flow.google.com/test-blob-uuid")
+        self.assertIsNotNone(data)
+        self.assertEqual(data, fake_content)
+        mock_page.request.get.assert_not_called()
+        mock_page.evaluate.assert_called_once()
 
 
 if __name__ == "__main__":

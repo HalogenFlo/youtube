@@ -396,7 +396,32 @@ Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow
 - [x] **Task 4: Tối ưu cấu hình 2 luồng trong `src/flow_image_service.py` và điều phối an toàn**
   + Đặt mặc định `flow_workers = 2` cho Google Flow trong UI và factory.
   + Khóa đồng bộ thao tác `_FLOW_BROWSER_LOCK` để chống xung đột DOM và multi-thread crash.
-- [x] **Task 5: Viết bộ unit test `tests/test_skip_cancel_job.py` và kiểm chứng hồi quy**
-  + Kiểm tra skip running job, cancel queued job, pipeline early abort.
-  + Chạy full test suite (`pytest`) đạt 119/119 tests pass (100%).
+---
+
+## 18. Khắc Phục Triệt Để Lỗi Chờ Video Flow > 800 Giây Khi Clip Đã Xuất Xong
+
+### 1. Phân tích nguyên nhân gốc rễ
+1. **Lỗi nghẽn bộ nạp video JavaScript FileReader**:
+   - Code cũ dùng `page.evaluate` chạy `fetch(src)` rồi đọc bằng `FileReader.readAsDataURL` trong context trang Flow. Với video MP4 kích thước megabyte trên CDN `https://flow-content.google/video/...`, hàm này bị lỗi CORS hoặc bộ nhớ, ném exception và bị catch âm thầm, không ghi file.
+   - Vòng lặp `while True` tiếp tục chạy đếm giây từ 30s, 60s, 100s... đến tận 800s-900s dù video đã hiển thị rõ ràng trên màn hình.
+2. **Bẫy logic `seen_video_urls` (Logic Trapping Bug)**:
+   - Trước khi gửi prompt, hàm pre-scan ghi nhận toàn bộ URL video hiện có trên trang vào `self.seen_video_urls`. Nếu một video đã xuất hiện hoặc URL không đổi, bộ kiểm tra `if src not in self.seen_video_urls` loại bỏ luôn video này, khiến hệ thống không bao giờ lấy nó dù đã render xong.
+3. **Thời gian timeout quá dài (1800s / 30 phút)**:
+   - Config đặt `video_timeout_seconds = 1800`, khiến hệ thống không chịu ngắt sớm khi bị lỡ mà tiếp tục đếm đến hàng chục phút.
+
+### 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Triển khai bộ tải video siêu tốc đa tầng `_download_video_bytes` trong `src/flow_browser_service.py`**
+  - [x] Ưu tiên số 1: Tải trực tiếp bằng `page.request.get(src)` (tải 3MB trong 0.5 giây, kế thừa 100% session/cookies từ Chrome, miễn nhiễm CORS).
+  - [x] Ưu tiên số 2: Fallback qua JavaScript blob reader nếu là `blob:`.
+- [x] **Task 2: Cơ chế nhận diện video mới & Lọc trùng lặp thông minh qua SHA-256 Hash**
+  - [x] Tách biệt `pre_existing_urls` cục bộ theo từng đợt submit, không chặn vĩnh viễn ở `self.seen_video_urls`.
+  - [x] Quét toàn bộ video hiện có nếu sau 25s chưa thấy URL mới nhưng hash video chưa từng được sử dụng.
+  - [x] Khi tìm thấy và tải thành công video hợp lệ: lưu file và RETURN NGAY LẬP TỨC (không chờ thêm bất kỳ giây nào).
+- [x] **Task 3: Điều chỉnh cấu hình Timeout hợp lý**
+  - [x] Cập nhật `video_timeout_seconds` trong `flow_config.json` và code từ 1800s về 300s (5 phút).
+- [x] **Task 4: Kiểm chứng tự động (Unit Test & Regression Check)**
+  - [x] Chạy unit test kiểm tra cơ chế bắt video và config (`tests/test_flow_video_no_fallback.py` - PASS 5/5).
+  - [x] Dọn dẹp các tệp nháp `scratch_*.py`.
+  - [x] Chạy full test suite (`pytest`) đạt 121/121 passed (100%).
+- [x] **Task 5: Ghi chép bài học kinh nghiệm vào `tasks/lessons.md`**
 

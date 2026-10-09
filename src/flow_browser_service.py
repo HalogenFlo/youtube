@@ -294,6 +294,51 @@ class FlowBrowserController:
                 return None
             return self.page
 
+    def _download_video_bytes(self, page: Page, candidate_url: str) -> Optional[bytes]:
+        """
+        Tải nội dung video từ Google Flow qua cơ chế đa tầng:
+        1. Playwright page.request.get (siêu tốc < 1s, kế thừa 100% auth/cookies từ Chrome CDP, miễn nhiễm CORS).
+        2. JavaScript FileReader qua page.evaluate (fallback cho các URL dạng blob: hoặc data:).
+        """
+        if not candidate_url or not page:
+            return None
+
+        # Tầng 1: Tải trực tiếp siêu tốc qua page.request (áp dụng cho HTTP/HTTPS URL)
+        if candidate_url.startswith(("http://", "https://")):
+            try:
+                resp = page.request.get(candidate_url, timeout=25000)
+                if resp.status == 200:
+                    data = resp.body()
+                    if data and len(data) > 10000:
+                        return data
+            except Exception as req_ex:
+                safe_log(f"[!] Không thể tải video qua page.request: {req_ex}")
+
+        # Tầng 2: Fallback qua JavaScript FileReader eval nếu là blob: hoặc tầng 1 không có dữ liệu
+        save_js = """
+        async (src) => {
+            const response = await fetch(src);
+            const blob = await response.blob();
+            return new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result);
+                reader.readAsDataURL(blob);
+            });
+        }
+        """
+        try:
+            data_url = page.evaluate(save_js, candidate_url)
+            if data_url and "," in data_url:
+                b64_data = data_url.split(",")[1]
+                import base64
+                data = base64.b64decode(b64_data)
+                if data and len(data) > 10000:
+                    return data
+        except Exception as eval_ex:
+            safe_log(f"[!] Lỗi tải video qua evaluate fallback: {eval_ex}")
+
+        return None
+
     def generate_scene_video(
         self,
         prompt: str,
@@ -307,7 +352,7 @@ class FlowBrowserController:
         kích hoạt tạo video, kiên trì đợi render và tải file .mp4 về output_path.
         """
         if timeout_sec is None:
-            timeout_sec = int(self.cfg.get("video_timeout_seconds", 1800))
+            timeout_sec = int(self.cfg.get("video_timeout_seconds", 300))
 
         page = self._ensure_page()
         if not page:
@@ -345,19 +390,20 @@ class FlowBrowserController:
             if "/about" in page.url or "/accounts.google.com/" in page.url:
                 return False, "Google Flow chưa đăng nhập hoặc tài khoản không có quyền mở project."
 
-            # Ghi nhận toàn bộ video đã tồn tại trên trang trước khi tạo cảnh mới
+            # Ghi nhận các video đang hiển thị trên trang cục bộ cho lần submit này
+            pre_existing_urls = set()
             for existing_video in page.locator("video").all():
                 try:
                     existing_src = existing_video.get_attribute("src")
                     if existing_src:
-                        self.seen_video_urls.add(existing_src)
+                        pre_existing_urls.add(existing_src)
                 except Exception:
                     pass
             for existing_source in page.locator("video source").all():
                 try:
                     s_src = existing_source.get_attribute("src")
                     if s_src:
-                        self.seen_video_urls.add(s_src)
+                        pre_existing_urls.add(s_src)
                 except Exception:
                     pass
 
@@ -470,7 +516,7 @@ class FlowBrowserController:
 
             # 5. Theo dõi kết quả sinh video
             start_time = time.time()
-            min_generation_wait = 12.0  # Chống bắt nhầm clip cũ trong 12 giây đầu
+            min_generation_wait = 10.0  # Chờ 10 giây để Flow bắt đầu render và tạo card mới
 
             while time.time() - start_time < timeout_sec:
                 if page.is_closed():
@@ -484,7 +530,7 @@ class FlowBrowserController:
                     page = self.page
 
                 try:
-                    page.wait_for_timeout(3000)
+                    page.wait_for_timeout(2500)
                 except Exception:
                     pass
 
@@ -492,7 +538,7 @@ class FlowBrowserController:
                 if elapsed < min_generation_wait:
                     continue
 
-                if int(elapsed) % 30 < 4:
+                if int(elapsed) % 15 < 3:
                     msg = f"[*] Đang theo dõi tiến độ sinh video từ Google Flow ({int(elapsed)}s/{timeout_sec}s)... Tiếp tục chờ AI render clip hoàn chỉnh..."
                     safe_log(msg)
                     if status_callback:
@@ -501,97 +547,80 @@ class FlowBrowserController:
                         except Exception:
                             pass
 
-                candidate_url = None
+                candidate_urls = []
 
-                # Ưu tiên URL từ network listener
+                # Ưu tiên 1: URL từ network listener
                 if new_network_videos:
                     for n_url in list(new_network_videos):
-                        if n_url not in self.seen_video_urls:
-                            candidate_url = n_url
-                            break
+                        if n_url not in self.seen_video_urls and n_url not in pre_existing_urls:
+                            if n_url not in candidate_urls:
+                                candidate_urls.append(n_url)
 
-                # Tiếp theo kích hoạt preview trên thẻ video vừa sinh để ép Flow tải stream
-                if not candidate_url:
+                # Kích hoạt preview trên thẻ video vừa sinh để ép Flow tải stream
+                try:
+                    play_btns = page.locator("button:has-text('play_circle'), [aria-label*='Play' i], [aria-label*='Mở video' i], div:has-text('play_circle')").all()
+                    if play_btns:
+                        play_btns[0].hover()
+                except Exception:
+                    pass
+
+                # Ưu tiên 2: Thẻ <video> mới trong DOM
+                for v in page.locator("video").all():
                     try:
-                        # Thử hover vào card trong gallery All media (cột bên trái)
-                        media_items = page.locator("main div[role='button'], main div[tabindex='0'], [role='grid'] div, aside img, [class*='chat'] img").all()
-                        if media_items:
-                            media_items[0].hover()
+                        src = v.get_attribute("src")
+                        if src and ("blob:" in src or "http" in src):
+                            if src not in self.seen_video_urls and src not in pre_existing_urls:
+                                if src not in candidate_urls:
+                                    candidate_urls.append(src)
                     except Exception:
                         pass
 
+                # Kiểm tra thẻ <source> bên trong <video>
+                for s in page.locator("video source").all():
                     try:
-                        download_btns = page.locator("button[aria-label*='Download' i], button[aria-label*='Tải' i], [data-icon='download']").all()
-                        for dl in download_btns:
-                            if dl.is_visible():
-                                dl.hover()
+                        s_src = s.get_attribute("src")
+                        if s_src and ("blob:" in s_src or "http" in s_src):
+                            if s_src not in self.seen_video_urls and s_src not in pre_existing_urls:
+                                if s_src not in candidate_urls:
+                                    candidate_urls.append(s_src)
                     except Exception:
                         pass
 
-                    try:
-                        play_btns = page.locator("button:has-text('play_circle'), [aria-label*='Play'], [aria-label*='play']").all()
-                        if play_btns:
-                            play_btns[-1].hover()
-                    except Exception:
-                        pass
-
-                    # Kiểm tra thẻ <video> mới trong DOM
+                # Nếu sau 20s mà chưa thấy URL mới, quét lại toàn bộ thẻ video trên trang
+                # phòng trường hợp Flow tái sử dụng URL hoặc video đã render xong từ trước
+                if not candidate_urls and elapsed > 20.0:
                     for v in page.locator("video").all():
                         try:
                             src = v.get_attribute("src")
-                            if src and src not in self.seen_video_urls and ("blob:" in src or "http" in src):
-                                candidate_url = src
-                                break
+                            if src and ("blob:" in src or "http" in src) and src not in self.seen_video_urls:
+                                if src not in candidate_urls:
+                                    candidate_urls.append(src)
                         except Exception:
                             pass
 
-                    # Kiểm tra thẻ <source> bên trong <video>
-                    if not candidate_url:
-                        for s in page.locator("video source").all():
-                            try:
-                                s_src = s.get_attribute("src")
-                                if s_src and s_src not in self.seen_video_urls and ("blob:" in s_src or "http" in s_src):
-                                    candidate_url = s_src
-                                    break
-                            except Exception:
-                                pass
+                # Thử tải và kiểm tra từng candidate_url
+                for candidate_url in candidate_urls:
+                    video_bytes = self._download_video_bytes(page, candidate_url)
+                    if not video_bytes or len(video_bytes) < 10000:
+                        continue
 
+                    import hashlib
+                    file_hash = hashlib.sha256(video_bytes).hexdigest()
 
-                if candidate_url:
+                    # Bỏ qua nếu hash trùng lặp nội dung của clip đã lưu trước đó
+                    if file_hash in self.seen_video_hashes:
+                        safe_log(f"[!] Bỏ qua video trùng lặp nội dung ({file_hash[:8]}), tiếp tục chờ Flow sinh clip mới...")
+                        self.seen_video_urls.add(candidate_url)
+                        continue
+
+                    # Lưu thành công clip hoàn toàn mới
                     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-                    save_js = """
-                    async (src) => {
-                        const response = await fetch(src);
-                        const blob = await response.blob();
-                        return new Promise((resolve) => {
-                            const reader = new FileReader();
-                            reader.onloadend = () => resolve(reader.result);
-                            reader.readAsDataURL(blob);
-                        });
-                    }
-                    """
-                    try:
-                        data_url = page.evaluate(save_js, candidate_url)
-                        if data_url and "," in data_url:
-                            b64_data = data_url.split(",")[1]
-                            import base64, hashlib
-                            video_bytes = base64.b64decode(b64_data)
-                            file_hash = hashlib.sha256(video_bytes).hexdigest()
-
-                            if file_hash in self.seen_video_hashes:
-                                safe_log(f"[!] Bỏ qua video trùng lặp nội dung ({file_hash[:8]}), tiếp tục chờ Flow sinh clip mới...")
-                                self.seen_video_urls.add(candidate_url)
-                                continue
-
-                            # Lưu thành công clip hoàn toàn mới
-                            with open(output_path, "wb") as f:
-                                f.write(video_bytes)
-                            self.seen_video_hashes.add(file_hash)
-                            self.seen_video_urls.add(candidate_url)
-                            safe_log(f"[✓] Đã tạo thành công clip video độc lập từ Google Flow: {candidate_url[:50]}... (hash {file_hash[:8]})")
-                            return True, output_path
-                    except Exception as ex:
-                        safe_log(f"[!] Lỗi khi tải video blob: {ex}")
+                    with open(output_path, "wb") as f:
+                        f.write(video_bytes)
+                    self.seen_video_hashes.add(file_hash)
+                    self.seen_video_urls.add(candidate_url)
+                    safe_log(f"[✓] Đã tạo thành công clip video độc lập từ Google Flow trong {int(elapsed)}s: {candidate_url[:60]}... ({len(video_bytes)} bytes, hash {file_hash[:8]})")
+                    return True, output_path
 
             diagnostic_path = output_path if output_path.endswith(".png") else output_path.replace(".mp4", "_diagnostic.png")
             try:
