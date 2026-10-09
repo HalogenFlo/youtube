@@ -10,19 +10,21 @@ from src.batch_producer import normalize_chinese_teaching_scenes
 from src.studio_editorial_service import _sanitize_scenes
 
 
-def test_clean_vietnamese_tts_text_removes_cjk_characters():
-    """Kiểm tra loại bỏ sạch sẽ các ký tự chữ Hán giản thể/phồn thể khỏi văn bản tiếng Việt."""
-    raw = "Hôm nay chúng ta cùng học từ 你好 có nghĩa là xin chào."
+def test_clean_vietnamese_tts_text_removes_cjk_and_pinyin():
+    """Kiểm tra loại bỏ sạch sẽ cả chữ Hán lẫn phiên âm Pinyin (nǐ hǎo) khỏi lời dẫn tiếng Việt."""
+    raw = "Chào bạn bằng câu '' (nǐ hǎo). Đây là cách chào hỏi thông thường trong tiếng Trung, tương đương với 'Xin chào'."
     cleaned = clean_vietnamese_tts_text(raw)
-    assert "你好" not in cleaned
-    assert "Hôm nay chúng ta cùng học từ" in cleaned
-    assert "có nghĩa là xin chào" in cleaned
+    assert "nǐ hǎo" not in cleaned
+    assert "nǐ" not in cleaned
+    assert "hǎo" not in cleaned
+    assert "''" not in cleaned
+    assert "Chào bạn" in cleaned
+    assert "Đây là cách chào hỏi" in cleaned
 
-    # Trường hợp chữ Hán phức tạp và mở rộng
     raw_cjk = "Từ 谢谢 (xièxie) dùng để cảm ơn trong tiếng Trung."
     cleaned_cjk = clean_vietnamese_tts_text(raw_cjk)
     assert "谢谢" not in cleaned_cjk
-    assert "xièxie" in cleaned_cjk
+    assert "xièxie" not in cleaned_cjk
     assert "dùng để cảm ơn" in cleaned_cjk
 
 
@@ -117,11 +119,13 @@ def test_generate_multivoice_tts_isolates_cjk_to_chinese_voice(
     assert "zh-CN" in call_3_voice
     assert call_3_text == "你好"
 
-    # Đoạn 4 (vi-VN): Phải không còn "你好"
+    # Đoạn 4 (vi-VN): Phải không còn "你好" và không còn "nǐ hǎo"
     call_4_text, _ = calls[3][0]
     call_4_voice = calls[3][1]["voice"]
     assert "vi-VN" in call_4_voice
     assert "你好" not in call_4_text
+    assert "nǐ hǎo" not in call_4_text
+    assert "nǐ" not in call_4_text
 
 
 @patch("src.tts_service.get_audio_duration", return_value=3.5)
@@ -163,5 +167,7 @@ def test_parallel_tts_with_chinese_teaching_mode(mock_multivoice, mock_duration,
     # Segment 1 & 2: chinese_text
     assert segments_sent[1][0] == "你好"
     assert segments_sent[2][0] == "你好"
-    # Segment 3: usage_vi không được chứa chữ Hán
+    # Segment 3: usage_vi không được chứa chữ Hán hoặc Pinyin
     assert "你好" not in segments_sent[3][0]
+    assert "nǐ hǎo" not in segments_sent[3][0]
+    assert "Đọc là" not in segments_sent[3][0]

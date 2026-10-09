@@ -219,14 +219,61 @@ def generate_tts(
     return False, f"Lỗi sinh giọng đọc edge-tts CLI: {last_err}"
 
 
+# Ký tự phiên âm Pinyin độc quyền (tuyệt đối không thuộc bảng chữ cái tiếng Việt)
+_PINYIN_EXCLUSIVE_CHARS_REGEX = r'[āēīōūǎěǐǒǔüǖǘǚǜĀĒĪŌŪǍĚǏǑǓÜǕǗǙǛ]'
+
+# Ký tự tiếng Việt đặc thù (nếu có thì chắc chắn là tiếng Việt)
+_VIETNAMESE_DISTINCT_CHARS_REGEX = r'[ăâêôơưđĂÂÊÔƠƯĐảẳẩẻểỉỏổởủửỷẢẲẨẺỂỈỎỔỞỦỬỶãẵẫẽễĩõỗỡũữỹÃẴẪẼỄĨÕỖỠŨỮỸạặậẹệịọộợụựỵẠẶẬẸỆỊỌỘỢỤỰỴ]'
+
+
 def clean_vietnamese_tts_text(text: str) -> str:
     """
-    Loại bỏ hoàn toàn các ký tự chữ Hán / tiếng Trung giản thể (CJK) khỏi lời dẫn tiếng Việt.
-    Đảm bảo 100% giọng tiếng Việt không bao giờ phát âm chữ Hán sai lệch.
+    Làm sạch hoàn toàn lời dẫn tiếng Việt trước khi đưa vào TTS:
+    1. Loại bỏ các ký tự chữ Hán / tiếng Trung giản thể (CJK).
+    2. Loại bỏ các đoạn phiên âm Pinyin trong ngoặc: (nǐ hǎo), (zǎo shàng hǎo), (ni hao)...
+    3. Loại bỏ các từ chứa ký tự thanh điệu Pinyin độc quyền (ā, ǎ, ǐ, ǒ, ǔ, ü...).
+    4. Loại bỏ các cặp dấu ngoặc rỗng '', "", () sót lại sau khi xóa chữ Hán.
+    5. Đảm bảo 100% giọng tiếng Việt thuần túy, không bao giờ phát âm chữ Hán hay đánh vần méo mó Pinyin.
     """
     if not text:
         return ""
-    cleaned = re.sub(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+', '', str(text))
+    
+    cleaned = str(text)
+
+    # 1. Xóa ký tự chữ Hán CJK
+    cleaned = re.sub(r'[\u4e00-\u9fff\u3400-\u4dbf\uf900-\ufaff]+', '', cleaned)
+
+    # 2. Xóa phiên âm Pinyin trong ngoặc đơn:
+    # Trường hợp 2a: Ngoặc đơn chứa ký tự Pinyin độc quyền (nǐ hǎo, lǎoshī, wǒ...)
+    cleaned = re.sub(rf'\s*\([^)]*{_PINYIN_EXCLUSIVE_CHARS_REGEX}[^)]*\)', '', cleaned)
+
+    # Trường hợp 2b: Ngoặc đơn chú thích phiên âm ngắn không chứa ký tự tiếng Việt đặc thù
+    def _strip_pinyin_paren(m):
+        content = m.group(1).strip()
+        # Nếu có ký tự tiếng Việt đặc thù (ă, â, ê, dấu hỏi, ngã, nặng, đ...) thì giữ lại
+        if re.search(_VIETNAMESE_DISTINCT_CHARS_REGEX, content):
+            return m.group(0)
+        # Nếu chỉ gồm chữ cái Latin / pinyin không dấu hoặc dấu huyền/sắc thông thường và ngắn (< 50 ký tự)
+        if len(content) <= 50 and re.match(r'^(?:pinyin:?\s*)?[a-zA-Zàáèéìíòóùú\s,\'\"\-]+$', content, flags=re.IGNORECASE):
+            return ''
+        return m.group(0)
+
+    cleaned = re.sub(r'\s*\(([^)]+)\)', _strip_pinyin_paren, cleaned)
+
+    # 3. Xóa các từ chứa ký tự Pinyin độc quyền đứng lẻ (ví dụ nǐ, hǎo, lǎo...)
+    # Chỉ nhắm vào ký tự Pinyin độc quyền để TUYỆT ĐỐI không xóa nhầm từ tiếng Việt như 'Chào', 'chúc', 'ngày'
+    cleaned = re.sub(rf'[\'\"“”‘’]?\b\w*{_PINYIN_EXCLUSIVE_CHARS_REGEX}\w*\b[\'\"“”‘’]?', '', cleaned)
+
+    # 4. Xóa các dấu ngoặc kép / đơn / tròn rỗng còn sót lại sau khi gọt bỏ chữ Hán / Pinyin
+    cleaned = re.sub(r'[\'\"“”‘’]\s*[\'\"“”‘’]', '', cleaned)
+    cleaned = re.sub(r'\(\s*\)', '', cleaned)
+
+    # 5. Dọn dẹp các cụm từ mồ côi thường sót lại sau khi xóa chữ Hán như: "câu ''", "từ ''", "câu.", "từ."
+    cleaned = re.sub(r'\b(bằng\s+câu|từ\s+câu|bằng\s+từ)\s*([.,;!?])', r'\2', cleaned, flags=re.IGNORECASE)
+
+    # 6. Chuẩn hóa dấu câu và khoảng trắng
+    cleaned = re.sub(r'\s+([,.:;!?])', r'\1', cleaned)
+    cleaned = re.sub(r'[,:;]+\s*([.!?])', r'\1', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip(" ,;:-_")
     return cleaned
 
@@ -384,15 +431,13 @@ def generate_scenes_tts_parallel(
             if content_mode == "chinese_teaching_vi":
                 clean_narr_vi = clean_vietnamese_tts_text(str(t_sc.get("narration_vi", "")))
                 clean_use_vi = clean_vietnamese_tts_text(str(t_sc.get("usage_vi", "")))
+                chinese_text = str(t_sc.get("chinese_text", "")).strip()
                 audio_ok, audio_result = generate_multivoice_tts(
                     [
                         (clean_narr_vi, voice, "+0%"),
-                        (str(t_sc.get("chinese_text", "")), chinese_voice, "-5%"),
-                        (str(t_sc.get("chinese_text", "")), chinese_voice, "-15%"),
-                        (" ".join(part for part in [
-                            f"Đọc là {t_sc.get('pinyin', '')}." if t_sc.get("pinyin") else "",
-                            clean_use_vi,
-                        ] if part), voice, "+0%"),
+                        (chinese_text, chinese_voice, "-5%"),
+                        (chinese_text, chinese_voice, "-18%"),
+                        (clean_use_vi, voice, "+0%"),
                     ],
                     t_audio_file,
                 )

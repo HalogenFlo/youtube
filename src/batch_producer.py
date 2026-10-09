@@ -343,15 +343,13 @@ def produce_single_video_pipeline(
             if content_mode == "chinese_teaching_vi":
                 clean_narr_vi = clean_vietnamese_tts_text(str(sc.get("narration_vi", "")))
                 clean_use_vi = clean_vietnamese_tts_text(str(sc.get("usage_vi", "")))
+                chinese_text = str(sc.get("chinese_text", "")).strip()
                 audio_ok, audio_result = generate_multivoice_tts(
                     [
                         (clean_narr_vi, voice, "+0%"),
-                        (str(sc.get("chinese_text", "")), chinese_voice, "-5%"),
-                        (str(sc.get("chinese_text", "")), chinese_voice, "-15%"),
-                        (" ".join(part for part in [
-                            f"Đọc là {sc.get('pinyin', '')}." if sc.get("pinyin") else "",
-                            clean_use_vi,
-                        ] if part), voice, "+0%"),
+                        (chinese_text, chinese_voice, "-5%"),
+                        (chinese_text, chinese_voice, "-18%"),
+                        (clean_use_vi, voice, "+0%"),
                     ],
                     audio_file,
                 )
