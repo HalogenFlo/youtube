@@ -378,7 +378,11 @@ def produce_single_video_pipeline(
         def _flow_batch_cb(cur: int, msg: str):
             notify(45 + (cur / max(1, num_scenes)) * 30, msg)
 
-        flow_batch_ok, _, _ = generate_flow_batch_queue(
+        import importlib
+        import src.flow_image_service as _fis
+        importlib.reload(_fis)
+
+        flow_batch_ok, _, _ = _fis.generate_flow_batch_queue(
             scenes=scenes,
             temp_dir=video_work_dir,
             output_dir=video_work_dir,
