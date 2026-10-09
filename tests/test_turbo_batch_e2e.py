@@ -55,12 +55,13 @@ class TestTurboBatchE2E:
         mock_tts_parallel.side_effect = fake_tts_parallel
 
         # 3. Mock Flow Batch Queue
-        def fake_flow_queue(scenes, output_dir, **kwargs):
+        def fake_flow_queue(scenes, output_dir=None, temp_dir=None, **kwargs):
             generated_paths = []
             reports = []
+            target_dir = output_dir or temp_dir or tmp_work
             for sc in scenes:
                 sc_num = sc["scene_num"]
-                dummy_img = os.path.join(output_dir, f"scene_{sc_num:03d}_bg.png")
+                dummy_img = os.path.join(target_dir, f"scene_{sc_num:03d}_bg.png")
                 with open(dummy_img, "wb") as f:
                     f.write(b"\x89PNG\r\n\x1a\n" + b"\x00" * 50)
                 sc["image_path"] = dummy_img

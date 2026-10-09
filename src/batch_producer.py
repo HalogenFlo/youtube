@@ -375,21 +375,18 @@ def produce_single_video_pipeline(
     # 3. SINH BỐI CẢNH AI RIÊNG BIỆT CHO TỪNG PHÂN CẢNH (GOOGLE FLOW / FALLBACK)
     if turbo_mode and image_engine == "flow" and media_mode == "flow_image":
         notify(45, f"Bắt đầu sinh bối cảnh hình ảnh AI dạng Turbo Batch ({flow_workers} workers) cho {num_scenes} phân cảnh...")
-        def _flow_batch_cb(cur: int, msg: str):
-            notify(45 + (cur / max(1, num_scenes)) * 30, msg)
+        def _flow_batch_cb(cur: int, *args: Any):
+            tot = args[0] if len(args) >= 2 else num_scenes
+            msg = str(args[-1]) if args else ""
+            notify(45 + (cur / max(1, tot)) * 30, msg)
 
-        import importlib
-        import src.flow_image_service as _fis
-        importlib.reload(_fis)
-
-        flow_batch_ok, _, _ = _fis.generate_flow_batch_queue(
+        flow_batch_ok, _, _ = generate_flow_batch_queue(
             scenes=scenes,
             temp_dir=video_work_dir,
             output_dir=video_work_dir,
             max_workers=flow_workers,
             orientation=orientation,
             style_preset=style_preset,
-            progress_callback=_flow_batch_cb,
             status_callback=_flow_batch_cb,
         )
         if not flow_batch_ok:

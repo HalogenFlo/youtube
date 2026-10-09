@@ -205,8 +205,20 @@ class FlowBatchQueueEngine:
             return True, []
 
         total_tasks = len(tasks)
-        if status_callback:
-            status_callback(0, total_tasks, f"Khởi động hàng đợi ({self.max_workers} workers)...")
+
+        def _safe_cb(cur: int, tot: int, msg: str):
+            if status_callback:
+                try:
+                    status_callback(cur, tot, msg)
+                except TypeError:
+                    try:
+                        status_callback(cur, msg)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+
+        _safe_cb(0, total_tasks, f"Khởi động hàng đợi ({self.max_workers} workers)...")
 
         task_map: Dict[int, FlowImageTask] = {t.scene_index: t for t in tasks}
         completed_count = 0
@@ -222,12 +234,11 @@ class FlowBatchQueueEngine:
                 done_task = future.result()
                 task_map[done_task.scene_index] = done_task
                 completed_count += 1
-                if status_callback:
-                    status_callback(
-                        completed_count,
-                        total_tasks,
-                        f"Hoàn thành xử lý cảnh {done_task.scene_index}/{total_tasks} ({done_task.status})",
-                    )
+                _safe_cb(
+                    completed_count,
+                    total_tasks,
+                    f"Hoàn thành xử lý cảnh {done_task.scene_index}/{total_tasks} ({done_task.status})",
+                )
 
         ordered_tasks = [task_map[t.scene_index] for t in tasks]
 
@@ -296,6 +307,7 @@ def generate_flow_batch_queue(
     stagger_delay: float = 1.5,
     output_dir: Optional[str] = None,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    **kwargs: Any,
 ) -> Tuple[bool, List[str], List[Dict[str, Any]]]:
     """
     Sinh hàng loạt ảnh cho các phân cảnh qua Flow Batch Queue Engine.
