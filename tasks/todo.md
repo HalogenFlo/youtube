@@ -488,3 +488,32 @@ Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow
   - [x] Viết unit test kiểm tra truyền `previous_context` vào kịch bản nhiều video.
   - [x] Chạy toàn bộ test suite (`pytest`) đảm bảo 100% passed.
 - [x] **Task 5: Ghi chép bài học vào `tasks/lessons.md`** (Bài học 17)
+
+---
+
+## 21. Khắc Phục Triệt Để Lỗi Kẹt Hàng Đợi (Queue Deadlock / Block) Khi Hủy Việc & Cơ Chế Ngắt Tức Thì (Instant Cancellation)
+
+### 1. Phân tích nguyên nhân gốc rễ
+1. **Lỗi ngắt không tức thì (Abort Gap)**:
+   - Khi người dùng bấm "Hủy việc này" hoặc "Bỏ qua video này", `skip_current_job` chỉ đổi trạng thái trong JSON sang `failed`.
+   - Các tác vụ I/O dài (`generate_flow_video` 300s, `generate_flow_image` 90s, `FlowImageBatchQueue`, `TTS Parallel`) KHÔNG nhận `is_cancelled_callback`. Worker Thread bị giam hãm trong tiến trình cũ hàng phút cho đến khi hoàn thành xong các cảnh của việc đã bị hủy.
+2. **Lỗi Zombie Job (Orphan running job) chặn hàng đợi**:
+   - Nếu có job bị đánh dấu là `running` trong JSON nhưng không có thread nào đang chạy nó, hàm `_next_job()` kiểm tra `if any(job.get("status") == "running"): return None`, khiến toàn bộ các job `queued` phía sau bị kẹt cứng vĩnh viễn (Đang chờ: 1, Đang chạy: 0).
+3. **Thiếu cơ chế Watchdog & Phục hồi chủ động**:
+   - `ensure_factory_worker()` thấy thread cũ còn alive thì không làm gì, trong khi thread cũ có thể đang bị block ở mạng hoặc I/O của job đã bị hủy.
+
+### 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Khôi phục trạng thái Job #5 và khắc phục triệt để Zombie Job trong `src/autonomous_factory.py`**
+  - [x] Khôi phục Job #5 (`f0158ae371`) về `status: "queued"`.
+  - [x] Thêm hàm `recover_stale_running_jobs()`: Tự động đưa bất kỳ job `running` mồ côi (không có active pipeline worker) về `queued` để giải phóng hàng đợi tức thì.
+  - [x] Cập nhật `_next_job()`: Kiểm tra hợp lệ giữa running job và active thread ID.
+- [x] **Task 2: Cơ chế Ngắt Tức Thì (Instant Cancellation) cho Google Flow và Hàng Đợi Song Song**
+  - [x] Cập nhật `src/flow_browser_service.py` (`generate_scene_video`, `generate_flow_image`): Nhận `is_cancelled_callback`, kiểm tra mỗi 1 giây trong vòng lặp polling để ngắt ngay lập tức khi user bấm hủy.
+  - [x] Cập nhật `src/flow_image_service.py` (`process_tasks`): Nhận `is_cancelled_callback`, ngắt ThreadPoolExecutor ngay lập tức khi có lệnh hủy.
+  - [x] Cập nhật `src/batch_producer.py`: Truyền `is_cancelled_callback` xuyên suốt vào mọi dịch vụ con.
+- [x] **Task 3: Nút điều khiển phục hồi trên giao diện `src/app_batch.py`**
+  - [x] Thêm nút "⚡ Khởi động lại dây chuyền" khi phát hiện có job chờ mà không có tiến trình chạy.
+- [x] **Task 4: Kiểm chứng tự động (Unit Test & Full Regression Test)**
+  - [x] Viết unit test xác minh hủy việc tức thì và tự động giải phóng hàng đợi (`tests/test_instant_cancellation.py` - PASS 4/4).
+  - [x] Chạy full test suite (`pytest`) đảm bảo 100% passed.
+- [x] **Task 5: Ghi chép bài học vào `tasks/lessons.md`** (Bài học 18)

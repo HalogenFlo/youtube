@@ -15,6 +15,7 @@ from src.autonomous_factory import (
     clear_failed_jobs,
     clear_finished_jobs,
     ensure_factory_worker,
+    restart_factory_worker,
     get_factory_state,
     retry_failed_jobs,
     set_factory_paused,
@@ -380,12 +381,15 @@ def run_batch_ui():
             st.rerun()
         if counts["queued"] > 0 and counts["running"] == 0:
             if st.button("▶️ Bắt đầu sản xuất ngay", type="primary", use_container_width=True, help="Kích hoạt dây chuyền sản xuất video trong hàng đợi"):
-                ensure_factory_worker()
+                restart_factory_worker()
                 st.rerun()
         if counts["running"] > 0:
             if st.button("⏭️ Bỏ qua video đang làm", type="secondary", use_container_width=True, help="Ngắt tiến trình video hiện tại và lập tức chuyển sang video tiếp theo trong hàng đợi"):
                 skip_current_job()
                 st.rerun()
+        if st.button("🔄 Khởi động lại dây chuyền (Reset Worker)", use_container_width=True, help="Giải phóng các tác vụ bị kẹt và đánh thức worker nền ngay lập tức"):
+            restart_factory_worker()
+            st.rerun()
         if flow_status == "login_required":
             st.warning("Chrome điều khiển đã mở nhưng Google Flow chưa đăng nhập. Hãy đăng nhập một lần trong cửa sổ Chrome Flow, sau đó bấm Làm mới trạng thái.")
         elif flow_status == "disconnected":

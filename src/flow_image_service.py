@@ -42,11 +42,15 @@ def generate_flow_media(
     mode: str = "video",
     timeout_sec: Optional[int] = None,
     status_callback: Optional[Callable[[int, str], None]] = None,
+    is_cancelled_callback: Optional[Callable[[], bool]] = None,
 ) -> Tuple[bool, str]:
     """
     Sinh nội dung (Video hoặc Ảnh) trực tiếp từ Google Flow theo prompt.
     Không dùng bất kỳ hình ảnh giả hay fallback thô sơ nào.
     """
+    if is_cancelled_callback and is_cancelled_callback():
+        return False, "Đã bỏ qua theo yêu cầu người dùng"
+
     safe_log(f"[*] Đang đưa prompt lên Google Flow: \"{prompt[:60]}...\"")
     controller = get_flow_controller()
 
@@ -57,6 +61,7 @@ def generate_flow_media(
             orientation=orientation,
             timeout_sec=timeout_sec,
             status_callback=status_callback,
+            is_cancelled_callback=is_cancelled_callback,
         )
     else:
         success, result_path = controller.generate_scene_image(
@@ -65,6 +70,7 @@ def generate_flow_media(
             orientation=orientation,
             style_preset=style_preset,
             timeout_sec=timeout_sec or 90,
+            is_cancelled_callback=is_cancelled_callback,
         )
 
     if success and os.path.exists(output_path):
@@ -82,6 +88,7 @@ def generate_flow_image(
     style_preset: str = DEFAULT_IMAGE_STYLE,
     fallback_to_sd: bool = False,
     timeout_sec: Optional[int] = None,
+    is_cancelled_callback: Optional[Callable[[], bool]] = None,
 ) -> Tuple[bool, str]:
     return generate_flow_media(
         prompt=prompt,
@@ -90,6 +97,7 @@ def generate_flow_image(
         style_preset=style_preset,
         mode="image",
         timeout_sec=timeout_sec,
+        is_cancelled_callback=is_cancelled_callback,
     )
 
 
@@ -100,6 +108,7 @@ def generate_flow_video(
     style_preset: str = DEFAULT_IMAGE_STYLE,
     timeout_sec: Optional[int] = None,
     status_callback: Optional[Callable[[int, str], None]] = None,
+    is_cancelled_callback: Optional[Callable[[], bool]] = None,
 ) -> Tuple[bool, str]:
     """Sinh clip MP4 thật từ Google Flow cho một phân cảnh (kiên trì chờ, không fallback)."""
     return generate_flow_media(
@@ -110,6 +119,7 @@ def generate_flow_video(
         mode="video",
         timeout_sec=timeout_sec,
         status_callback=status_callback,
+        is_cancelled_callback=is_cancelled_callback,
     )
 
 
@@ -156,7 +166,13 @@ class FlowBatchQueueEngine:
         self,
         task: FlowImageTask,
         start_stagger: float = 0.0,
+        is_cancelled_callback: Optional[Callable[[], bool]] = None,
     ) -> FlowImageTask:
+        if is_cancelled_callback and is_cancelled_callback():
+            task.status = "failed"
+            task.error = "Đã bỏ qua theo yêu cầu người dùng"
+            return task
+
         if start_stagger > 0:
             time.sleep(start_stagger)
 
@@ -165,6 +181,11 @@ class FlowBatchQueueEngine:
         current_attempt = 0
 
         while current_attempt <= self.max_retries:
+            if is_cancelled_callback and is_cancelled_callback():
+                task.status = "failed"
+                task.error = "Đã bỏ qua theo yêu cầu người dùng"
+                return task
+
             try:
                 ok, res = generate_flow_image(
                     prompt=task.prompt,
@@ -172,6 +193,7 @@ class FlowBatchQueueEngine:
                     orientation=task.orientation,
                     style_preset=task.style_preset or DEFAULT_IMAGE_STYLE,
                     timeout_sec=self.timeout_sec,
+                    is_cancelled_callback=is_cancelled_callback,
                 )
                 if ok and os.path.exists(task.output_path) and os.path.getsize(task.output_path) > 0:
                     task.status = "completed"
@@ -200,6 +222,7 @@ class FlowBatchQueueEngine:
         self,
         tasks: List[FlowImageTask],
         status_callback: Optional[Callable[[int, int, str], None]] = None,
+        is_cancelled_callback: Optional[Callable[[], bool]] = None,
     ) -> Tuple[bool, List[FlowImageTask]]:
         if not tasks:
             return True, []
@@ -227,10 +250,16 @@ class FlowBatchQueueEngine:
             future_to_task = {}
             for idx, task in enumerate(tasks):
                 stagger = idx * self.stagger_delay
-                future = executor.submit(self._execute_single_task, task, stagger)
+                future = executor.submit(self._execute_single_task, task, stagger, is_cancelled_callback)
                 future_to_task[future] = task
 
             for future in as_completed(future_to_task):
+                if is_cancelled_callback and is_cancelled_callback():
+                    safe_log("[!] Đã nhận tín hiệu hủy hàng đợi Flow batch. Ngắt ngay lập tức.")
+                    for f in future_to_task:
+                        f.cancel()
+                    break
+
                 done_task = future.result()
                 task_map[done_task.scene_index] = done_task
                 completed_count += 1
@@ -307,6 +336,7 @@ def generate_flow_batch_queue(
     stagger_delay: float = 1.5,
     output_dir: Optional[str] = None,
     progress_callback: Optional[Callable[[int, int, str], None]] = None,
+    is_cancelled_callback: Optional[Callable[[], bool]] = None,
     **kwargs: Any,
 ) -> Tuple[bool, List[str], List[Dict[str, Any]]]:
     """
@@ -340,7 +370,11 @@ def generate_flow_batch_queue(
         stagger_delay=stagger_delay,
     )
 
-    success, finished_tasks = engine.process_tasks(tasks, status_callback=effective_callback)
+    success, finished_tasks = engine.process_tasks(
+        tasks,
+        status_callback=effective_callback,
+        is_cancelled_callback=is_cancelled_callback,
+    )
 
     image_paths = []
     task_reports = []

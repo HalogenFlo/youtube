@@ -346,6 +346,7 @@ class FlowBrowserController:
         orientation: str = "vertical",
         timeout_sec: Optional[int] = None,
         status_callback: Optional[Callable[[int, str], None]] = None,
+        is_cancelled_callback: Optional[Callable[[], bool]] = None,
     ) -> Tuple[bool, str]:
         """
         Tự động đưa prompt lên Google Flow (Google Veo / Videos section),
@@ -519,6 +520,10 @@ class FlowBrowserController:
             min_generation_wait = 10.0  # Chờ 10 giây để Flow bắt đầu render và tạo card mới
 
             while time.time() - start_time < timeout_sec:
+                if is_cancelled_callback and is_cancelled_callback():
+                    safe_log("[!] Đã nhận tín hiệu hủy/bỏ qua từ người dùng. Ngắt chờ video Flow tức thì.")
+                    return False, "Đã bỏ qua theo yêu cầu người dùng"
+
                 if page.is_closed():
                     safe_log("[!] Tab Flow bị đóng. Đang kết nối lại...")
                     self.browser = None
@@ -645,7 +650,8 @@ class FlowBrowserController:
         output_path: str,
         orientation: str = "vertical",
         style_preset: str = "",
-        timeout_sec: int = 90
+        timeout_sec: int = 90,
+        is_cancelled_callback: Optional[Callable[[], bool]] = None,
     ) -> Tuple[bool, str]:
         """Tự động sinh ảnh từ Google Flow Nano Banana / Imagen 3 (Thread-safe)."""
         with _FLOW_BROWSER_LOCK:
@@ -655,6 +661,7 @@ class FlowBrowserController:
                 orientation=orientation,
                 style_preset=style_preset,
                 timeout_sec=timeout_sec,
+                is_cancelled_callback=is_cancelled_callback,
             )
 
     def _generate_scene_image_locked(
@@ -663,7 +670,8 @@ class FlowBrowserController:
         output_path: str,
         orientation: str = "vertical",
         style_preset: str = "",
-        timeout_sec: int = 90
+        timeout_sec: int = 90,
+        is_cancelled_callback: Optional[Callable[[], bool]] = None,
     ) -> Tuple[bool, str]:
         page = self._ensure_page()
         if not page:
@@ -721,6 +729,9 @@ class FlowBrowserController:
 
                     start_time = time.time()
                     while time.time() - start_time < timeout_sec:
+                        if is_cancelled_callback and is_cancelled_callback():
+                            safe_log("[!] Đã nhận tín hiệu hủy/bỏ qua từ người dùng. Ngắt chờ ảnh Flow Tool tức thì.")
+                            return False, "Đã bỏ qua theo yêu cầu người dùng"
                         page.wait_for_timeout(2000)
                         for img in tool_frame.locator("img").all():
                             try:
@@ -819,6 +830,10 @@ class FlowBrowserController:
             last_retry_click = 0.0
 
             while time.time() - start_time < effective_timeout:
+                if is_cancelled_callback and is_cancelled_callback():
+                    safe_log("[!] Đã nhận tín hiệu hủy/bỏ qua từ người dùng. Ngắt chờ ảnh Flow tức thì.")
+                    return False, "Đã bỏ qua theo yêu cầu người dùng"
+
                 page.wait_for_timeout(2000)
 
                 # 1. TỰ ĐỘNG PHÁT HIỆN LỖI HIGH DEMAND VÀ BẤM "TRY AGAIN"

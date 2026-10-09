@@ -421,8 +421,11 @@ def produce_single_video_pipeline(
             orientation=orientation,
             style_preset=style_preset,
             status_callback=_flow_batch_cb,
+            is_cancelled_callback=is_cancelled_callback,
         )
         if not flow_batch_ok:
+            if _is_cancelled():
+                return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
             err = "Lỗi sinh ảnh Turbo Batch: Không thể tạo đủ ảnh hợp lệ cho các phân cảnh."
             notify(45, err)
             return False, err, run_meta
@@ -471,7 +474,10 @@ def produce_single_video_pipeline(
                     orientation=orientation,
                     style_preset=style_preset,
                     status_callback=flow_status_cb,
+                    is_cancelled_callback=is_cancelled_callback,
                 )
+                if _is_cancelled():
+                    return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
                 if ok_vid and os.path.exists(vid_file) and os.path.getsize(vid_file) > 0:
                     sc["video_path"] = vid_file
                     sc["use_video_ai"] = True
@@ -488,11 +494,14 @@ def produce_single_video_pipeline(
                 notify(step_pct, f"Đang tạo ảnh Flow cho cảnh {sc_num}/{num_scenes}...")
                 res_img = ""
                 for flow_attempt in range(1, 4):
+                    if _is_cancelled():
+                        return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
                     ok_img, res_img = generate_flow_image(
                         prompt=prompt,
                         output_path=img_file,
                         orientation=orientation,
                         style_preset=style_preset,
+                        is_cancelled_callback=is_cancelled_callback,
                     )
                     if ok_img and os.path.exists(img_file) and os.path.getsize(img_file) > 0:
                         sc["image_path"] = img_file
@@ -503,7 +512,10 @@ def produce_single_video_pipeline(
                     if flow_attempt < 3:
                         wait_seconds = 15 * flow_attempt
                         notify(step_pct, f"Flow chưa trả ảnh cảnh {sc_num}; tự thử lại {flow_attempt + 1}/3 sau {wait_seconds} giây...")
-                        time.sleep(wait_seconds)
+                        for _ in range(wait_seconds):
+                            if _is_cancelled():
+                                return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
+                            time.sleep(1.0)
                 if not media_ok:
                     # Cơ chế Tự Phục Hồi (Self-Healing): Nếu Google Flow quá tải hoặc nghẽn mạng,
                     # tự động kế thừa ảnh bối cảnh hợp lệ liền trước kết hợp Visual Beats để tiếp tục dây chuyền,

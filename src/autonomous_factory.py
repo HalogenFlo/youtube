@@ -211,6 +211,37 @@ _CURRENT_RUNNING_JOB_ID: Optional[str] = None
 _SKIP_REQUESTED_JOB_IDS: set = set()
 
 
+def recover_stale_running_jobs() -> int:
+    """
+    Phục hồi các job bị kẹt ở trạng thái 'running' mồ côi (không có pipeline worker active)
+    hoặc đã bị skip để giải phóng hàng đợi, cho phép job tiếp theo được chạy ngay lập tức.
+    """
+    global _CURRENT_RUNNING_JOB_ID
+    recovered = 0
+    with _LOCK:
+        state = _load_unlocked()
+        changed = False
+        for job in state.get("jobs", []):
+            if job.get("status") == "running":
+                # Nếu không khớp với worker ID hiện tại hoặc worker thread không còn sống
+                is_orphan = (_CURRENT_RUNNING_JOB_ID is None) or (job.get("id") != _CURRENT_RUNNING_JOB_ID)
+                worker_dead = (_WORKER_THREAD is not None and not _WORKER_THREAD.is_alive())
+                if is_orphan or worker_dead:
+                    job.update(
+                        status="queued",
+                        progress=0,
+                        message="Đang chờ vào dây chuyền",
+                        updated_at=_now(),
+                    )
+                    changed = True
+                    recovered += 1
+        if changed:
+            _CURRENT_RUNNING_JOB_ID = None
+            _save_unlocked(state)
+            _WAKE_EVENT.set()
+    return recovered
+
+
 def skip_current_job(job_id: Optional[str] = None) -> bool:
     """
     Bỏ qua video đang sản xuất hiện tại (hoặc job_id chỉ định) và lập tức
@@ -228,6 +259,9 @@ def skip_current_job(job_id: Optional[str] = None) -> bool:
             running_jobs = [j for j in state["jobs"] if j.get("status") == "running"]
 
         if not running_jobs:
+            # Ngay cả khi không thấy running job trong state, vẫn reset _CURRENT_RUNNING_JOB_ID
+            _CURRENT_RUNNING_JOB_ID = None
+            _WAKE_EVENT.set()
             return False
 
         for j in running_jobs:
@@ -240,6 +274,7 @@ def skip_current_job(job_id: Optional[str] = None) -> bool:
                 error="Đã bỏ qua theo yêu cầu người dùng",
                 updated_at=_now(),
             )
+        _CURRENT_RUNNING_JOB_ID = None
         _save_unlocked(state)
         _WAKE_EVENT.set()
         return True
@@ -249,8 +284,9 @@ def cancel_job(job_id: str) -> bool:
     """
     Hủy một công việc cụ thể:
     - Nếu đang chờ (queued) hoặc đã lỗi (failed): Xóa khỏi danh sách.
-    - Nếu đang chạy (running): Ngắt và bỏ qua để chuyển sang việc tiếp theo.
+    - Nếu đang chạy (running): Ngắt và bỏ qua để chuyển sang việc tiếp theo ngay lập tức.
     """
+    global _CURRENT_RUNNING_JOB_ID
     with _LOCK:
         state = _load_unlocked()
         target = next((j for j in state["jobs"] if j.get("id") == job_id), None)
@@ -258,6 +294,8 @@ def cancel_job(job_id: str) -> bool:
             return False
         if target.get("status") in ("queued", "failed"):
             state["jobs"] = [j for j in state["jobs"] if j.get("id") != job_id]
+            if _CURRENT_RUNNING_JOB_ID == job_id:
+                _CURRENT_RUNNING_JOB_ID = None
             _save_unlocked(state)
             _WAKE_EVENT.set()
             return True
@@ -282,9 +320,17 @@ def _next_job() -> Dict[str, Any] | None:
         state = _load_unlocked()
         if state.get("paused"):
             return None
+
+        # Tự động giải phóng các running job mồ côi (nếu có)
+        for job in state.get("jobs", []):
+            if job.get("status") == "running":
+                if _CURRENT_RUNNING_JOB_ID is None or job.get("id") != _CURRENT_RUNNING_JOB_ID:
+                    job.update(status="queued", progress=0, message="Đang chờ vào dây chuyền", updated_at=_now())
+
         # Đảm bảo chỉ sản xuất tuần tự đúng 1 video tại một thời điểm
         if any(job.get("status") == "running" for job in state["jobs"]):
             return None
+
         for job in state["jobs"]:
             if job.get("status") == "queued":
                 _CURRENT_RUNNING_JOB_ID = job["id"]
@@ -406,6 +452,7 @@ def _worker_loop() -> None:
 def ensure_factory_worker() -> threading.Thread:
     global _WORKER_THREAD
     with _LOCK:
+        recover_stale_running_jobs()
         if _WORKER_THREAD and _WORKER_THREAD.is_alive():
             _WAKE_EVENT.set()
             return _WORKER_THREAD
@@ -414,3 +461,17 @@ def ensure_factory_worker() -> threading.Thread:
         _WORKER_THREAD.start()
         _WAKE_EVENT.set()
         return _WORKER_THREAD
+
+
+def restart_factory_worker() -> threading.Thread:
+    """Ép buộc khởi động lại worker nền và dọn sạch trạng thái treo."""
+    global _WORKER_THREAD, _CURRENT_RUNNING_JOB_ID
+    with _LOCK:
+        _CURRENT_RUNNING_JOB_ID = None
+        recover_interrupted_jobs()
+        recover_stale_running_jobs()
+        _WORKER_THREAD = threading.Thread(target=_worker_loop, name="video-factory-worker", daemon=True)
+        _WORKER_THREAD.start()
+        _WAKE_EVENT.set()
+        return _WORKER_THREAD
+

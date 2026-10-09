@@ -173,3 +173,21 @@
      - Hỗ trợ tham số `previous_context` trong `generate_script`.
      - Phân bổ chủ đề dạng Story Arc (Tập 1: Mở đầu & Khởi nguồn, Tập 2: Diễn biến & Thử thách, Tập 3: Đỉnh điểm & Hồi kết).
      - Trong vòng lặp tạo video hàng loạt (`run_batch_video_loop`), tự động trích xuất tóm tắt mở đầu và kết thúc của video trước để truyền làm tiền đề ngữ cảnh cho video sau.
+
+
+## 18. Cơ Chế Ngắt Tức Thì (Instant Cancellation) và Tự Phục Hồi Hàng Đợi (Zombie Job Auto-Recovery)
+- **Hiện tượng lỗi**:
+  - Người dùng bấm nút "Hủy việc này" hoặc "Bỏ qua video này" trên giao diện xưởng, nhưng hệ thống vẫn tiếp tục đứng chờ ở "Đang chờ: 1, Đang chạy: 0" mà việc tiếp theo không chịu chạy.
+- **Nguyên nhân gốc rễ**:
+  1. *Lỗ hổng Abort Gap*: Khi người dùng bấm Hủy/Bỏ qua, mã nguồn chỉ cập nhật trạng thái trong file JSON sang `failed`. Tuy nhiên, các tiến trình I/O dài hạn (`generate_flow_video` 300s, `generate_flow_image` 90s, `FlowBatchQueueEngine`, `TTS Parallel`) không nhận `is_cancelled_callback`. Worker thread nền vẫn tiếp tục bị giam cầm trong tiến trình cũ hàng phút cho đến khi xong hết tất cả các cảnh của công việc đã hủy rồi mới thoát ra.
+  2. *Lỗi Zombie Job chặn đứng hàng đợi*: Nếu một công việc bị đánh dấu là `running` trong JSON nhưng worker thread thực thi nó đã thoát hoặc bị mồ côi, hàm `_next_job()` kiểm tra `any(job["status"] == "running")` sẽ luôn trả về `None`, khiến toàn bộ hàng đợi phía sau bị khóa cứng (deadlock).
+- **Quy tắc phòng ngừa**:
+  1. **Truyền `is_cancelled_callback` xuyên suốt mọi tác vụ con**:
+     - `generate_scene_video` và `generate_scene_image` (Playwright): Kiểm tra `is_cancelled()` trong từng chu kỳ polling 1-2 giây. Nếu có lệnh hủy, lập tức ngắt ngay, trả về `False, "Đã bỏ qua theo yêu cầu người dùng"`.
+     - `FlowBatchQueueEngine.process_tasks`: Kiểm tra cancellation trong vòng lặp thu hoạch kết quả; hủy ngay các futures còn lại và thoát ThreadPoolExecutor tức thì.
+  2. **Giải phóng ngay `_CURRENT_RUNNING_JOB_ID` và Đánh thức Worker**:
+     - Khi gọi `skip_current_job` hoặc `cancel_job`: Đặt `_CURRENT_RUNNING_JOB_ID = None` ngay lập tức và gọi `_WAKE_EVENT.set()`.
+  3. **Cơ chế tự phục hồi Zombie Job (`recover_stale_running_jobs`)**:
+     - Tự động quét và đưa các running job mồ côi (không có active worker thread) về `queued` để giải phóng hàng đợi, đảm bảo dây chuyền luôn tuần tự bốc việc tiếp theo ngay khi có chỗ trống.
+  4. **Cung cấp nút reset chủ động trên UI**:
+     - Bổ sung nút `🔄 Khởi động lại dây chuyền (Reset Worker)` để người dùng có thể tự giải phóng trạng thái kẹt và đánh thức worker bất cứ lúc nào.
