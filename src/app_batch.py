@@ -11,12 +11,14 @@ import streamlit as st
 
 from src.autonomous_factory import (
     add_factory_jobs,
+    cancel_job,
     clear_failed_jobs,
     clear_finished_jobs,
     ensure_factory_worker,
     get_factory_state,
     retry_failed_jobs,
     set_factory_paused,
+    skip_current_job,
 )
 from src.config import ASSETS_DIR, DEFAULT_IMAGE_STYLE, TTS_VOICES_EN, TTS_VOICES_VI, TTS_VOICES_ZH
 from src.flow_browser_service import get_flow_readiness, get_flow_controller
@@ -79,6 +81,16 @@ def _render_job(job):
         unsafe_allow_html=True,
     )
     st.progress(int(job.get("progress", 0)))
+    status = job.get("status")
+    job_id = job.get("id")
+    if status == "running":
+        if st.button("⏭️ Bỏ qua video này", key=f"skip_btn_{job_id}", help="Ngắt tiến trình video này và chuyển sang việc tiếp theo ngay lập tức"):
+            skip_current_job(job_id)
+            st.rerun()
+    elif status == "queued":
+        if st.button("❌ Hủy việc này", key=f"cancel_btn_{job_id}", help="Xóa video này khỏi hàng đợi"):
+            cancel_job(job_id)
+            st.rerun()
 
 
 def _render_completed_card(job, index):
@@ -234,16 +246,23 @@ def run_batch_ui():
                 help="Thêm vòng kiểm chứng, sửa hook, độ rõ ràng, tính nhất quán hình ảnh và chính sách trước khi sản xuất.",
             )
             turbo_mode = st.checkbox(
-                "⚡ Chế độ Turbo Batch (Tăng tốc song song x4)",
+                "⚡ Chế độ Turbo Batch (Tăng tốc song song)",
                 value=True,
-                help="Tăng tốc tối đa: sinh giọng đọc TTS song song và gom tạo ảnh Flow dạng batch (tối đa 4 luồng).",
+                help="Tăng tốc tối đa: sinh giọng đọc TTS song song và tạo ảnh Flow dạng batch (chuẩn 2 hình song song).",
             )
-            flow_workers = 4
+            flow_workers = 2
             tts_workers = 4
             if turbo_mode:
                 with st.expander("⚙️ Tinh chỉnh luồng Turbo (Nâng cao)"):
                     tc1, tc2 = st.columns(2)
-                    flow_workers = int(tc1.number_input("Luồng tạo ảnh (Flow)", min_value=1, max_value=8, value=4, step=1))
+                    flow_workers = int(tc1.number_input(
+                        "Luồng tạo ảnh (Flow)",
+                        min_value=1,
+                        max_value=4,
+                        value=2,
+                        step=1,
+                        help="Google Flow xử lý tối ưu 2 hình song song cùng lúc để tránh cảnh báo High Demand.",
+                    ))
                     tts_workers = int(tc2.number_input("Luồng tạo audio (TTS)", min_value=1, max_value=8, value=4, step=1))
 
             if media_mode_label.startswith("🎬 Video Flow") or "mọi cảnh" in media_mode_label:
@@ -359,6 +378,10 @@ def run_batch_ui():
         if b2.button("Xóa việc lỗi", disabled=counts["failed"] == 0, use_container_width=True):
             clear_failed_jobs()
             st.rerun()
+        if counts["running"] > 0:
+            if st.button("⏭️ Bỏ qua video đang làm", type="secondary", use_container_width=True, help="Ngắt tiến trình video hiện tại và lập tức chuyển sang video tiếp theo trong hàng đợi"):
+                skip_current_job()
+                st.rerun()
         if flow_status == "login_required":
             st.warning("Chrome điều khiển đã mở nhưng Google Flow chưa đăng nhập. Hãy đăng nhập một lần trong cửa sổ Chrome Flow, sau đó bấm Làm mới trạng thái.")
         elif flow_status == "disconnected":

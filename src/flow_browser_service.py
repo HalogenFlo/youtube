@@ -37,6 +37,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 CONFIG_PATH = ROOT_DIR / "flow_config.json"
 ATTEMPTS_DIR = ROOT_DIR / "temp" / "flow_attempts"
 ATTEMPTS_DIR.mkdir(parents=True, exist_ok=True)
+_FLOW_BROWSER_LOCK = threading.Lock()
 
 # Nhận diện nhân vật nhất quán giữa các phân cảnh của kênh.
 STICKMAN_CANONICAL_GUIDANCE = (
@@ -609,7 +610,6 @@ class FlowBrowserController:
             except Exception:
                 pass
 
-
     def generate_scene_image(
         self,
         prompt: str,
@@ -618,7 +618,24 @@ class FlowBrowserController:
         style_preset: str = "",
         timeout_sec: int = 90
     ) -> Tuple[bool, str]:
-        """Tự động sinh ảnh từ Google Flow Nano Banana / Imagen 3."""
+        """Tự động sinh ảnh từ Google Flow Nano Banana / Imagen 3 (Thread-safe)."""
+        with _FLOW_BROWSER_LOCK:
+            return self._generate_scene_image_locked(
+                prompt=prompt,
+                output_path=output_path,
+                orientation=orientation,
+                style_preset=style_preset,
+                timeout_sec=timeout_sec,
+            )
+
+    def _generate_scene_image_locked(
+        self,
+        prompt: str,
+        output_path: str,
+        orientation: str = "vertical",
+        style_preset: str = "",
+        timeout_sec: int = 90
+    ) -> Tuple[bool, str]:
         page = self._ensure_page()
         if not page:
             return False, "Không thể kết nối vào tab Google Flow."

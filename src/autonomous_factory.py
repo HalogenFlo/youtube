@@ -207,6 +207,64 @@ def cancel_queued_jobs() -> int:
         return removed
 
 
+_CURRENT_RUNNING_JOB_ID: Optional[str] = None
+_SKIP_REQUESTED_JOB_IDS: set = set()
+
+
+def skip_current_job(job_id: Optional[str] = None) -> bool:
+    """
+    Bỏ qua video đang sản xuất hiện tại (hoặc job_id chỉ định) và lập tức
+    chuyển sang video tiếp theo trong hàng đợi mà không cần chờ đợi.
+    """
+    global _CURRENT_RUNNING_JOB_ID, _SKIP_REQUESTED_JOB_IDS
+    with _LOCK:
+        state = _load_unlocked()
+        target_id = job_id or _CURRENT_RUNNING_JOB_ID
+        running_jobs = [
+            j for j in state["jobs"]
+            if j.get("status") == "running" and (target_id is None or j.get("id") == target_id)
+        ]
+        if not running_jobs:
+            running_jobs = [j for j in state["jobs"] if j.get("status") == "running"]
+
+        if not running_jobs:
+            return False
+
+        for j in running_jobs:
+            jid = j["id"]
+            _SKIP_REQUESTED_JOB_IDS.add(jid)
+            j.update(
+                status="failed",
+                progress=0,
+                message="Đã bỏ qua theo yêu cầu người dùng",
+                error="Đã bỏ qua theo yêu cầu người dùng",
+                updated_at=_now(),
+            )
+        _save_unlocked(state)
+        _WAKE_EVENT.set()
+        return True
+
+
+def cancel_job(job_id: str) -> bool:
+    """
+    Hủy một công việc cụ thể:
+    - Nếu đang chờ (queued) hoặc đã lỗi (failed): Xóa khỏi danh sách.
+    - Nếu đang chạy (running): Ngắt và bỏ qua để chuyển sang việc tiếp theo.
+    """
+    with _LOCK:
+        state = _load_unlocked()
+        target = next((j for j in state["jobs"] if j.get("id") == job_id), None)
+        if not target:
+            return False
+        if target.get("status") in ("queued", "failed"):
+            state["jobs"] = [j for j in state["jobs"] if j.get("id") != job_id]
+            _save_unlocked(state)
+            _WAKE_EVENT.set()
+            return True
+
+    return skip_current_job(job_id)
+
+
 def _update_job(job_id: str, **changes: Any) -> None:
     with _LOCK:
         state = _load_unlocked()
@@ -219,6 +277,7 @@ def _update_job(job_id: str, **changes: Any) -> None:
 
 
 def _next_job() -> Dict[str, Any] | None:
+    global _CURRENT_RUNNING_JOB_ID
     with _LOCK:
         state = _load_unlocked()
         if state.get("paused"):
@@ -228,6 +287,7 @@ def _next_job() -> Dict[str, Any] | None:
             return None
         for job in state["jobs"]:
             if job.get("status") == "queued":
+                _CURRENT_RUNNING_JOB_ID = job["id"]
                 job.update(status="running", progress=1, message="Đang khởi động dây chuyền", updated_at=_now())
                 job["attempts"] = int(job.get("attempts", 0)) + 1
                 _save_unlocked(state)
@@ -254,8 +314,23 @@ def _worker_loop() -> None:
                 set_factory_paused(True)
                 continue
 
+        current_job_id = job["id"]
+        with _LOCK:
+            _CURRENT_RUNNING_JOB_ID = current_job_id
+
+        def is_cancelled() -> bool:
+            with _LOCK:
+                if current_job_id in _SKIP_REQUESTED_JOB_IDS:
+                    return True
+                st = _load_unlocked()
+                for j in st.get("jobs", []):
+                    if j.get("id") == current_job_id and j.get("status") != "running":
+                        return True
+            return False
+
         def progress_callback(percent: float, message: str) -> None:
-            _update_job(job["id"], progress=max(1, min(99, int(percent))), message=message)
+            if not is_cancelled():
+                _update_job(job["id"], progress=max(1, min(99, int(percent))), message=message)
 
         try:
             success, result, metadata = produce_single_video_pipeline(
@@ -277,10 +352,28 @@ def _worker_loop() -> None:
                 content_mode=settings.get("content_mode", "knowledge"),
                 chinese_voice=settings.get("chinese_voice", TTS_VOICE_ZH_DEFAULT),
                 turbo_mode=bool(settings.get("turbo_mode", False)),
-                flow_workers=int(settings.get("flow_workers", 4)),
+                flow_workers=int(settings.get("flow_workers", 2)),
                 tts_workers=int(settings.get("tts_workers", 4)),
                 progress_callback=progress_callback,
+                is_cancelled_callback=is_cancelled,
             )
+
+            with _LOCK:
+                if current_job_id == _CURRENT_RUNNING_JOB_ID:
+                    _CURRENT_RUNNING_JOB_ID = None
+                was_skipped = current_job_id in _SKIP_REQUESTED_JOB_IDS
+                _SKIP_REQUESTED_JOB_IDS.discard(current_job_id)
+
+            if was_skipped:
+                _update_job(
+                    current_job_id,
+                    status="failed",
+                    progress=0,
+                    message="Đã bỏ qua theo yêu cầu người dùng",
+                    error="Đã bỏ qua theo yêu cầu người dùng",
+                )
+                continue
+
             skill_ids = metadata.get("editorial_report", {}).get("selected_skill_ids", []) if isinstance(metadata, dict) else []
             record_skill_outcome(skill_ids, success)
             if success:
@@ -291,6 +384,18 @@ def _worker_loop() -> None:
             else:
                 _update_job(job["id"], status="failed", progress=0, message=str(result), error=str(result))
         except Exception as exc:
+            with _LOCK:
+                was_skipped = current_job_id in _SKIP_REQUESTED_JOB_IDS
+                _SKIP_REQUESTED_JOB_IDS.discard(current_job_id)
+            if was_skipped:
+                _update_job(
+                    current_job_id,
+                    status="failed",
+                    progress=0,
+                    message="Đã bỏ qua theo yêu cầu người dùng",
+                    error="Đã bỏ qua theo yêu cầu người dùng",
+                )
+                continue
             _update_job(job["id"], status="failed", progress=0, message=f"Dây chuyền gặp lỗi: {exc}", error=str(exc))
 
 

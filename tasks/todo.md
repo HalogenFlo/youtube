@@ -369,3 +369,34 @@ Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow
   + Kể chuyện dẫn dắt Story Explainer: Hook bí ẩn -> Bối cảnh nhân vật -> Nút thắt xung đột -> Bước ngoặt giải mã -> Bài học & thông điệp.
 - **Tự động hóa giao diện Web UI (`src/app_batch.py`)**: Khi người dùng chọn loại video trên dropdown, trường "Số phân cảnh mỗi video" tự động chuyển về 3 cảnh cho tiếng Trung và 5 cảnh cho cốt truyện.
 - **Kiểm thử**: Cập nhật `tests/test_story_modes.py` (7/7 passed), toàn hệ thống đạt 116/116 passed.
+
+---
+
+## 17. Tính Năng Bỏ Qua Video Đang Làm (Skip/Cancel Job) & Tối Ưu Sinh Ảnh Song Song 2 Hình Cùng Lúc (Concurrency = 2)
+
+### 1. Mục tiêu & Thiết kế
+- **Bỏ qua / Hủy việc đang làm (Skip / Cancel Job)**:
+  + Cung cấp nút `⏭️ Bỏ qua video đang làm` trên Web UI để người dùng lập tức ngắt tiến trình video hiện tại và dây chuyền tự động chuyển sang làm video tiếp theo trong hàng đợi.
+  + Cung cấp nút `❌ Hủy` riêng cho từng công việc trong hàng đợi `queued`.
+  + Tích hợp cờ ngắt `is_cancelled_callback` xuyên suốt các chặng của `produce_single_video_pipeline` để dừng ngay lập tức trong vòng vài giây, giải phóng tài nguyên.
+- **Sinh ảnh song song chuẩn 2 hình một lúc (Concurrency = 2)**:
+  + Thiết lập `flow_workers = 2` chuẩn hóa theo đúng hạn mức xử lý đồng thời tối ưu của Google Flow.
+  + Điều phối an toàn trong `FlowBatchQueueEngine` và `flow_browser_service.py` để tạo 2 ảnh song song không xung đột.
+
+### 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Xây dựng cơ chế ngắt và hủy công việc trong `src/autonomous_factory.py`**
+  + Triển khai `skip_current_job()` và `cancel_job(job_id)`.
+  + Kết nối `is_cancelled_callback` vào worker loop.
+- [x] **Task 2: Tích hợp chốt chặn `is_cancelled_callback` vào `src/batch_producer.py`**
+  + Kiểm tra dừng sớm trước/sau kịch bản, trong lúc sinh TTS, tạo ảnh Flow, và trước render video.
+- [x] **Task 3: Cập nhật giao diện Web UI `src/app_batch.py`**
+  + Thêm nút `⏭️ Bỏ qua video đang làm` ở bảng điều khiển chính.
+  + Thêm nút `⏭️ Bỏ qua` trên card việc đang chạy và nút `❌ Hủy` trên card việc chờ.
+  + Đặt mặc định `flow_workers = 2` với giải thích trực quan về năng lực sinh 2 hình song song của Google Flow.
+- [x] **Task 4: Tối ưu cấu hình 2 luồng trong `src/flow_image_service.py` và điều phối an toàn**
+  + Đặt mặc định `flow_workers = 2` cho Google Flow trong UI và factory.
+  + Khóa đồng bộ thao tác `_FLOW_BROWSER_LOCK` để chống xung đột DOM và multi-thread crash.
+- [x] **Task 5: Viết bộ unit test `tests/test_skip_cancel_job.py` và kiểm chứng hồi quy**
+  + Kiểm tra skip running job, cancel queued job, pipeline early abort.
+  + Chạy full test suite (`pytest`) đạt 119/119 tests pass (100%).
+

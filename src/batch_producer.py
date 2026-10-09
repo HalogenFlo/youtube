@@ -250,7 +250,8 @@ def produce_single_video_pipeline(
     turbo_mode: bool = False,
     flow_workers: int = 4,
     tts_workers: int = 4,
-    progress_callback: Optional[Callable[[float, str], None]] = None
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    is_cancelled_callback: Optional[Callable[[], bool]] = None,
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     Sản xuất 1 video hoàn chỉnh từ Topic:
@@ -260,6 +261,9 @@ def produce_single_video_pipeline(
     4. Trích xuất word timestamps qua Faster-Whisper
     5. Biên tập và Render video hoàn chỉnh kèm phụ đề
     """
+    def _is_cancelled() -> bool:
+        return bool(is_cancelled_callback and is_cancelled_callback())
+
     def notify(pct: float, message: str):
         safe_log(f"   [{video_index}] [{int(pct)}%] {message}")
         if progress_callback:
@@ -269,6 +273,9 @@ def produce_single_video_pipeline(
                 pass
 
     run_meta = {"topic": topic, "video_index": video_index}
+    if _is_cancelled():
+        return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
+
     safe_job_key = "".join(ch for ch in str(job_key) if ch.isalnum() or ch in "-_")
     work_name = f"job_{safe_job_key}" if safe_job_key else f"video_{video_index:02d}"
     video_work_dir = os.path.join(batch_work_dir, work_name)
@@ -304,6 +311,8 @@ def produce_single_video_pipeline(
         run_meta["editorial_report"] = {"mode": "single_writer", "approved": True, "selected_skill_ids": []}
     num_scenes = len(scenes)
     notify(20, f"Đã lập kịch bản gồm {num_scenes} phân cảnh độc lập.")
+    if _is_cancelled():
+        return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
 
     # 2. SINH GIỌNG ĐỌC & TÍNH TOÁN TIMING
     if turbo_mode:
@@ -330,6 +339,8 @@ def produce_single_video_pipeline(
     else:
         notify(25, "Đang sinh giọng đọc AI (TTS) cho các phân cảnh...")
         for i, sc in enumerate(scenes):
+            if _is_cancelled():
+                return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
             sc_num = sc.get("scene_num", i + 1)
             audio_ext = ".wav" if voice_mode == "clone_local" and content_mode != "chinese_teaching_vi" else ".mp3"
             audio_file = os.path.join(video_work_dir, f"scene_{sc_num:03d}{audio_ext}")
@@ -371,6 +382,9 @@ def produce_single_video_pipeline(
             notify(25 + (i + 1) / num_scenes * 15, f"Đã sinh giọng đọc phân cảnh {sc_num}/{num_scenes}")
 
     # 3. SINH BỐI CẢNH AI RIÊNG BIỆT CHO TỪNG PHÂN CẢNH (GOOGLE FLOW / FALLBACK)
+    if _is_cancelled():
+        return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
+
     if turbo_mode and image_engine == "flow" and media_mode == "flow_image":
         notify(45, f"Bắt đầu sinh bối cảnh hình ảnh AI dạng Turbo Batch ({flow_workers} workers) cho {num_scenes} phân cảnh...")
         def _flow_batch_cb(cur: int, *args: Any):
@@ -395,6 +409,8 @@ def produce_single_video_pipeline(
     else:
         notify(45, "Bắt đầu sinh bối cảnh hình ảnh AI riêng biệt cho từng phân cảnh...")
         for i, sc in enumerate(scenes):
+            if _is_cancelled():
+                return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
             sc_num = sc.get("scene_num", i + 1)
             prompt = sc.get("video_prompt") or sc.get("narration") or "Stickman cinematic scene"
             step_pct = 45 + (i / num_scenes) * 30
@@ -517,10 +533,16 @@ def produce_single_video_pipeline(
                 return False, err, run_meta
 
     # 4. PHÂN TÍCH TIMESTAMPS PHỤ ĐỀ (WHISPER)
+    if _is_cancelled():
+        return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
+
     notify(78, "Đang tạo phụ đề chính xác từ lời thoại nguồn...")
     all_words = build_exact_tts_timestamps(scenes)
 
     # 5. BIÊN TẬP VÀ RENDER VIDEO HOÀN CHỈNH
+    if _is_cancelled():
+        return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
+
     notify(85, "Đang biên tập chuyển cảnh và burn phụ đề video...")
     ok, compiled_videos, err = compile_video_pipeline(
         scenes=scenes,
