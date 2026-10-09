@@ -298,113 +298,119 @@ def _next_job() -> Dict[str, Any] | None:
 def _worker_loop() -> None:
     FACTORY_WORK_DIR.mkdir(parents=True, exist_ok=True)
     while True:
-        job = _next_job()
-        if not job:
-            _WAKE_EVENT.wait(timeout=3.0)
-            _WAKE_EVENT.clear()
-            continue
-
-        settings = job.get("settings", {})
-
-        if settings.get("image_engine", "flow") == "flow" and get_flow_readiness() != "ready":
-            _update_job(job["id"], progress=1, message="Đang tự mở lại Chrome Google Flow...")
-            flow_ok, flow_message = get_flow_controller().connect()
-            if not flow_ok:
-                _update_job(job["id"], status="queued", progress=0, message=f"{flow_message} — xưởng đã tự tạm dừng")
-                set_factory_paused(True)
-                continue
-
-        current_job_id = job["id"]
-        with _LOCK:
-            _CURRENT_RUNNING_JOB_ID = current_job_id
-
-        def is_cancelled() -> bool:
-            with _LOCK:
-                if current_job_id in _SKIP_REQUESTED_JOB_IDS:
-                    return True
-                st = _load_unlocked()
-                for j in st.get("jobs", []):
-                    if j.get("id") == current_job_id and j.get("status") != "running":
-                        return True
-            return False
-
-        def progress_callback(percent: float, message: str) -> None:
-            if not is_cancelled():
-                _update_job(job["id"], progress=max(1, min(99, int(percent))), message=message)
-
         try:
-            success, result, metadata = produce_single_video_pipeline(
-                topic=job["topic"],
-                video_index=int(job["video_index"]),
-                batch_work_dir=str(FACTORY_WORK_DIR),
-                output_dir=OUTPUT_DIR,
-                language=settings.get("language", "vi"),
-                voice=settings.get("voice", TTS_VOICE_DEFAULT),
-                style_preset=settings.get("style_preset", DEFAULT_IMAGE_STYLE),
-                orientation=settings.get("orientation", "vertical"),
-                image_engine=settings.get("image_engine", "flow"),
-                media_mode=settings.get("media_mode", "flow_image"),
-                target_scenes=int(settings.get("target_scenes", 5)),
-                voice_mode=settings.get("voice_mode", "edge"),
-                voice_reference_path=settings.get("voice_reference_path", ""),
-                job_key=job["id"],
-                studio_mode=bool(settings.get("studio_mode", True)),
-                content_mode=settings.get("content_mode", "knowledge"),
-                chinese_voice=settings.get("chinese_voice", TTS_VOICE_ZH_DEFAULT),
-                turbo_mode=bool(settings.get("turbo_mode", False)),
-                flow_workers=int(settings.get("flow_workers", 2)),
-                tts_workers=int(settings.get("tts_workers", 4)),
-                progress_callback=progress_callback,
-                is_cancelled_callback=is_cancelled,
-            )
-
-            with _LOCK:
-                if current_job_id == _CURRENT_RUNNING_JOB_ID:
-                    _CURRENT_RUNNING_JOB_ID = None
-                was_skipped = current_job_id in _SKIP_REQUESTED_JOB_IDS
-                _SKIP_REQUESTED_JOB_IDS.discard(current_job_id)
-
-            if was_skipped:
-                _update_job(
-                    current_job_id,
-                    status="failed",
-                    progress=0,
-                    message="Đã bỏ qua theo yêu cầu người dùng",
-                    error="Đã bỏ qua theo yêu cầu người dùng",
-                )
+            job = _next_job()
+            if not job:
+                _WAKE_EVENT.wait(timeout=2.0)
+                _WAKE_EVENT.clear()
                 continue
 
-            skill_ids = metadata.get("editorial_report", {}).get("selected_skill_ids", []) if isinstance(metadata, dict) else []
-            record_skill_outcome(skill_ids, success)
-            if success:
-                _update_job(
-                    job["id"], status="completed", progress=100, message="Video và metadata đã sẵn sàng",
-                    output_path=result, metadata=metadata, completed_at=_now(), error="",
-                )
-            else:
-                _update_job(job["id"], status="failed", progress=0, message=str(result), error=str(result))
-        except Exception as exc:
+            settings = job.get("settings", {})
+
+            if settings.get("image_engine", "flow") == "flow" and get_flow_readiness() != "ready":
+                _update_job(job["id"], progress=1, message="Đang tự mở lại Chrome Google Flow...")
+                flow_ok, flow_message = get_flow_controller().connect()
+                if not flow_ok:
+                    _update_job(job["id"], status="queued", progress=0, message=f"{flow_message} — xưởng đã tự tạm dừng")
+                    set_factory_paused(True)
+                    continue
+
+            current_job_id = job["id"]
             with _LOCK:
-                was_skipped = current_job_id in _SKIP_REQUESTED_JOB_IDS
-                _SKIP_REQUESTED_JOB_IDS.discard(current_job_id)
-            if was_skipped:
-                _update_job(
-                    current_job_id,
-                    status="failed",
-                    progress=0,
-                    message="Đã bỏ qua theo yêu cầu người dùng",
-                    error="Đã bỏ qua theo yêu cầu người dùng",
+                _CURRENT_RUNNING_JOB_ID = current_job_id
+
+            def is_cancelled() -> bool:
+                with _LOCK:
+                    if current_job_id in _SKIP_REQUESTED_JOB_IDS:
+                        return True
+                    st = _load_unlocked()
+                    for j in st.get("jobs", []):
+                        if j.get("id") == current_job_id and j.get("status") != "running":
+                            return True
+                return False
+
+            def progress_callback(percent: float, message: str) -> None:
+                if not is_cancelled():
+                    _update_job(job["id"], progress=max(1, min(99, int(percent))), message=message)
+
+            try:
+                success, result, metadata = produce_single_video_pipeline(
+                    topic=job["topic"],
+                    video_index=int(job["video_index"]),
+                    batch_work_dir=str(FACTORY_WORK_DIR),
+                    output_dir=OUTPUT_DIR,
+                    language=settings.get("language", "vi"),
+                    voice=settings.get("voice", TTS_VOICE_DEFAULT),
+                    style_preset=settings.get("style_preset", DEFAULT_IMAGE_STYLE),
+                    orientation=settings.get("orientation", "vertical"),
+                    image_engine=settings.get("image_engine", "flow"),
+                    media_mode=settings.get("media_mode", "flow_image"),
+                    target_scenes=int(settings.get("target_scenes", 5)),
+                    voice_mode=settings.get("voice_mode", "edge"),
+                    voice_reference_path=settings.get("voice_reference_path", ""),
+                    job_key=job["id"],
+                    studio_mode=bool(settings.get("studio_mode", True)),
+                    content_mode=settings.get("content_mode", "knowledge"),
+                    chinese_voice=settings.get("chinese_voice", TTS_VOICE_ZH_DEFAULT),
+                    turbo_mode=bool(settings.get("turbo_mode", False)),
+                    flow_workers=int(settings.get("flow_workers", 2)),
+                    tts_workers=int(settings.get("tts_workers", 4)),
+                    progress_callback=progress_callback,
+                    is_cancelled_callback=is_cancelled,
                 )
-                continue
-            _update_job(job["id"], status="failed", progress=0, message=f"Dây chuyền gặp lỗi: {exc}", error=str(exc))
+
+                with _LOCK:
+                    if current_job_id == _CURRENT_RUNNING_JOB_ID:
+                        _CURRENT_RUNNING_JOB_ID = None
+                    was_skipped = current_job_id in _SKIP_REQUESTED_JOB_IDS
+                    _SKIP_REQUESTED_JOB_IDS.discard(current_job_id)
+
+                if was_skipped:
+                    _update_job(
+                        current_job_id,
+                        status="failed",
+                        progress=0,
+                        message="Đã bỏ qua theo yêu cầu người dùng",
+                        error="Đã bỏ qua theo yêu cầu người dùng",
+                    )
+                    continue
+
+                skill_ids = metadata.get("editorial_report", {}).get("selected_skill_ids", []) if isinstance(metadata, dict) else []
+                record_skill_outcome(skill_ids, success)
+                if success:
+                    _update_job(
+                        job["id"], status="completed", progress=100, message="Video và metadata đã sẵn sàng",
+                        output_path=result, metadata=metadata, completed_at=_now(), error="",
+                    )
+                else:
+                    _update_job(job["id"], status="failed", progress=0, message=str(result), error=str(result))
+            except Exception as exc:
+                with _LOCK:
+                    was_skipped = current_job_id in _SKIP_REQUESTED_JOB_IDS
+                    _SKIP_REQUESTED_JOB_IDS.discard(current_job_id)
+                if was_skipped:
+                    _update_job(
+                        current_job_id,
+                        status="failed",
+                        progress=0,
+                        message="Đã bỏ qua theo yêu cầu người dùng",
+                        error="Đã bỏ qua theo yêu cầu người dùng",
+                    )
+                    continue
+                _update_job(job["id"], status="failed", progress=0, message=f"Dây chuyền gặp lỗi: {exc}", error=str(exc))
+        except Exception as loop_err:
+            safe_log(f"[FACTORY WORKER] Ngoại lệ vòng lặp nền: {loop_err}")
+            time.sleep(2.0)
 
 
 def ensure_factory_worker() -> threading.Thread:
     global _WORKER_THREAD
     with _LOCK:
         if _WORKER_THREAD and _WORKER_THREAD.is_alive():
+            _WAKE_EVENT.set()
             return _WORKER_THREAD
         recover_interrupted_jobs()
         _WORKER_THREAD = threading.Thread(target=_worker_loop, name="video-factory-worker", daemon=True)
         _WORKER_THREAD.start()
+        _WAKE_EVENT.set()
         return _WORKER_THREAD

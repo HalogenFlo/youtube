@@ -378,6 +378,10 @@ def run_batch_ui():
         if b2.button("Xóa việc lỗi", disabled=counts["failed"] == 0, use_container_width=True):
             clear_failed_jobs()
             st.rerun()
+        if counts["queued"] > 0 and counts["running"] == 0:
+            if st.button("▶️ Bắt đầu sản xuất ngay", type="primary", use_container_width=True, help="Kích hoạt dây chuyền sản xuất video trong hàng đợi"):
+                ensure_factory_worker()
+                st.rerun()
         if counts["running"] > 0:
             if st.button("⏭️ Bỏ qua video đang làm", type="secondary", use_container_width=True, help="Ngắt tiến trình video hiện tại và lập tức chuyển sang video tiếp theo trong hàng đợi"):
                 skip_current_job()
