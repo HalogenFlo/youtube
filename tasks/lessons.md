@@ -152,3 +152,24 @@
   3. **Ép buộc mạch truyện liền mạch một dòng chảy**:
      - Thêm chỉ thị bắt buộc trong System Prompt và User Prompt: Toàn bộ video là MỘT CÂU CHUYỆN LIÊN TỤC, từ cảnh 2 trở đi bắt buộc phải có từ nối / liên từ bắc cầu (*thế nhưng, chính vì vậy, điều bất ngờ là, để làm được điều đó...*).
      - Loại bỏ triệt để chuỗi `f"Đọc là {pinyin}."` khỏi câu thoại nói để không gây gián đoạn luồng nghe.
+
+
+## 17. Đồng Bộ Thời Lượng Tuyệt Đối (Video-Audio Sync Loop) và Mạch Truyện Chuỗi Tập (Series Continuity)
+- **Hiện tượng lỗi**:
+  1. *Video hết nhưng tiếng vẫn nói*: Video AI (Veo/Google Flow) kết thúc hoặc đứng hình bất động (freeze frame) từ giây thứ 4-5 trong khi giọng đọc tiếp tục kéo dài đến giây thứ 8-9, tạo cảm giác cụt hứng và lỗi kỹ thuật.
+  2. *Hình ảnh và lời thoại không liên quan*: Lời thoại nói về hành động cụ thể nhưng prompt video lại mô tả phong cảnh chung chung không có hành động tương ứng.
+  3. *Mạch truyện nhảy cóc giữa các video*: Khi sản xuất batch nhiều video hoặc chạy xưởng tự động, video 1 đang nói về câu chuyện A thì sang video 2 lại nhảy sang chủ đề X không liên quan ("đang abc cái nhảy qua 123").
+- **Nguyên nhân gốc rễ**:
+  1. *Cơ chế mặc định của MoviePy*: Hàm `clip.set_duration(dur)` trên `VideoFileClip` khi `dur > clip.duration` sẽ tự động đóng băng frame cuối (freeze frame), biến video thành ảnh chết trong khi âm thanh vẫn chạy. Khi ghép nhiều clip, nếu không ép duration tổng thể khớp chính xác với `combined_audio.duration`, thời lượng hình và tiếng sẽ bị lệch.
+  2. *Thiếu chỉ thị Action-Narration Parity trong prompt*: Prompt kịch bản không yêu cầu bắt buộc trường `video_prompt` phải mô tả chuyển động cơ thể, cử chỉ khớp 100% với từng câu nói trong `narration`.
+  3. *Sinh kịch bản độc lập (Stateless Script Generation)*: Các hàm tạo video hàng loạt gọi `generate_script(topic)` độc lập, LLM không nhận được ngữ cảnh kết thúc của video trước đó, dẫn đến mất tính liên kết câu chuyện.
+- **Quy tắc phòng ngừa**:
+  1. **Tự động lặp chuyển động mượt mà (Video Loop) và Cắt chuẩn xác**:
+     - Trong `process_video_clip`: Nếu video ngắn hơn audio, sử dụng `vfx.loop(clip, duration=target_duration)` để chuyển động của nhân vật diễn ra liên tục, tự nhiên, triệt tiêu hoàn toàn hiện tượng freeze frame. Nếu video dài hơn audio, sử dụng `clip.subclip(0, target_duration)`.
+     - Trong `compile_video_with_audio_and_subtitles`: Đặt `part_video_raw = part_video_raw.set_duration(total_audio_dur).set_audio(combined_audio)` đảm bảo thời lượng hình và tiếng kết thúc cùng một mili-giây.
+  2. **Đồng bộ 1:1 Hành động hình ảnh và Lời thoại (Action-Narration Parity)**:
+     - Thêm chỉ thị bắt buộc trong Prompt của LLM: Mọi `video_prompt` phải mô tả hành động, biểu cảm, cử chỉ cụ thể khớp trực tiếp với từng câu nói trong `narration`, loại bỏ hoàn toàn các mô tả tĩnh chung chung.
+  3. **Cơ chế nối tiếp mạch truyện nhiều tập (Multi-Episode Series Continuity)**:
+     - Hỗ trợ tham số `previous_context` trong `generate_script`.
+     - Phân bổ chủ đề dạng Story Arc (Tập 1: Mở đầu & Khởi nguồn, Tập 2: Diễn biến & Thử thách, Tập 3: Đỉnh điểm & Hồi kết).
+     - Trong vòng lặp tạo video hàng loạt (`run_batch_video_loop`), tự động trích xuất tóm tắt mở đầu và kết thúc của video trước để truyền làm tiền đề ngữ cảnh cho video sau.

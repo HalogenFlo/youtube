@@ -157,8 +157,10 @@ def get_audio_duration(file_path: str) -> float:
 
 def split_prompt_to_video_topics(main_prompt: str, count: int, language: str = "vi") -> List[str]:
     """
-    Tự động chia tách prompt người dùng thành danh sách các chủ đề video độc lập.
-    Hỗ trợ cả trường hợp người dùng nhập nhiều dòng hoặc nhập 1 chủ đề lớn cần chia N tập.
+    Tự động chia tách prompt người dùng thành danh sách các chủ đề video liên kết mạch truyện.
+    - Nếu người dùng nhập nhiều dòng: Lấy từng dòng làm chủ đề riêng.
+    - Nếu người dùng nhập 1 chủ đề chung: Phân bổ thành chuỗi tập (Multi-Episode Series Arc)
+      có diễn biến phát triển logic xuyên suốt, không bị đứt đoạn hay nhảy cóc nội dung.
     """
     # Nếu người dùng nhập mỗi dòng một chủ đề
     lines = [line.strip() for line in main_prompt.strip().split("\n") if line.strip()]
@@ -167,21 +169,38 @@ def split_prompt_to_video_topics(main_prompt: str, count: int, language: str = "
         while len(topics) < count:
             base_topic = lines[len(topics) % len(lines)]
             episode = len(topics) // len(lines) + 1
-            suffix = f"Tập mở rộng {episode}" if language == "vi" else f"Extended episode {episode}"
+            suffix = f"Tập {episode}" if language == "vi" else f"Episode {episode}"
             topics.append(f"{base_topic} ({suffix})")
         return topics
     
-    # Nếu chỉ có 1 chủ đề hoặc số dòng ít hơn count
+    # Nếu chỉ có 1 chủ đề lớn cần chia N tập liên kết
     base_topic = lines[0] if lines else main_prompt.strip()
+    series_arcs_vi = [
+        "Khởi đầu & Bí ẩn bất ngờ",
+        "Diễn biến kịch tính & Thử thách đối mặt",
+        "Bước ngoặt cao trào & Giải mã sự thật",
+        "Hồi kết & Bài học đọng lại",
+        "Góc nhìn mở rộng & Tương lai bí ẩn"
+    ]
+    series_arcs_en = [
+        "The Beginning & Intriguing Mystery",
+        "Rising Conflict & Crucial Challenges",
+        "The Climax & Unveiling the Truth",
+        "Resolution & Powerful Takeaways",
+        "Extended Outlook & Beyond"
+    ]
+    arcs = series_arcs_vi if language == "vi" else series_arcs_en
+
     topics = []
     for i in range(count):
         if count == 1:
             topics.append(base_topic)
         else:
+            arc_label = arcs[i % len(arcs)]
             if language == "vi":
-                topics.append(f"{base_topic} (Phần {i+1}: Các khía cạnh đặc sắc và bất ngờ)")
+                topics.append(f"{base_topic} (Phần {i+1} - Tập {i+1}: {arc_label})")
             else:
-                topics.append(f"{base_topic} (Part {i+1}: Surprising Facts and Insights)")
+                topics.append(f"{base_topic} (Part {i+1} - Episode {i+1}: {arc_label})")
     return topics
 
 
@@ -222,6 +241,7 @@ def normalize_chinese_teaching_scenes(scenes: List[Dict[str, Any]]) -> List[Dict
         scene["narration"] = " ".join(part for part in [
             narration_vi,
             chinese_text,
+            pinyin,
             usage_vi,
         ] if part).strip()
         normalized.append(scene)
@@ -249,12 +269,13 @@ def produce_single_video_pipeline(
     turbo_mode: bool = False,
     flow_workers: int = 4,
     tts_workers: int = 4,
+    previous_context: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     is_cancelled_callback: Optional[Callable[[], bool]] = None,
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     Sản xuất 1 video hoàn chỉnh từ Topic:
-    1. Sinh kịch bản phân cảnh với LLM (Ollama)
+    1. Sinh kịch bản phân cảnh với LLM (Ollama) có liên kết mạch truyện previous_context
     2. Sinh audio TTS cho từng phân cảnh (hỗ trợ Turbo Parallel TTS)
     3. Sinh bối cảnh AI RIÊNG BIỆT cho từng phân cảnh (hỗ trợ Turbo Flow Batch Queue)
     4. Trích xuất word timestamps qua Faster-Whisper
@@ -288,6 +309,7 @@ def produce_single_video_pipeline(
         language=language,
         target_scenes=target_scenes,
         content_mode=content_mode,
+        previous_context=previous_context,
     )
 
     if not success or "scenes" not in script_data or not script_data["scenes"]:
@@ -610,6 +632,7 @@ def run_batch_video_loop(
 
     successful_videos = []
     meta_reports = []
+    last_video_context = ""
 
     for idx, topic in enumerate(topics):
         video_num = idx + 1
@@ -632,6 +655,7 @@ def run_batch_video_loop(
             turbo_mode=turbo_mode,
             flow_workers=flow_workers,
             tts_workers=tts_workers,
+            previous_context=last_video_context if last_video_context else None,
             progress_callback=single_video_callback
         )
 
@@ -640,6 +664,13 @@ def run_batch_video_loop(
             meta["status"] = "success"
             meta_reports.append(meta)
             safe_log(f"   ✓ Video {video_num}/{count} hoàn tất: {path_or_err}")
+
+            # Lưu lại tóm tắt kết thúc của video này để làm cầu nối mạch truyện cho video tiếp theo
+            sc_list = meta.get("scenes", [])
+            if sc_list:
+                first_narr = sc_list[0].get("narration", "")[:50]
+                last_narr = sc_list[-1].get("narration", "")[:80]
+                last_video_context = f"Tập {video_num} mở đầu: '{first_narr}...' và kết thúc: '{last_narr}'"
         else:
             meta["status"] = "failed"
             meta["error"] = path_or_err

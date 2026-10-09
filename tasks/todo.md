@@ -458,3 +458,33 @@ Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow
   - [x] Chạy test compile video (`tests/test_audio_and_output.py`, `tests/test_turbo_batch_e2e.py` - PASS 3/3).
   - [x] Chạy full test suite (`pytest`) đạt 124/124 passed (100%).
 - [x] **Task 5: Ghi chép bài học vào `tasks/lessons.md`**
+
+---
+
+## 20. Đồng Bộ Tuyệt Đối Thời Lượng Hình - Tiếng & Tính Liên Kết Mạch Truyện Giữa Các Video (Multi-Video Continuity)
+
+### 1. Phân tích nguyên nhân gốc rễ
+1. **Lỗi video hết rồi mà audio vẫn nói (Freeze Frame & Audio Bleed)**:
+   - Trong `src/video_compiler.py`, hàm `process_video_clip` gọi `clip.set_duration(duration)`. Khi video AI gốc (4-5s) ngắn hơn thời lượng câu thoại TTS (8-10s), MoviePy tự động lặp lại frame cuối cùng (đứng hình bất động) trong khi âm thanh vẫn tiếp tục nói.
+   - Khi nối các clip, nếu tổng thời lượng visual không khớp chính xác 100% với audio, video hết trước và để lại màn hình đen/tĩnh.
+2. **Nội dung giữa các video bị rời rạc, nhảy cóc ("đang abc nhảy qua 123 không liên quan")**:
+   - Khi chạy hàng loạt N video, mỗi video gọi `generate_script` độc lập mà không truyền ngữ cảnh của video trước đó (`previous_context`).
+   - Tên chủ đề chỉ thêm hậu kỳ chung chung `(Phần X: Các khía cạnh đặc sắc)` mà không có dàn ý mạch truyện nhiều tập (Multi-Episode Series Arc: Mở đầu -> Thử thách/Diễn biến -> Đỉnh điểm/Kết thúc).
+3. **Cốt truyện và hình ảnh trong từng cảnh chưa ăn khớp 1:1**:
+   - Prompt sinh video AI (`video_prompt`) đôi lúc tả bối cảnh chung chung không phản ánh hành động nhân vật đang nói trong `narration`.
+
+### 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Đồng bộ tuyệt đối thời lượng Video - Audio trong `src/video_compiler.py`**
+  - [x] Nâng cấp `process_video_clip`: Dùng `vfx.loop(clip, duration=duration)` khi clip ngắn hơn audio để chuyển động mượt mà liên tục, không bị freeze frame. Cắt `subclip(0, duration)` nếu clip dài hơn audio.
+  - [x] Đảm bảo `part_video_raw` có thời lượng bằng đúng thời lượng `combined_audio.duration` (đồng bộ kết thúc cùng thời điểm 100%).
+- [x] **Task 2: Cơ chế liên kết mạch truyện nhiều tập (Series Narrative Continuity) trong `src/llm_service.py`**
+  - [x] Bổ sung tham số `previous_context` trong `generate_script` để truyền tóm tắt diễn biến tập trước sang tập sau.
+  - [x] Thêm chỉ thị bắt buộc Action-Narration Parity 1:1: Mọi hành động của nhân vật trong `video_prompt` phải phản ánh chính xác nội dung câu thoại `narration`.
+- [x] **Task 3: Cập nhật luồng phân tách chủ đề & chuyển giao ngữ cảnh trong `src/batch_producer.py`**
+  - [x] Nâng cấp `split_prompt_to_video_topics`: Phân bổ chủ đề theo cấu trúc chuỗi tập liên kết (Hồi 1 Khởi đầu -> Hồi 2 Bước ngoặt -> Hồi 3 Kết bài/Giải mã).
+  - [x] Trong `run_batch_video_loop` và `produce_single_video_pipeline`: Trích xuất tóm tắt kịch bản video trước và truyền vào video tiếp theo để mạch truyện xuyên suốt không bị ngắt quãng.
+- [x] **Task 4: Kiểm chứng tự động (Unit Test & Full Regression Test)**
+  - [x] Viết unit test kiểm tra `vfx.loop` thời lượng video không freeze frame (`tests/test_video_audio_sync_and_series.py`).
+  - [x] Viết unit test kiểm tra truyền `previous_context` vào kịch bản nhiều video.
+  - [x] Chạy toàn bộ test suite (`pytest`) đảm bảo 100% passed.
+- [x] **Task 5: Ghi chép bài học vào `tasks/lessons.md`** (Bài học 17)

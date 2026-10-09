@@ -70,18 +70,30 @@ def apply_ken_burns(image_path: str, duration: float, orientation: str) -> Image
 
 def process_video_clip(video_path: str, duration: float, orientation: str) -> VideoFileClip:
     """
-    Load video clip Wan 2.1, resize về kích thước chuẩn và đồng bộ thời lượng với audio.
+    Load video clip, resize về kích thước chuẩn và đồng bộ thời lượng với audio.
+    - Nếu video ngắn hơn audio: Loop chuyển động liên tục (chống đứng hình / freeze frame).
+    - Nếu video dài hơn audio: Cắt gọn vừa vặn thời lượng audio (chống lệch nhịp).
     """
     target_w, target_h = (480, 848) if orientation == "vertical" else (848, 480)
     
     clip = VideoFileClip(video_path)
-    
-    # Resize về kích thước chuẩn
     clip = clip.resize(newsize=(target_w, target_h))
     
-    # Đồng bộ thời lượng (MoviePy tự động freeze frame cuối nếu set_duration dài hơn thời lượng gốc)
-    clip = clip.set_duration(duration)
-    
+    orig_duration = float(clip.duration or 0.0)
+    if orig_duration > 0 and duration > 0:
+        if orig_duration < duration:
+            try:
+                from moviepy.video.fx.all import loop
+                clip = loop(clip, duration=duration)
+            except Exception:
+                clip = clip.set_duration(duration)
+        elif orig_duration > duration:
+            clip = clip.subclip(0, duration)
+        else:
+            clip = clip.set_duration(duration)
+    else:
+        clip = clip.set_duration(duration)
+        
     return clip
 
 def burn_subtitles(video_in: str, ass_path: str, video_out: str, part_num: int = 0, total_parts: int = 0) -> Tuple[bool, str]:
@@ -310,9 +322,12 @@ def compile_video_pipeline(
             # Nối hình ảnh
             part_video_raw = concatenate_videoclips(scene_clips, method="compose")
 
-            # Gán chuỗi audio liên tục đảm bảo 100% có tiếng nói
+            # Gán chuỗi audio liên tục và đồng bộ thời lượng khớp 100%
             if part_audio_clips:
                 combined_audio = concatenate_audioclips(part_audio_clips)
+                total_audio_dur = float(combined_audio.duration or 0.0)
+                if total_audio_dur > 0:
+                    part_video_raw = part_video_raw.set_duration(total_audio_dur)
                 part_video_raw = part_video_raw.set_audio(combined_audio)
 
             # Xuất video thô

@@ -115,9 +115,11 @@ def generate_script(
     model: str = OLLAMA_MODEL_DEFAULT,
     target_scenes: Optional[int] = None,
     content_mode: str = "knowledge",
+    previous_context: Optional[str] = None,
 ) -> Tuple[bool, Any]:
     """
     Luồng A: Sinh kịch bản mới hoàn toàn từ chủ đề/ý tưởng.
+    - Hỗ trợ previous_context để liên kết mạch truyện nhiều tập (Series Continuity).
     - Video tiếng Trung: Mặc định 3 phân cảnh (Giới thiệu -> Phát âm/Pinyin -> Cách dùng giao tiếp).
     - Video cốt truyện (Micro-drama / Story explainer): Mặc định 5 phân cảnh.
     """
@@ -153,11 +155,24 @@ def generate_script(
             "Cảnh 3 (Xung đột cao trào) -> Cảnh 4 (Bước ngoặt giải mã bí ẩn) -> "
             "Cảnh 5 (Bài học & thông điệp truyền cảm hứng).\n"
         )
+
+    series_note = ""
+    if previous_context:
+        series_note = (
+            f"\nBẮT BUỘC NỐI TIẾP MẠCH TRUYỆN TẬP TRƯỚC (SERIES CONTINUITY):\n"
+            f"Diễn biến tập trước đã dừng lại ở: \"{previous_context}\".\n"
+            f"Kịch bản tập này BẮT BUỘC phải tiếp nối tự nhiên từ kết thúc của tập trước, "
+            f"giữ nguyên nhân vật và logic tình huống, tuyệt đối không nhảy sang đề tài khác không liên quan!\n"
+        )
+
     user_prompt = (
         f"Hãy viết kịch bản video ngắn cho chủ đề/ý tưởng sau: \"{topic}\".\n"
         f"{mode_instruction}"
+        f"{series_note}"
         f"Phong cách hình ảnh yêu cầu cho các video prompt: \"{style_preset}\".\n"
         f"Kịch bản phải có ĐÚNG {actual_scenes} phân cảnh; mỗi cảnh khoảng 5-10 giây.\n"
+        "ĐỒNG BỘ 1:1 HÀNH ĐỘNG HÌNH ẢNH VÀ LỜI THOẠI: "
+        "Hành động của nhân vật trong 'video_prompt' BẮT BUỘC phải mô tả chính xác nội dung đang được kể trong 'narration' của cảnh đó.\n"
         "Nếu là nội dung giáo dục, toán hoặc kỹ thuật: lời thoại phải giải thích kiến thức chính xác, "
         "có ít nhất một ví dụ cụ thể và đi đến đáp án; không viết lời dẫn chung chung.\n"
         "Mọi video_prompt TUYỆT ĐỐI không được yêu cầu vẽ chữ, số, công thức, bảng viết, phụ đề hay ký hiệu đọc được; "
