@@ -44,6 +44,10 @@ from src.whisper_service import get_word_timestamps
 from src.video_compiler import compile_video_pipeline
 from src.voice_clone_service import generate_cloned_tts
 from src.studio_editorial_service import run_studio_editorial_pipeline
+from src.story_contract_models import (
+    normalize_architected_scene,
+    build_downstream_contracts_report,
+)
 
 
 CHINESE_TEACHING_TOPIC_BANK = [
@@ -270,7 +274,7 @@ def produce_single_video_pipeline(
     orientation: str = "vertical",
     image_engine: str = "flow",
     media_mode: str = "flow_image",
-    target_scenes: int = 5,
+    target_scenes: Optional[int] = None,
     voice_mode: str = "edge",
     voice_reference_path: str = "",
     job_key: str = "",
@@ -332,32 +336,31 @@ def produce_single_video_pipeline(
         notify(15, "Ban biên tập local đang kiểm chứng, sửa hook và đạo diễn hình ảnh...")
         scenes, editorial_report = run_studio_editorial_pipeline(
             topic=topic, script_data=script_data,
-            target_scenes=max(1, int(target_scenes)), language=language,
+            target_scenes=int(target_scenes) if target_scenes is not None else None,
+            language=language,
             content_mode=content_mode,
         )
         run_meta["editorial_report"] = editorial_report if isinstance(editorial_report, dict) else {}
     else:
-        scenes = script_data["scenes"][:max(1, int(target_scenes))]
+        scenes = script_data["scenes"] if target_scenes is None else script_data["scenes"][:max(1, int(target_scenes))]
         if content_mode == "chinese_teaching_vi":
             scenes = normalize_chinese_teaching_scenes(scenes)
         run_meta["editorial_report"] = {"mode": "single_writer", "approved": True, "selected_skill_ids": []}
 
-    # Đảm bảo 100% scenes là danh sách các dict hợp lệ, không bao giờ để sót string
+    # Đảm bảo 100% scenes được cấu trúc hóa theo 5 nhánh hợp đồng hạ nguồn
     normalized_scenes: List[Dict[str, Any]] = []
     for idx, sc in enumerate(scenes, start=1):
-        if isinstance(sc, dict):
-            sc_dict = dict(sc)
-            sc_dict["scene_num"] = int(sc_dict.get("scene_num") or idx)
-            normalized_scenes.append(sc_dict)
-        else:
-            normalized_scenes.append({
-                "scene_num": idx,
-                "narration": str(sc).strip(),
-                "video_prompt": f"Scene {idx}: cinematic visual representation of {str(sc).strip()[:50]}",
-            })
+        arch_sc = normalize_architected_scene(sc, index=idx)
+        sc_dict = arch_sc.to_dict() if hasattr(arch_sc, "to_dict") else dict(arch_sc)
+        normalized_scenes.append(sc_dict)
     scenes = normalized_scenes
     num_scenes = len(scenes)
-    notify(20, f"Đã lập kịch bản gồm {num_scenes} phân cảnh độc lập.")
+
+    # Đóng gói báo cáo 5 khâu hạ nguồn
+    downstream_report = build_downstream_contracts_report(scenes)
+    run_meta["downstream_contracts"] = downstream_report
+
+    notify(20, f"Đã lập kịch bản gồm {num_scenes} phân cảnh độc lập (chuẩn hóa 5 hợp đồng hạ nguồn).")
     if _is_cancelled():
         return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
 
@@ -489,27 +492,41 @@ def produce_single_video_pipeline(
 
             if try_flow_video:
                 # Sinh video qua Google Flow (kiên trì chờ lấy video trực tiếp, KHÔNG fallback sang ảnh)
-                notify(step_pct, f"Đang kết nối Google Flow sinh video cho cảnh {sc_num}/{num_scenes} (chế độ chờ video trực tiếp)...")
+                max_vid_attempts = 2
+                res_vid = ""
+                for vid_attempt in range(1, max_vid_attempts + 1):
+                    if _is_cancelled():
+                        return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
 
-                def flow_status_cb(sec: int, text: str):
-                    notify(step_pct, f"Cảnh {sc_num}/{num_scenes}: Google Flow đang render clip ({sec}s)... Vui lòng đợi.")
+                    retry_note = f" (lần thử {vid_attempt}/{max_vid_attempts})" if vid_attempt > 1 else ""
+                    notify(step_pct, f"Đang kết nối Google Flow sinh video cho cảnh {sc_num}/{num_scenes}{retry_note}...")
 
-                ok_vid, res_vid = generate_flow_video(
-                    prompt=prompt,
-                    output_path=vid_file,
-                    orientation=orientation,
-                    style_preset=style_preset,
-                    status_callback=flow_status_cb,
-                    is_cancelled_callback=is_cancelled_callback,
-                )
-                if _is_cancelled():
-                    return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
-                if ok_vid and os.path.exists(vid_file) and os.path.getsize(vid_file) > 0:
-                    sc["video_path"] = vid_file
-                    sc["use_video_ai"] = True
-                    media_ok = True
-                    safe_log(f"[✓] Cảnh {sc_num} hoàn tất bằng Google Flow video clip.")
-                else:
+                    def flow_status_cb(sec: int, text: str):
+                        notify(step_pct, f"Cảnh {sc_num}/{num_scenes}{retry_note}: Google Flow đang render clip ({sec}s)... Vui lòng đợi.")
+
+                    ok_vid, res_vid = generate_flow_video(
+                        prompt=prompt,
+                        output_path=vid_file,
+                        orientation=orientation,
+                        style_preset=style_preset,
+                        status_callback=flow_status_cb,
+                        is_cancelled_callback=is_cancelled_callback,
+                    )
+                    if _is_cancelled():
+                        return False, "Đã bỏ qua theo yêu cầu người dùng", run_meta
+                    if ok_vid and os.path.exists(vid_file) and os.path.getsize(vid_file) > 0:
+                        sc["video_path"] = vid_file
+                        sc["use_video_ai"] = True
+                        media_ok = True
+                        safe_log(f"[✓] Cảnh {sc_num} hoàn tất bằng Google Flow video clip.")
+                        break
+                    else:
+                        safe_log(f"[!] Cảnh {sc_num} thử lần {vid_attempt} thất bại: {res_vid}")
+                        if vid_attempt < max_vid_attempts:
+                            notify(step_pct, f"Cảnh {sc_num}: Google Flow gặp lỗi tạm thời. Đang thử lại lần {vid_attempt + 1}/{max_vid_attempts}...")
+                            time.sleep(3)
+
+                if not media_ok:
                     # Người dùng yêu cầu: KHÔNG fallback sang ảnh, không fallback sang SD hay khung hình rỗng!
                     err_msg = f"Lỗi sinh video Flow cảnh {sc_num}: {res_vid}. Hệ thống dừng theo yêu cầu không fallback sang ảnh."
                     safe_log(f"[X] {err_msg}")

@@ -9,30 +9,24 @@ from typing import Any, Dict, List, Tuple
 from src.llm_service import call_ollama
 from src.config import OLLAMA_MODEL_DEFAULT
 from src.studio_skill_registry import select_studio_skills
+from src.story_contract_models import (
+    normalize_architected_scene,
+    build_downstream_contracts_report,
+)
 
 
 def _sanitize_scenes(
-    scenes: Any, target_scenes: int, content_mode: str = "knowledge"
+    scenes: Any, target_scenes: Optional[int] = None, content_mode: str = "knowledge"
 ) -> List[Dict[str, Any]]:
     cleaned = []
     if not isinstance(scenes, list):
         scenes = [scenes] if scenes else []
 
-    for index, raw_item in enumerate(scenes[:max(1, target_scenes)], start=1):
-        if isinstance(raw_item, dict):
-            scene = dict(raw_item)
-        elif isinstance(raw_item, str):
-            scene = {
-                "scene_num": index,
-                "narration": raw_item.strip(),
-                "video_prompt": f"Scene {index}: distinct cinematic visual action, natural lighting",
-            }
-        else:
-            scene = {
-                "scene_num": index,
-                "narration": str(raw_item).strip(),
-                "video_prompt": f"Scene {index}: distinct cinematic visual action",
-            }
+    scenes_slice = scenes[:max(1, int(target_scenes))] if target_scenes is not None else scenes
+    for index, raw_item in enumerate(scenes_slice, start=1):
+        # Chuẩn hóa hạt nhân kiến trúc 5 nhánh hợp đồng hạ nguồn
+        arch_scene = normalize_architected_scene(raw_item, index=index)
+        scene = arch_scene.to_dict() if hasattr(arch_scene, "to_dict") else dict(arch_scene)
 
         narration = str(scene.get("narration", "")).strip()
         narration_vi = str(scene.get("narration_vi", "")).strip()
@@ -68,30 +62,34 @@ def _sanitize_scenes(
                     f"Scene {index}: a distinct conceptual educational metaphor using color-coded geometric blocks and objects, "
                     "natural light, expressive hand gestures, and the same friendly canonical stickman guide"
                 )
-        no_text_rule = " No readable text, numbers, formulas, captions, logos, signs, or watermarks in the image."
+        # Lọc bỏ các từ khóa 3D/CGI và thay thế bằng 2D animation phong cách
+        visual = re.sub(r"\b(3d|cgi|photorealistic|claymation|realistic 3d|3d render|unreal engine|octane render)\b", "2D animation, flat 2d cartoon", visual, flags=re.IGNORECASE)
+        no_text_rule = " Strictly 2D animation, flat cartoon, cel-shaded vector art, strictly no 3d. No readable text, numbers, formulas, captions, logos, signs, or watermarks in the image."
         if no_text_rule.strip().lower() not in visual.lower():
             visual = f"{visual}{no_text_rule}".strip()
-        cleaned_scene = {"scene_num": index, "narration": narration, "video_prompt": visual}
+
+        scene["narration"] = narration
+        scene["video_prompt"] = visual
         if content_mode == "chinese_teaching_vi":
-            cleaned_scene.update({
+            scene.update({
                 "narration_vi": narration_vi,
                 "chinese_text": chinese_text,
                 "pinyin": pinyin,
                 "usage_vi": usage_vi,
             })
-        cleaned.append(cleaned_scene)
+        cleaned.append(scene)
     return cleaned
 
 
 def run_studio_editorial_pipeline(
     topic: str,
     script_data: Dict[str, Any],
-    target_scenes: int,
+    target_scenes: Optional[int] = None,
     language: str = "vi",
     model: str = OLLAMA_MODEL_DEFAULT,
     content_mode: str = "knowledge",
 ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    """Một vòng bàn biên tập: fact-check, hook, clarity, visual continuity, policy."""
+    """Một vòng bàn biên tập: fact-check, hook, clarity, visual continuity, policy và hợp đồng 5 khâu hạ nguồn."""
     original_scenes = _sanitize_scenes(script_data.get("scenes", []), target_scenes, content_mode)
     selected = select_studio_skills(topic)
     selected_ids = [item["id"] for item in selected]
@@ -102,19 +100,29 @@ def run_studio_editorial_pipeline(
         "kiểm tra chữ Hán giản thể, thanh điệu pinyin và nghĩa tiếng Việt khớp nhau."
         if content_mode == "chinese_teaching_vi" else ""
     )
+    scene_rule_system = (
+        f"Giữ ĐÚNG {target_scenes} cảnh yêu cầu."
+        if target_scenes is not None
+        else f"Giữ trọn vẹn số cảnh tự nhiên theo mạch cốt truyện (gồm {len(original_scenes)} cảnh)."
+    )
     system_prompt = (
         "Bạn là ban biên tập studio video ngắn gồm: nghiên cứu viên, kiểm chứng, biên kịch, "
         "biên tập giữ chân, đạo diễn hình ảnh và kiểm duyệt YouTube/TikTok. "
         "Hãy sửa trực tiếp kịch bản, không chỉ nhận xét. Chỉ trả JSON hợp lệ gồm scenes và report. "
-        "Giữ ĐÚNG số cảnh yêu cầu. Cảnh 1 phải đi thẳng vào giá trị/hook; các cảnh giữa giải thích cụ thể; "
+        f"{scene_rule_system} Cảnh 1 phải đi thẳng vào giá trị/hook; các cảnh giữa giải thích cụ thể; "
         "cảnh cuối kết luận. Kiến thức/toán phải chính xác. Không tạo tuyên bố chưa kiểm chứng. "
         "BẮT BUỘC: Giữ mạch truyện liền mạch (narrative_flow_coherence), các cảnh phải kết nối bằng liên từ bắc cầu tự nhiên, không ngắt quãng hay chắp vá. "
         "video_prompt phải bằng tiếng Anh và không được yêu cầu hiển thị chữ, số, công thức, biển hiệu hay phụ đề. "
         "report gồm scores (factual_accuracy, hook_strength, clarity, visual_continuity, policy_safety; 0-100), "
         f"issues_fixed, remaining_warnings và approved.{chinese_rule}"
     )
+    scene_rule_user = (
+        f"Số cảnh bắt buộc: {target_scenes}\n"
+        if target_scenes is not None
+        else f"Số cảnh: Tự nhiên theo cốt truyện ({len(original_scenes)} phân cảnh)\n"
+    )
     prompt = (
-        f"Chủ đề: {topic}\nNgôn ngữ lời thoại: {language}\nSố cảnh bắt buộc: {target_scenes}\n"
+        f"Chủ đề: {topic}\nNgôn ngữ lời thoại: {language}\n{scene_rule_user}"
         f"Các kỹ năng được registry chọn: {', '.join(selected_names)}\n"
         f"Kịch bản nháp:\n{json.dumps({'scenes': original_scenes}, ensure_ascii=False)}"
     )
@@ -125,7 +133,8 @@ def run_studio_editorial_pipeline(
             scene.get("narration_vi") and scene.get("chinese_text") and scene.get("pinyin") and scene.get("usage_vi")
             for scene in edited_scenes
         )
-        scenes = edited_scenes if len(edited_scenes) == target_scenes and chinese_fields_ok else original_scenes
+        scenes_len_ok = (len(edited_scenes) == target_scenes) if target_scenes is not None else (len(edited_scenes) >= 1)
+        scenes = edited_scenes if scenes_len_ok and chinese_fields_ok else original_scenes
         raw_report = edited.get("report", {}) if isinstance(edited.get("report"), dict) else {}
     else:
         scenes = original_scenes
@@ -150,6 +159,9 @@ def run_studio_editorial_pipeline(
     if len(scenes) != target_scenes:
         warnings.append(f"Số cảnh thực tế {len(scenes)} khác mục tiêu {target_scenes}")
 
+    # Báo cáo tổng hợp 5 khâu hạ nguồn theo sơ đồ kiến trúc mermaid-diagram.svg
+    contracts_report = build_downstream_contracts_report(scenes)
+
     report = {
         "mode": "local_multi_role_studio",
         "selected_skills": selected,
@@ -160,5 +172,6 @@ def run_studio_editorial_pipeline(
         "remaining_warnings": warnings,
         "approved": bool(raw_report.get("approved", overall >= 78)) and overall >= 70,
         "source_grounding": "user_prompt_and_local_model",
+        "downstream_contracts": contracts_report,
     }
     return scenes, report

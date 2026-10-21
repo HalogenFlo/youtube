@@ -203,10 +203,20 @@ class TestFlowBatchQueue(unittest.TestCase):
             ),
         ]
 
+        # Tạo dữ liệu ảnh PNG hợp lệ để vượt qua bộ lọc chất lượng
+        import io
+        import numpy as np
+        from PIL import Image
+        dummy_arr = np.random.randint(50, 200, (300, 300, 3), dtype=np.uint8)
+        dummy_arr[:, :, 0] = np.clip(dummy_arr[:, :, 0] + 50, 0, 255)
+        dummy_buf = io.BytesIO()
+        Image.fromarray(dummy_arr).save(dummy_buf, format="PNG")
+        valid_png_bytes = dummy_buf.getvalue()
+
         def mock_gen(prompt, output_path, **kwargs):
             if "scene_sh_2" in output_path:
                 return False, "Google Flow High demand timeout after retries"
-            Path(output_path).write_bytes(b"VALID_IMAGE_DATA")
+            Path(output_path).write_bytes(valid_png_bytes)
             return True, output_path
 
         mock_gen_image.side_effect = mock_gen
@@ -229,7 +239,7 @@ class TestFlowBatchQueue(unittest.TestCase):
         self.assertTrue(os.path.exists(finished_tasks[1].output_path))
         self.assertEqual(
             Path(finished_tasks[1].output_path).read_bytes(),
-            b"VALID_IMAGE_DATA",
+            valid_png_bytes,
         )
         self.assertEqual(finished_tasks[1].metadata.get("fallback_source_scene"), 1)
         # Scene 3: completed

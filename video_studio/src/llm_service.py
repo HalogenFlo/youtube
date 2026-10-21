@@ -24,9 +24,9 @@ def get_system_prompt(language: str = "vi", content_mode: str = "knowledge") -> 
             '{"scenes":[{"scene_num":1,"narration_vi":"Lời dẫn hoặc giải thích ngắn bằng tiếng Việt",'
             '"chinese_text":"Chữ Hán giản thể", "pinyin":"Pinyin có dấu thanh", '
             '"usage_vi":"Nghĩa và tình huống sử dụng bằng tiếng Việt", '
-            '"video_prompt":"English visual description, no text in image"}]}.\n'
+            '"video_prompt":"English visual description, 2d animation, flat 2d cartoon, colorful cel-shaded vector art, strictly no 3d, no cgi, no text in image"}]}.\n'
             "Không dùng phiên âm Hán Việt thay cho pinyin. Chữ Hán, pinyin và nghĩa phải khớp chính xác. "
-            "video_prompt viết bằng tiếng Anh và không yêu cầu hình ảnh chứa chữ, số, phụ đề hay ký hiệu đọc được."
+            "video_prompt viết bằng tiếng Anh theo phong cách 2D hoạt hình (flat 2D cartoon), cấm 3D và không yêu cầu hình ảnh chứa chữ, số, phụ đề hay ký hiệu đọc được."
         )
     if content_mode == "english_vocab_story":
         return (
@@ -38,8 +38,8 @@ def get_system_prompt(language: str = "vi", content_mode: str = "knowledge") -> 
             "- Cảnh 4 (Tương tác / Thử thách): Người xem được thử thách nói hoặc đoán từ với khoảng dừng ngắn và lời khen khích lệ.\n"
             "- Cảnh 5 (Cái kết bất ngờ / Twist): Kết thúc câu chuyện đầy hài hước và đọng lại ấn tượng sâu sắc.\n"
             "Chỉ trả về đối tượng JSON hợp lệ duy nhất có cấu trúc: "
-            '{"scenes":[{"scene_num":1,"narration":"Lời thoại đọc (kết hợp tiếng Việt tự nhiên và câu tiếng Anh mẫu)","video_prompt":"English description of visual action and minimalist stickman character CH01, expressive emotion, cinematic, no text on image"}]}.\n'
-            "video_prompt viết bằng tiếng Anh, mô tả hành động trực quan của nhân vật CH01 và tuyệt đối không chứa chữ viết."
+            '{"scenes":[{"scene_num":1,"narration":"Lời thoại đọc (kết hợp tiếng Việt tự nhiên và câu tiếng Anh mẫu)","video_prompt":"English description of visual action and minimalist stickman character CH01, flat 2D animation, vibrant 2D cartoon, hand-drawn vector art, expressive emotion, strictly no 3d, no cgi, no text on image"}]}.\n'
+            "video_prompt viết bằng tiếng Anh, mô tả hành động trực quan của nhân vật CH01 theo phong cách 2D hoạt hình phẳng (flat 2D cartoon/vector), cấm tuyệt đối 3D/CGI và không chứa chữ viết."
         )
     if content_mode == "story_explainer":
         return (
@@ -50,13 +50,16 @@ def get_system_prompt(language: str = "vi", content_mode: str = "knowledge") -> 
             "- Dẫn dắt từng bước khám phá với tình tiết leo thang và nút thắt bất ngờ.\n"
             "- Kết thúc bằng góc nhìn sâu sắc và bài học truyền cảm hứng.\n"
             "Chỉ trả về đối tượng JSON hợp lệ duy nhất có cấu trúc: "
-            '{"scenes":[{"scene_num":1,"narration":"Lời dẫn kể chuyện truyền cảm, cuốn hút, giàu hình ảnh bằng ' + lang_name + '","video_prompt":"English visual description, cinematic, dramatic lighting, detailed scenery, no text on image"}]}.\n'
-            "video_prompt viết bằng tiếng Anh, mô tả bối cảnh điện ảnh và tuyệt đối không chứa chữ viết."
+            '{"scenes":[{"scene_num":1,"narration":"Lời dẫn kể chuyện truyền cảm, cuốn hút, giàu hình ảnh bằng ' + lang_name + '","video_prompt":"English visual description, 2d animation, flat 2d cartoon, colorful cel-shaded vector art, strictly no 3d, no cgi, no text on image"}]}.\n'
+            "video_prompt viết bằng tiếng Anh, phong cách 2D hoạt hình (flat 2D cartoon/cel-shaded), tuyệt đối không chứa 3D/CGI và không chứa chữ viết."
         )
     return (
         "Bạn là một chuyên gia biên kịch video ngắn (Shorts, TikTok, Reels) chuyên nghiệp.\n"
         "Nhiệm vụ của bạn là tạo ra một kịch bản hấp dẫn, thu hút người xem ngay từ những giây đầu tiên.\n"
         "Kịch bản phải được chia thành các phân cảnh tuần tự liền mạch (mỗi cảnh dài khoảng 5 giây).\n"
+        "QUY TẮC BẮT BUỘC VỀ PHONG CÁCH HÌNH ẢNH (2D HOẠT HÌNH & CẤM 3D):\n"
+        "- Mọi video_prompt BẮT BUỘC phải theo phong cách 2D hoạt hình (vibrant 2D animation, flat 2D cartoon, hand-drawn vector art illustration, cel-shaded).\n"
+        "- TUYỆT ĐỐI CẤM 3D: Cấm từ '3D', 'CGI', 'photorealistic', 'realistic 3D render', 'claymation'.\n"
         "QUY TẮC BẮT BUỘC VỀ TÍNH LIỀN MẠCH MỘT DÒNG CHẢY (NARRATIVE COHERENCE & BRIDGING):\n"
         "- Toàn bộ video phải là MỘT CÂU CHUYỆN LIỀN MẠCH THỐNG NHẤT, nghe trôi chảy như một dòng suy nghĩ liên tục từ đầu đến cuối.\n"
         "- Tuyệt đối KHÔNG viết các câu thoại chắp vá, rời rạc hoặc nhảy đề tài đột ngột ('lúc này lúc kia').\n"
@@ -67,13 +70,13 @@ def get_system_prompt(language: str = "vi", content_mode: str = "knowledge") -> 
         "    {\n"
         "      \"scene_num\": 1,\n"
         "      \"narration\": \"" + lang_instruction + "\",\n"
-        "      \"video_prompt\": \"English description of the visual scene for AI image/video generation. Include styles, lighting, camera angles, detailed details, no text on image.\"\n"
+        "      \"video_prompt\": \"English description of the visual scene in flat 2D animation, vibrant 2d cartoon style, hand-drawn vector illustration. Strictly NO 3D, no cgi, no text on image.\"\n"
         "    }\n"
         "  ]\n"
         "}\n"
         "Lưu ý quan trọng:\n"
         f"1. Lời thoại 'narration' viết hoàn toàn bằng {lang_name}.\n"
-        "2. Trường 'video_prompt' viết hoàn toàn bằng tiếng Anh để dùng cho Stable Diffusion/Wan 2.1. Phải mô tả chi tiết hình ảnh, màu sắc, ánh sáng, góc máy.\n"
+        "2. Trường 'video_prompt' viết hoàn toàn bằng tiếng Anh theo phong cách 2D hoạt hình phẳng (flat 2D cartoon/animation), cấm 3D/CGI. Phải mô tả chi tiết hình ảnh, màu sắc, động tác nhân vật.\n"
         "3. Không thêm bất kỳ văn bản giải thích nào ngoài khối JSON. Chỉ trả về chuỗi JSON thô."
     )
 
@@ -123,37 +126,45 @@ def generate_script(
     - Video tiếng Trung: Mặc định 3 phân cảnh (Giới thiệu -> Phát âm/Pinyin -> Cách dùng giao tiếp).
     - Video cốt truyện (Micro-drama / Story explainer): Mặc định 5 phân cảnh.
     """
-    if target_scenes is None:
-        actual_scenes = 3 if content_mode == "chinese_teaching_vi" else 5
-    else:
+    if target_scenes is not None:
         actual_scenes = max(1, int(target_scenes))
+        scene_count_rule = f"Kịch bản phải có ĐÚNG {actual_scenes} phân cảnh; mỗi cảnh khoảng 5-10 giây."
+    else:
+        actual_scenes = None
+        scene_count_rule = (
+            "SỐ PHÂN CẢNH TỰ DO THEO CỐT TRUYỆN: Hãy tự động quyết định số lượng phân cảnh tối ưu nhất (thường từ 3 đến 8 phân cảnh) "
+            "sao cho mạch truyện phát triển tự nhiên, đầy đủ mở đầu, cao trào và kết thúc trọn vẹn nhất; "
+            "tuyệt đối không bị gò bó hay cắt ngắn gượng ép; mỗi cảnh khoảng 5-10 giây."
+        )
 
     mode_instruction = ""
     if content_mode == "chinese_teaching_vi":
+        scenes_desc = f"gồm đúng {actual_scenes} phân cảnh" if actual_scenes is not None else "phân bổ số cảnh tự nhiên (từ 3 đến 5 cảnh)"
         mode_instruction = (
-            f"Đây là video DẠY TIẾNG TRUNG CHO NGƯỜI VIỆT gồm đúng {actual_scenes} phân cảnh ngắn gọn, súc tích (khoảng 20-30 giây). "
+            f"Đây là video DẠY TIẾNG TRUNG CHO NGƯỜI VIỆT {scenes_desc} ngắn gọn, súc tích (khoảng 20-40 giây). "
             "Cấu trúc bài giảng: "
-            "Cảnh 1: Giới thiệu từ vựng/mẫu câu và ý nghĩa cơ bản. "
-            "Cảnh 2: Hướng dẫn phát âm chuẩn, phân tích pinyin và thanh điệu. "
-            "Cảnh 3: Đặt câu ví dụ và tình huống sử dụng thực tế trong giao tiếp hàng ngày. "
+            "Giới thiệu từ vựng/mẫu câu và ý nghĩa cơ bản -> Hướng dẫn phát âm chuẩn, phân tích pinyin và thanh điệu -> "
+            "Đặt câu ví dụ và tình huống sử dụng thực tế trong giao tiếp hàng ngày. "
             "Mỗi cảnh bắt buộc gồm lời dẫn tiếng Việt (narration_vi), một mẫu tiếng Trung giản thể (chinese_text), "
             "pinyin có dấu thanh (pinyin) và giải thích cách dùng bằng tiếng Việt (usage_vi).\n"
         )
     elif content_mode == "english_vocab_story":
+        scenes_desc = f"gồm đúng {actual_scenes} phân cảnh" if actual_scenes is not None else "phân bổ tự nhiên theo diễn biến câu chuyện (từ 4 đến 6 cảnh)"
         mode_instruction = (
-            f"Đây là video DẠY TỪ VỰNG TIẾNG ANH THEO CỐT TRUYỆN MICRO-DRAMA (tình huống đời thường) gồm đúng {actual_scenes} phân cảnh. "
+            f"Đây là video DẠY TỪ VỰNG TIẾNG ANH THEO CỐT TRUYỆN MICRO-DRAMA (tình huống đời thường) {scenes_desc}. "
             "Xoay quanh 1 từ vựng cốt lõi theo cấu trúc: "
-            "Cảnh 1 (Hook tình huống oái oăm) -> Cảnh 2 (Giải thích nghĩa từ vựng cốt lõi) -> "
-            "Cảnh 3 (Áp dụng từ vựng vào diễn biến hài hước) -> Cảnh 4 (Thử thách người xem) -> "
-            "Cảnh 5 (Twist kết thúc bất ngờ, đọng lại ấn tượng).\n"
+            "Hook tình huống oái oăm -> Giải thích nghĩa từ vựng cốt lõi -> "
+            "Áp dụng từ vựng vào diễn biến hài hước -> Thử thách tương tác người xem -> "
+            "Twist kết thúc bất ngờ, đọng lại ấn tượng.\n"
         )
     elif content_mode == "story_explainer":
+        scenes_desc = f"gồm đúng {actual_scenes} phân cảnh" if actual_scenes is not None else "phân bổ tự do theo diễn biến cốt truyện (từ 3 đến 8 cảnh)"
         mode_instruction = (
-            f"Đây là video KỂ CHUYỆN KIẾN THỨC / LỊCH SỬ DẪN DẮT THEO CỐT TRUYỆN (Story-Led Explainer) gồm đúng {actual_scenes} phân cảnh. "
-            "Kể câu chuyện lôi cuốn theo cấu trúc 5 bước: "
-            "Cảnh 1 (Hook bí ẩn/nghịch lý) -> Cảnh 2 (Nhân vật & bối cảnh đối mặt thử thách) -> "
-            "Cảnh 3 (Xung đột cao trào) -> Cảnh 4 (Bước ngoặt giải mã bí ẩn) -> "
-            "Cảnh 5 (Bài học & thông điệp truyền cảm hứng).\n"
+            f"Đây là video KỂ CHUYỆN KIẾN THỨC / LỊCH SỬ DẪN DẮT THEO CỐT TRUYỆN (Story-Led Explainer) {scenes_desc}. "
+            "Kể câu chuyện lôi cuốn theo cấu trúc: "
+            "Hook bí ẩn/nghịch lý -> Nhân vật & bối cảnh đối mặt thử thách -> "
+            "Xung đột cao trào -> Bước ngoặt giải mã bí ẩn -> "
+            "Bài học & thông điệp truyền cảm hứng.\n"
         )
 
     series_note = ""
@@ -169,8 +180,8 @@ def generate_script(
         f"Hãy viết kịch bản video ngắn cho chủ đề/ý tưởng sau: \"{topic}\".\n"
         f"{mode_instruction}"
         f"{series_note}"
-        f"Phong cách hình ảnh yêu cầu cho các video prompt: \"{style_preset}\".\n"
-        f"Kịch bản phải có ĐÚNG {actual_scenes} phân cảnh; mỗi cảnh khoảng 5-10 giây.\n"
+        f"Phong cách hình ảnh yêu cầu cho các video prompt: \"{style_preset}\". BẮT BUỘC là 2D animation, flat 2d cartoon, cel-shaded illustration. CẤM HOÀN TOÀN 3D, CGI, realistic render.\n"
+        f"{scene_count_rule}\n"
         "ĐỒNG BỘ 1:1 HÀNH ĐỘNG HÌNH ẢNH VÀ LỜI THOẠI: "
         "Hành động của nhân vật trong 'video_prompt' BẮT BUỘC phải mô tả chính xác nội dung đang được kể trong 'narration' của cảnh đó.\n"
         "Nếu là nội dung giáo dục, toán hoặc kỹ thuật: lời thoại phải giải thích kiến thức chính xác, "

@@ -77,80 +77,61 @@ def sanitize_tts_text(text: str) -> str:
     return clean
 
 
-def _run_edge_tts_cli(text: str, output_path: str, voice: str, rate: str) -> Tuple[bool, str]:
+def _run_edge_tts_direct(text: str, output_path: str, voice: str, rate: str) -> Tuple[bool, str]:
     """
-    Thực thi edge-tts qua subprocess sử dụng file text tạm UTF-8 (--file).
-    Cách này chống 100% lỗi escape ký tự đặc biệt và command-line limits trên Windows.
+    Sinh audio trực tiếp qua API edge_tts.Communicate của Python.
+    Giải quyết triệt để lỗi NoAudioReceived do CLI subprocess, buffer text UTF-8 hoàn hảo.
     """
+    import asyncio
+    import edge_tts
+
     # Đảm bảo thư mục cha tồn tại
     parent_dir = os.path.dirname(output_path)
     if parent_dir and not os.path.exists(parent_dir):
         os.makedirs(parent_dir, exist_ok=True)
 
-    # Định dạng tốc độ đọc phù hợp với tham số --rate của CLI edge-tts (+0%, +10%, -5%)
     formatted_rate = rate
     if not (rate.startswith('+') or rate.startswith('-')):
         formatted_rate = f"+{rate}"
 
-    # Tạo file text tạm lưu nội dung UTF-8 an toàn tuyệt đối
-    tmp_txt_fd, tmp_txt_path = tempfile.mkstemp(prefix="tts_input_", suffix=".txt", dir=parent_dir)
+    async def _async_synthesize():
+        communicate = edge_tts.Communicate(text=text, voice=voice, rate=formatted_rate)
+        await communicate.save(output_path)
+
     try:
-        with open(tmp_txt_fd, "w", encoding="utf-8") as f:
-            f.write(text)
+        # Chạy trong loop an toàn
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
 
-        # Cấu trúc câu lệnh CLI sử dụng chính Python interpreter của môi trường ảo
-        cmd = [
-            sys.executable,
-            "-m", "edge_tts",
-            "--voice", voice,
-            "--file", tmp_txt_path,
-            f"--rate={formatted_rate}",
-            "--write-media", output_path
-        ]
+        if loop.is_running():
+            # Nếu đang ở trong một running loop (Streamlit thread), tạo loop độc lập trong thread riêng
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                def _run_in_new_loop():
+                    new_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(new_loop)
+                    try:
+                        return new_loop.run_until_complete(_async_synthesize())
+                    finally:
+                        new_loop.close()
+                pool.submit(_run_in_new_loop).result(timeout=45)
+        else:
+            loop.run_until_complete(_async_synthesize())
 
-        # Cấu hình ẩn cửa sổ console đen khi chạy subprocess trên Windows
-        startupinfo = None
-        if os.name == 'nt':
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            startupinfo=startupinfo,
-            timeout=40  # Timeout 40s cho mỗi lần gọi
-        )
-
-        if result.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
             return True, output_path
         else:
-            err = result.stderr or result.stdout or "Không nhận được phản hồi âm thanh từ edge-tts."
-            # Dọn dẹp file 0-byte nếu có
-            if os.path.exists(output_path) and os.path.getsize(output_path) == 0:
-                try:
-                    os.remove(output_path)
-                except Exception:
-                    pass
-            return False, err.strip()
-
-    except Exception as e:
+            return False, "File audio sinh ra có dung lượng không hợp lệ hoặc rỗng."
+    except Exception as exc:
         if os.path.exists(output_path) and os.path.getsize(output_path) == 0:
             try:
                 os.remove(output_path)
             except Exception:
                 pass
-        return False, str(e)
-    finally:
-        # Xóa file text tạm
-        if os.path.exists(tmp_txt_path):
-            try:
-                os.remove(tmp_txt_path)
-            except Exception:
-                pass
+        return False, str(exc)
 
 
 def generate_tts(
@@ -160,11 +141,11 @@ def generate_tts(
     rate: str = "+0%"
 ) -> Tuple[bool, str]:
     """
-    Sinh file audio giọng đọc từ văn bản sử dụng CLI edge-tts với cơ chế:
+    Sinh file audio giọng đọc từ văn bản sử dụng API edge-tts với cơ chế phục hồi cao:
     1. Làm sạch văn bản kịch bản (loại bỏ markdown, thẻ đạo diễn).
-    2. Ghi file UTF-8 tạm và gọi sys.executable -m edge_tts --file.
-    3. Thử lại tối đa 3 lần với giọng chính.
-    4. Tự động chuyển sang giọng phụ (fallback voice) nếu giọng chính bị NoAudioReceived hoặc lỗi mạng.
+    2. Gọi API edge_tts.Communicate trực tiếp (chống lỗi subprocess CLI NoAudioReceived).
+    3. Thử lại tối đa 3 lần với exponential backoff.
+    4. Tự động chuyển sang giọng phụ (fallback voice: NamMinh <-> HoaiMy) nếu giọng chính bị nghẽn mạng.
     Trả về: (True, output_path) nếu thành công, (False, error_message) nếu thất bại.
     """
     clean_text = sanitize_tts_text(text)
@@ -184,9 +165,9 @@ def generate_tts(
 
     last_err = ""
     for v_idx, current_voice in enumerate(voices_to_try):
-        max_attempts = 2 if len(voices_to_try) > 1 else 3
+        max_attempts = 3
         for attempt in range(max_attempts):
-            success, result_or_err = _run_edge_tts_cli(
+            success, result_or_err = _run_edge_tts_direct(
                 text=clean_text,
                 output_path=output_path,
                 voice=current_voice,
@@ -206,7 +187,7 @@ def generate_tts(
             except Exception:
                 pass
             # Backoff giãn cách có tăng dần để giải tỏa nghẽn kết nối WebSocket của Microsoft
-            retry_sleep = 1.5 * (attempt + 1)
+            retry_sleep = 1.0 * (attempt + 1)
             time.sleep(retry_sleep)
 
         if v_idx < len(voices_to_try) - 1:
@@ -214,9 +195,31 @@ def generate_tts(
                 print(f"[TTS] Giọng '{current_voice}' không phản hồi, tự động chuyển sang giọng dự phòng '{voices_to_try[v_idx + 1]}'...")
             except Exception:
                 pass
-            time.sleep(0.8)
+            time.sleep(0.5)
 
-    return False, f"Lỗi sinh giọng đọc edge-tts CLI: {last_err}"
+    # Cơ chế tự phục hồi thông minh (Smart Prefix Padding):
+    # Nếu câu bị lỗi NoAudioReceived (thường do câu ngắn hoặc Bing SSML drop frame tối thiểu),
+    # tự động đệm tiền tố liên từ tự nhiên để kích hoạt pipeline tổng hợp của Microsoft Bing.
+    if "No audio was received" in last_err or len(clean_text) < 35:
+        padding_prefixes = ["Và rồi, ", "Thế là, ", "Lúc này, "]
+        for prefix in padding_prefixes:
+            padded_sentence = f"{prefix}{clean_text.rstrip('.')}."
+            for pad_voice in voices_to_try:
+                time.sleep(1.2)
+                ok_pad, res_pad = _run_edge_tts_direct(
+                    text=padded_sentence,
+                    output_path=output_path,
+                    voice=pad_voice,
+                    rate=rate,
+                )
+                if ok_pad and os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
+                    try:
+                        print(f"[TTS] Tự phục hồi thành công bằng tiền tố ngữ cảnh: '{padded_sentence[:40]}...' ({pad_voice})")
+                    except Exception:
+                        pass
+                    return True, output_path
+
+    return False, f"Lỗi sinh giọng đọc edge-tts: {last_err}"
 
 
 # Ký tự phiên âm Pinyin độc quyền (tuyệt đối không thuộc bảng chữ cái tiếng Việt)
@@ -483,7 +486,7 @@ def generate_scenes_tts_parallel(
 
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
         future_to_idx = {
-            executor.submit(_worker, task, i * 0.35): task[0]
+            executor.submit(_worker, task, i * 1.2): task[0]
             for i, task in enumerate(tasks_to_run)
         }
 
@@ -514,8 +517,29 @@ def generate_scenes_tts_parallel(
                     except Exception:
                         pass
 
-    if first_error:
-        return False, first_error
+    # Nếu có phân cảnh bị lỗi do xung đột socket song song, tự động phục hồi tuần tự từng cảnh
+    unresolved_tasks = [task for task in tasks_to_run if not scenes[task[0]].get("audio_path")]
+    if unresolved_tasks:
+        try:
+            print(f"[TTS Parallel] Phát hiện {len(unresolved_tasks)} cảnh bị nghẽn mạng WebSocket song song. Đang tự phục hồi tuần tự...")
+        except Exception:
+            pass
+
+        for retry_idx, retry_task in enumerate(unresolved_tasks):
+            time.sleep(2.0)  # Giãn cách 2 giây để Microsoft giải phóng rate-limit WebSocket
+            r_idx, r_success, r_err, r_out_file, r_dur = _worker(retry_task, delay=0.0)
+            if r_success:
+                scenes[r_idx]["audio_path"] = r_out_file
+                scenes[r_idx]["audio_duration"] = r_dur
+                completed_count += 1
+                if progress_callback:
+                    sc_num = scenes[r_idx].get("scene_num") or (r_idx + 1)
+                    try:
+                        progress_callback(completed_count, total_scenes, f"Đã phục hồi giọng đọc phân cảnh {completed_count}/{total_scenes} (cảnh {sc_num})")
+                    except Exception:
+                        pass
+            else:
+                return False, r_err
 
     return True, f"Hoàn thành sinh giọng đọc cho {total_scenes} phân cảnh."
 

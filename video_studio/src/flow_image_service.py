@@ -30,7 +30,7 @@ def safe_log(msg: str):
         except Exception:
             pass
 
-from src.flow_browser_service import get_flow_controller
+from src.flow_browser_service import get_flow_controller, is_valid_production_image
 from src.config import DEFAULT_IMAGE_STYLE
 
 
@@ -294,6 +294,7 @@ class FlowBatchQueueEngine:
                         prev.status in ("completed", "fallback")
                         and os.path.exists(prev.output_path)
                         and os.path.getsize(prev.output_path) > 0
+                        and is_valid_production_image(prev.output_path)
                     ):
                         fallback_source = prev.output_path
                         fallback_scene_idx = prev.scene_index
@@ -305,6 +306,7 @@ class FlowBatchQueueEngine:
                             nxt.status in ("completed", "fallback")
                             and os.path.exists(nxt.output_path)
                             and os.path.getsize(nxt.output_path) > 0
+                            and is_valid_production_image(nxt.output_path)
                         ):
                             fallback_source = nxt.output_path
                             fallback_scene_idx = nxt.scene_index

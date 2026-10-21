@@ -10,7 +10,7 @@ import uuid
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from src.batch_producer import produce_single_video_pipeline, split_prompt_to_video_topics
 from src.config import DEFAULT_IMAGE_STYLE, OUTPUT_DIR, TEMP_DIR, TTS_VOICE_DEFAULT, TTS_VOICE_ZH_DEFAULT
@@ -94,7 +94,7 @@ def add_factory_jobs(
     orientation: str = "vertical",
     image_engine: str = "flow",
     media_mode: str = "flow_video",
-    target_scenes: int = 5,
+    target_scenes: Optional[int] = None,
     voice_mode: str = "edge",
     voice_reference_path: str = "",
     studio_mode: bool = True,
@@ -129,7 +129,7 @@ def add_factory_jobs(
                     "orientation": orientation,
                     "image_engine": image_engine,
                     "media_mode": media_mode,
-                    "target_scenes": max(1, int(target_scenes)),
+                    "target_scenes": int(target_scenes) if target_scenes is not None else None,
                     "voice_mode": voice_mode,
                     "voice_reference_path": voice_reference_path,
                     "studio_mode": bool(studio_mode),
@@ -391,7 +391,7 @@ def _worker_loop() -> None:
                     orientation=settings.get("orientation", "vertical"),
                     image_engine=settings.get("image_engine", "flow"),
                     media_mode=settings.get("media_mode", "flow_image"),
-                    target_scenes=int(settings.get("target_scenes", 5)),
+                    target_scenes=int(settings["target_scenes"]) if settings.get("target_scenes") is not None else None,
                     voice_mode=settings.get("voice_mode", "edge"),
                     voice_reference_path=settings.get("voice_reference_path", ""),
                     job_key=job["id"],
@@ -477,4 +477,11 @@ def restart_factory_worker() -> threading.Thread:
         _WORKER_THREAD.start()
         _WAKE_EVENT.set()
         return _WORKER_THREAD
+
+
+if __name__ == "__main__":
+    print("[*] Khởi động autonomous factory standalone worker process...", flush=True)
+    recover_stale_running_jobs()
+    _worker_loop()
+
 

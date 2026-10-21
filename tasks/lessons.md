@@ -213,3 +213,236 @@
      - Trong các hàm xử lý scenes, audio, timestamps, metadata: Sử dụng `s.get(...) if isinstance(s, dict) else fallback`.
   3. **Ghi nhận Full Traceback khi bắt Exception**:
      - Trong vòng lặp worker của `autonomous_factory.py`: Khi có ngoại lệ, ghi lại `traceback.format_exc()` vào safe_log để lập tức phát hiện chính xác dòng và file phát sinh lỗi, không bị giấu thông tin.
+
+
+## 20. Khắc Phục Lỗi Timeout 300s Khi Google Flow Đã Có Video & Chuẩn Hóa 100% 2D Hoạt Hình (Cấm 3D)
+
+- **Hiện tượng lỗi**:
+  1. Người dùng thấy trên giao diện web Google Flow video clip đã render xong, nhưng console báo lỗi: `Google Flow không thể tạo nội dung: Hết thời gian chờ video từ Google Flow (300s)... Hệ thống dừng theo yêu cầu không fallback sang ảnh.`
+  2. Video AI đôi khi bị render ra dạng 3D / CGI / photorealistic không đúng yêu cầu ("làm video kiểu 2d hoạt hình chứ đừng làm 3d").
+- **Nguyên nhân gốc rễ**:
+  1. *Đặc thù DOM của Google Flow*:
+     - Khi video tạo xong, Flow hiển thị dưới dạng card thumbnail (`img[alt*='Hình thu nhỏ của video']`, `[aria-label*='Mở video']`, `div:has-text('play_circle')`). Trong DOM lúc này **CÓ 0 THẺ `<video>`**!
+     - Thẻ `<video>` chỉ được khởi tạo khi người dùng click để mở player xem chi tiết. Code cũ chỉ gọi `.hover()`, không click, và chỉ tìm `page.locator("video")` nên bị timeout 300s dù video đã render xong từ trước.
+     - Cơ chế trích xuất blob cũ phụ thuộc vào JavaScript blob reader trong context trang có thể bị CORS chặn nếu video host trên CDN ngoài.
+  2. *Thời gian render của Google Flow vào giờ cao điểm*:
+     - Hàng đợi của Google Flow có thể mất từ 5 đến 8 phút vào lúc cao điểm, 300s (5 phút) là quá ngắn.
+  3. *Prompt sinh video chưa chặn triệt để 3D*:
+     - Các prompt chứa từ "cinematic, dramatic lighting" khiến Google Veo thiên về render 3D chân thực nếu không có chỉ thị loại trừ nghiêm ngặt.
+- **Quy tắc phòng ngừa & Cách khắc phục**:
+  1. **Tương tác chủ động (Active Trigger Engagement) với Video Card của Flow**:
+     - Tự động click vào các trigger mở video: `button[aria-label*='Mở video' i]`, `img[alt*='Hình thu nhỏ của video' i]`, `div:has-text('play_circle')`.
+     - Lắng nghe sự kiện `page.expect_download` khi click vào nút "Tải xuống" trên giao diện Flow.
+     - Lấy thuộc tính `currentSrc || src` trên thẻ `<video>` ngay khi player xuất hiện và tải bằng `page.request.get(src)` siêu tốc.
+  2. **Nâng `video_timeout_seconds` lên 600s (10 phút)**:
+     - Đảm bảo đủ thời gian cho hàng đợi của Google Flow ngay cả khi hệ thống chịu tải cao.
+  3. **Chuẩn hóa 100% Phong cách 2D Hoạt hình (Cel-shaded Flat Cartoon, Cấm 3D)**:
+     - Trong `STICKMAN_CANONICAL_GUIDANCE`: `Style: Strictly vibrant 2D animation, flat 2D cartoon, hand-drawn vector art illustration, cel-shaded. STRICTLY NO 3D rendering, NO CGI, NO realistic 3D models, NO claymation.`
+     - Trong `src/config.py`: `DEFAULT_IMAGE_STYLE = "2d animation, flat 2d cartoon, colorful cel-shaded vector art"`.
+     - Trong `src/llm_service.py`: Toàn bộ các chế độ sinh kịch bản (`knowledge`, `chinese_teaching_vi`, `english_vocab_story`, `story_explainer`) đều ép buộc 2D hoạt hình và cấm từ khóa 3D/CGI.
+     - Trong `src/studio_editorial_service.py`: Tự động thay thế các từ khóa 3D/CGI thành 2D animation phẳng.
+
+
+## 21. Phát Hiện Card Thất Bại ("Không thành công / Rất tiếc, không tạo được video này") & Tự Động Thử Lại (Auto-Retry)
+
+- **Hiện tượng lỗi**:
+  - Dây chuyền báo lỗi: `Lỗi sinh video Flow cảnh 2: Google Flow không thể tạo nội dung: Hết thời gian chờ video từ Google Flow (600s)...`
+  - Trên màn hình của Google Flow xuất hiện một thẻ màu đen kèm biểu tượng cảnh báo tam giác: **"Không thành công - Rất tiếc, không tạo được video này."** cùng nút thùng rác xóa.
+- **Nguyên nhân gốc rễ**:
+  1. *Lỗi sinh ngẫu nhiên từ server Veo (Generation Failure)*: Trong quá trình xử lý, một số prompt có thể bị server Google Veo từ chối hoặc lỗi nội bộ (hết tài nguyên GPU, kiểm duyệt nhầm hoặc pipeline timeout từ phía Google).
+  2. *Thiếu bộ phát hiện Card thất bại (Failed Card Detection)*: Bộ quét chỉ kiểm tra các dấu hiệu thành công (thẻ `<video>`, response video, trigger play). Khi Flow trả về card lỗi "Không thành công", code không nhận diện được nên tiếp tục kiên trì chờ đến hết 600s timeout rồi mới báo lỗi.
+  3. *Thiếu cơ chế Retry tự động cho Video Flow*: Ở chế độ ảnh tĩnh có retry 3 lần, nhưng ở chế độ `flow_video` chỉ gọi 1 lần duy nhất nên khi Google Flow vấp lỗi ngẫu nhiên 1 lần là cả dây chuyền bị dừng.
+- **Quy tắc phòng ngừa & Cách khắc phục**:
+  1. **Phát hiện sớm trạng thái thất bại**:
+     - Trong vòng lặp polling của [`src/flow_browser_service.py`](file:///c:/Users/Admin/Desktop/youtube/src/flow_browser_service.py), thêm kiểm tra các selector báo lỗi: `div:has-text('Không thành công')`, `div:has-text('Rất tiếc, không tạo được video')`, `div:has-text('Generation failed')`.
+     - Khi phát hiện card lỗi: tự động click nút xóa (thùng rác) và trả về kết quả thất bại ngay lập tức (Fail-Fast) để không lãng phí 600s chờ đợi vô ích.
+  2. **Thêm vòng lặp Auto-Retry cho Video Flow**:
+     - Trong [`src/batch_producer.py`](file:///c:/Users/Admin/Desktop/youtube/src/batch_producer.py): bọc lệnh sinh video với `max_vid_attempts = 2`. Nếu lần 1 bị lỗi server ngẫu nhiên, tự động thử lại lần 2 với Google Flow trước khi quyết định dừng.
+  3. **Tự động lưu vết cảnh đã thành công**:
+     - Phân cảnh 1 (`scene_001.mp4`) đã được lưu và bảo toàn nguyên vẹn trên đĩa, khi chạy lại sẽ tái sử dụng ngay lập tức mà không cần tạo lại.
+
+
+## 22. Khắc Phục Lỗi edge-tts NoAudioReceived Khi Bật Turbo Mode (Song Song Nhiều Luồng)
+
+- **Hiện tượng lỗi**:
+  - Dây chuyền sản xuất ở chế độ Turbo Batch báo lỗi:
+    `Lỗi giọng đọc song song: Lỗi giọng đọc cảnh 1: Lỗi sinh giọng đọc edge-tts CLI... edge_tts.exceptions.NoAudioReceived: No audio was received. Please verify that your parameters are correct.`
+- **Nguyên nhân gốc rễ**:
+  1. *Rate Limiting / Socket Throttling từ máy chủ Microsoft Edge TTS*:
+     - Khi chạy Turbo Batch, `ThreadPoolExecutor` dispatch đồng thời 4 task TTS. Khi 4 tiến trình cùng mở WebSocket tới máy chủ Microsoft cùng 1 giây với cùng IP, Microsoft tạm thời ngắt kết nối WebSocket (chống spam/DDoS), khiến edge-tts không nhận được audio chunk nào và ném ngoại lệ `NoAudioReceived`.
+  2. *Độ trễ Staggered Dispatch quá nhỏ (0.35s)*:
+     - Giãn cách 0.35 giây giữa các task chưa đủ để WebSocket handshake trước đó hoàn tất.
+  3. *Gọi CLI qua subprocess thay vì Python API trực tiếp*:
+     - Việc tạo subprocess CLI lặp lại làm tăng overhead, khó quản lý connection pool và dễ bị lỗi pipe/buffer trên Windows.
+- **Quy tắc phòng ngừa & Cách khắc phục**:
+  1. **Chuyển sang sử dụng trực tiếp Python API `edge_tts.Communicate`**:
+     - Thay vì gọi subprocess CLI `sys.executable -m edge_tts`, sử dụng trực tiếp `edge_tts.Communicate(text=..., voice=..., rate=...)` với async event loop riêng biệt.
+  2. **Cơ chế Tự Phục Hồi Đa Tầng (Multi-tier Self-Healing Fallback)**:
+     - Thử lại tối đa 3 lần với giọng chính (`vi-VN-HoaiMyNeural`) kèm exponential backoff (1s, 2s, 3s).
+     - Nếu giọng chính vẫn bị chặn tạm thời, tự động chuyển ngay sang giọng dự phòng (`vi-VN-NamMinhNeural` đối với tiếng Việt; hoặc `en-US-JennyNeural` đối với tiếng Anh) để tiếp tục quy trình trơn tru 100%.
+  3. **Tăng Staggered Dispatch Delay lên 1.2s**:
+     - Trong `generate_scenes_tts_parallel`, giãn cách khởi động giữa các phân cảnh từ 0.35s lên 1.2s, tránh kích hoạt rate limit của Microsoft.
+
+
+## 23. Tối Ưu Sinh Ảnh Duy Nhất Mỗi Phân Cảnh (Chống Lãng Phí Sinh 2 Biến Thể Cho Cùng 1 Cảnh)
+
+- **Hiện tượng & Phản ánh của người dùng**:
+  - *"Vấn đề tạo 2 ảnh 1 lượt nhưng là của 1 phân cảnh thì tạo làm gì, tạo 2 ảnh của 2 phân cảnh liên tiếp để tiết kiệm thời gian chứ tạo 2 ảnh của cùng 1 phân cảnh thì không cần thiết."*
+- **Nguyên nhân gốc rễ**:
+  1. *Hành vi mặc định của Google Flow (Multi-variant Generation)*:
+     - Khi nhận prompt mà không có chỉ thị số lượng ảnh cụ thể, model Imagen 3 / Nano Banana Pro thường tự động sinh một mẻ gồm 2 biến thể (variant 1 & 2) cho cùng một prompt để người dùng chọn.
+     - Bot chỉ lấy 1 ảnh đầu tiên rồi bỏ qua ảnh thứ 2, dẫn đến việc Google Flow tốn thời gian tính toán gấp đôi cho cùng 1 cảnh thay vì tạo cảnh tiếp theo.
+- **Quy tắc phòng ngừa & Cách khắc phục**:
+  1. **Thêm chỉ thị dứt khoát vào prompt sinh ảnh**:
+     - Trong [`src/flow_browser_service.py`](file:///c:/Users/Admin/Desktop/youtube/src/flow_browser_service.py):
+       `"Generate exactly ONE single still image for this scene, DO NOT generate multiple variants or batches."`
+  2. **Thêm chỉ thị video câm, không sinh audio phụ**:
+     - `"Generate exactly ONE 2D ANIMATION VIDEO CLIP, not a still image and strictly NO 3D. Strictly mute video, no audio generation, silent video only."`
+  3. **Đảm bảo phân phối 2 phân cảnh liên tiếp nhau**:
+     - `FlowBatchQueueEngine` phân bổ rành mạch: Task 1 cho Cảnh 1, Task 2 cho Cảnh 2, đảm bảo 2 ảnh được tạo là của 2 phân cảnh kịch bản khác nhau, tiết kiệm tối đa thời gian.
+
+## 24. Khắc Phục Lỗi Google Flow Xuất Rất Nhiều Ảnh Nhưng Bot Báo Lỗi/Timeout (Thay Đổi URL Endpoint /asb/)
+
+- **Hiện tượng & Phản ánh của người dùng**:
+  - Người dùng hỏi: *"nó xuất cả tỉ hình đây mà lỗi là sao"* kèm ảnh chụp màn hình Google Flow hiển thị hàng loạt ảnh hoạt hình 2D nhân vật trong rừng nguyên sinh đã render thành công rực rỡ, nhưng giao diện xưởng tự động báo lỗi thất bại ở Cảnh 2/4.
+- **Nguyên nhân gốc rễ**:
+  1. *Google Flow thay đổi URL CDN/Endpoint lưu trữ ảnh*:
+     - Trước đây, Google Flow hiển thị và trả về ảnh tĩnh qua đường dẫn `https://flow-content.google/image/<ID>`.
+     - Google Flow gần đây đã cập nhật kiến trúc lưu trữ ảnh tĩnh sang định dạng URL mới: `https://flow.google.com/asb/<IMAGE_HASH>=s512-rw`.
+  2. *Bộ lắng nghe Network và Selector DOM cũ bị bỏ sót URL mới*:
+     - Trong [`src/flow_browser_service.py`](file:///c:/Users/Admin/Desktop/youtube/src/flow_browser_service.py), bộ bắt phản hồi mạng `_on_image_response` chỉ lọc duy nhất `if "flow-content.google/image/" in r_url:`, bỏ qua toàn bộ các response ảnh từ endpoint `/asb/`.
+     - Selector DOM chỉ quét `img[src*='flow-content']`, `aside [role='grid'] img` nên hoàn toàn không nhận diện được các thẻ `img[src*='/asb/']` mới trên canvas chính của Google Flow.
+     - Hậu quả: Dù Google Flow render xong rất nhiều ảnh chất lượng cao, bot Playwright vẫn không bắt được URL khớp, dẫn đến việc đếm hết thời gian timeout 120s rồi báo lỗi thất bại.
+- **Quy tắc phòng ngừa & Cách khắc phục**:
+  1. **Mở rộng bộ bắt Network cho URL ảnh và Content-Type**:
+     - Trong `_on_image_response`: Bắt thêm mọi request URL chứa `/asb/` HOẶC có response header `content-type` bắt đầu bằng `image/` (`image/webp`, `image/png`, `image/jpeg`).
+  2. **Nâng cấp Selector DOM ưu tiên thẻ ảnh `/asb/`**:
+     - Thêm selector hàng đầu: `img[src*='/asb/']` và `main img[src*='flow.google.com/asb/']` trong `_extract_rendered_image_url`.
+  3. **Tải ảnh siêu tốc kế thừa xác thực qua `page.request.get(src)`**:
+     - Thay vì dùng `FileReader` JavaScript chậm chạp và dễ bị CORS/Canvas taint, sử dụng `page.request.get(src)` để tải ảnh trong 0.2 giây với đầy đủ session cookie của trình duyệt.
+  4. **Cơ chế khử trùng lặp (SHA-256 Hash Deduplication)**:
+     - Tính hash SHA-256 của ảnh vừa tải, nếu ảnh trùng với cảnh trước đó thì bỏ qua và quét tiếp ảnh mới nhất, đảm bảo mỗi phân cảnh nhận đúng ảnh riêng biệt của cảnh đó.
+
+
+## 25. Khắc Phục Lỗi NumPy Broadcasting Mismatch Shape (1920, 1080) Vào (1920, 1080, 3) Khi Render Video
+
+- **Hiện tượng lỗi**:
+  - Khi render video bằng MoviePy, tiến trình ném exception:
+    `could not broadcast input array from shape (1920,1080) into shape (1920,1080,3)`.
+- **Nguyên nhân gốc rễ**:
+  1. *Ảnh từ bên ngoài hoặc CDN có chế độ Mode L (Grayscale 1 channel)*:
+     - Một số ảnh sinh ra từ Google Flow hoặc icon/placeholder có chế độ Grayscale (`Mode: L`, shape 2 chiều `(H, W)`).
+     - Khi MoviePy nạp ảnh qua `ImageClip(image_path)` và resize, frame trả về mảng 2 chiều `(1920, 1080)`.
+     - Khi ghép các clip vào dòng thời gian với các clip màu 3 channels `(1920, 1080, 3)`, NumPy không thể broadcast mảng 2D vào canvas 3D và gây crash render.
+- **Quy tắc phòng ngừa & Cách khắc phục**:
+  1. **Chuẩn hóa ảnh ngay khi tải về máy (`flow_browser_service.py`)**:
+     - Thêm hàm `_ensure_rgb_image(file_path)`: Mở ảnh bằng PIL và tự động `img.convert("RGB")` nếu mode khác `"RGB"` trước khi lưu.
+  2. **Chuẩn hóa tại tầng MoviePy Clip Creation (`visual_beats.py` & `video_compiler.py`)**:
+     - Trước khi tạo `ImageClip`, luôn mở file bằng PIL, kiểm tra `if pil_img.mode != "RGB": pil_img = pil_img.convert("RGB")` rồi chuyển thành `np.array(pil_img)` đảm bảo 100% frame có 3 channels (R, G, B).
+  3. **Kiểm thử tự động**:
+     - Viết unit test `tests/test_image_rgb_normalization.py` xác minh tự động chuẩn hóa cho cả ảnh Grayscale (Mode L) và RGBA (4 channels).
+
+
+
+
+## 26. Tái Cấu Trúc Hệ Thống Theo Sơ Đồ Kiến Trúc Research & Story Architect (mermaid-diagram.svg)
+
+- **Ngữ cảnh & Yêu cầu của người dùng**:
+  - Người dùng cung cấp tệp sơ đồ `@mermaid-diagram.svg` và yêu cầu: *"chỉnh sửa luồng lại theo @mermaid-diagram.svg tôi mới thêm"*.
+  - Sơ đồ xác định:
+    + Cụm hạt nhân (`BRAIN`): **Skill Nghiên cứu & Kiến trúc Nội dung (Research & Story Architect)**.
+    + 5 khâu hạ nguồn (`DOWNSTREAM`):
+      1. `AUDIO`: Khâu Âm thanh (TTS Engine) — nhận `Âm tiết, Pause Cues, Voice Profile`.
+      2. `IMAGE`: Khâu Hình ảnh (Flow CDP) — nhận `Background Plate, Sticker, Visual Action`.
+      3. `RENDER`: Khâu Dựng & Chuyển động (Compiler) — nhận `Visual Beats, Camera Effects, Safe Subtitles`.
+      4. `SOUND`: Khâu Thiết kế Âm thanh (Foley/SFX) — nhận `Semantic Anchors, Foley Cues, BGM Ducking`.
+      5. `LEGAL`: Khâu Thẩm định & Pháp lý (Contract QA) — nhận `Sources, Claims, Coverage Verbatim Quotes`.
+- **Nguyên nhân cần tái cấu trúc**:
+  1. Trước đây, dữ liệu phân cảnh giữa LLM, Studio Editorial và Batch Producer chỉ là các dict phẳng (`narration`, `video_prompt`) dẫn tới việc các khâu âm thanh, hiệu ứng foley, nhịp dựng và kiểm duyệt bản quyền/pháp lý bị ghép nối rời rạc hoặc thiếu hợp đồng dữ liệu chuẩn.
+  2. Cần chuẩn hóa hợp đồng dữ liệu hướng đối tượng phòng thủ (Data Contracts) để mọi phân cảnh kịch bản dù được sinh ra từ LLM hay nạp từ nguồn ngoài đều tự động suy diễn đầy đủ 5 hợp đồng mà vẫn bảo toàn 100% tính tương thích ngược với các trường cũ.
+- **Quy tắc triển khai & Bài học kinh nghiệm**:
+  1. **Định nghĩa Module Hợp Đồng Dữ Liệu (`src/story_contract_models.py`)**:
+     - Cung cấp các dataclass chuẩn: `AudioContract`, `ImageContract`, `RenderContract`, `SoundContract`, `LegalContract`, `ArchitectedScene`.
+     - Cung cấp hàm chuẩn hóa phòng thủ `normalize_architected_scene(raw_item, index)`: tự động đếm âm tiết, trích xuất điểm ngắt nghỉ từ dấu câu, suy diễn hiệu ứng âm thanh ngữ nghĩa (semantic foley), bảo đảm vùng an toàn phụ đề `bottom_1_6_safe_zone` và gán nguồn kiểm chứng giáo dục.
+     - Hàm `build_downstream_contracts_report(scenes)` tổng hợp toàn bộ 5 hợp đồng thành báo cáo JSON chuẩn để lưu trữ vào metadata video.
+  2. **Tích hợp sâu vào Hạt Nhân Biên Tập & Sản Xuất**:
+     - `src/studio_editorial_service.py`: Chuẩn hóa 5 hợp đồng cho từng cảnh và nhúng `downstream_contracts` vào báo cáo thẩm định ban biên tập.
+     - `src/batch_producer.py`: Đóng gói `downstream_contracts` cùng kịch bản vào file `metadata.json` của từng video thành phẩm.
+  3. **Trực quan hóa trên Web UI (`src/app_batch.py`)**:
+     - Thêm tab "Kiến trúc 5 Khâu" kết xuất sơ đồ Mermaid trực tiếp trên Streamlit.
+     - Thêm khối mở rộng "Chi tiết Hợp Đồng 5 Khâu Hạ Nguồn" trên từng thẻ video thành phẩm trong Kho thành phẩm.
+  4. **Kiểm thử tự động đa tầng**:
+     - Viết `tests/test_story_contract_pipeline.py` và `tests/test_story_contract_integration.py` đạt 6/6 tests passed 100%.
+     - Chạy regression test suite đạt 17/17 tests passed 100%.
+
+
+## 27. Khắc Phục Lỗi Video Bị Ghép Màn Hình Xám Mờ (Chặn Ảnh Skeleton Placeholder & Thu Hoạch Gallery Google Flow)
+
+- **Hiện tượng lỗi & Phản ánh của người dùng**:
+  - Người dùng gửi 2 ảnh chụp:
+    + Ảnh 1: Khung hình video bị **mờ câm, xám xịt** (chỉ thấy bóng mờ và phụ đề "phát hiện ra cách họ").
+    + Ảnh 2: Màn hình dự án Google Flow của người dùng có **hơn 9 hình ảnh hoạt hình 2D rực rỡ sắc nét** (người tiền sử, hang đá, stickman...).
+    + Người dùng thắc mắc: *"sao có hình quá chời mà nó ghép kì vậy"*.
+- **Nguyên nhân gốc rễ**:
+  1. *Lấy nhầm ảnh placeholder / skeleton của Google Flow*:
+     - Khi Google Flow bắt đầu render hoặc tải trang, nó sinh một ảnh preview/shimmer xám mờ kích thước `(1000, 1000)` với `color_variance = 0.00` (kênh R == G == B, không hề có màu).
+     - Bot Playwright chỉ kiểm tra `len(img_bytes) > 2000` và `bounding_box > 80x80`. Ảnh placeholder này nặng 121,293 bytes nên bot tưởng là ảnh thật, tải về gán cho Cảnh 1 (`scene_flow_1.png`).
+     - Đến Cảnh 4, cơ chế self-healing thấy Cảnh 1 "completed" nên lại copy tiếp ảnh mờ này sang Cảnh 4.
+  2. *Độ phân giải thumbnail bị giới hạn*:
+     - Google Flow trả về URL có tham số `=s512-rw` (kích thước nhỏ `286x512`).
+  3. *Không quét các ảnh đã có sẵn trên Gallery*:
+     - Trên màn hình của user đã có sẵn rất nhiều ảnh đẹp do Flow vừa render, nhưng bot không biết nhặt các ảnh này mà lại đợi hoặc lấy nhầm skeleton.
+- **Quy tắc phòng ngừa & Cách khắc phục**:
+  1. **Hàm thẩm định chất lượng ảnh nghiêm ngặt (`is_valid_production_image`)**:
+     - Kiểm tra độ phong phú màu sắc `color_variance >= 8.0` (`diff_rg + diff_gb`). Loại bỏ 100% ảnh đơn sắc xám `R == G == B` (`color_variance = 0.00`).
+     - Kiểm tra độ lệch chuẩn pixel `arr.std() >= 15.0` (loại bỏ ảnh một màu trơn).
+     - Áp dụng bộ lọc này ở cả 3 tầng: network listener, DOM image extractor và self-healing fallback.
+  2. **Tự động nâng cấp URL Google Flow sang High-Res (`upgrade_to_high_res_flow_url`)**:
+     - Tự động thay thế `=s512` bằng `=s2048` để tải ảnh sắc nét gấp 4 lần.
+  3. **Thu hoạch thông minh từ Gallery (`Smart Gallery Harvesting`)**:
+     - Khi trên canvas của Google Flow đã xuất hiện các ảnh 2D hoạt hình sắc nét, bot tự động quét và thu hoạch các ảnh hợp lệ chưa từng dùng này để ghép vào các phân cảnh, đảm bảo video được tạo từ chính những hình ảnh tuyệt đẹp trên màn hình của user.
+
+
+## 28. Khắc Phục Lỗi "No audio was received" Trong Dây Chuyền TTS Song Song & Cơ Chế Tự Phục Hồi Ngữ Cảnh
+
+- **Hiện tượng lỗi**:
+  - Dây chuyền báo lỗi: `Lỗi giọng đọc song song: Lỗi giọng đọc cảnh 2: Lỗi sinh giọng đọc edge-tts: No audio was received. Please verify that your parameters are correct.`
+  - Trong cùng một job, Cảnh 1, 3, 4, 5 đều sinh audio bình thường, riêng Cảnh 2 bị thất bại.
+- **Nguyên nhân gốc rễ**:
+  1. *Ngắt stream âm thanh từ Microsoft Bing Edge TTS do câu ngắn / thiếu ngữ cảnh ngữ âm*:
+     - Khi một phân cảnh chỉ chứa một cụm từ ngắn (ví dụ "Tổ tiên loài người" hoặc cụm ít hơn 4 từ), bộ tổng hợp ngữ âm của Microsoft Edge TTS không đủ thời lượng để đóng gói audio chunk tối thiểu và kết thúc stream sớm, gây ra ngoại lệ `NoAudioReceived`.
+     - Chỉ cần có thêm liên từ dẫn nhập tự nhiên (như "Và rồi, Tổ tiên loài người" hoặc "Thế là, ..."), Microsoft Edge TTS sẽ lập tức tổng hợp thành công 100%.
+  2. *Nghẽn socket WebSocket khi bắn song song nhiều luồng (Rate Limiting)*:
+     - Khi chạy Turbo mode với 4 workers song song, các worker cùng mở WebSocket tới endpoint `speech.platform.bing.com`. Nếu 1 kết nối bị server tạm thời từ chối, code cũ thử lại với khoảng dừng quá ngắn (1s, 2s) khi các luồng khác vẫn đang chạy, dẫn đến việc tiếp tục bị từ chối và làm dừng toàn bộ job.
+- **Quy tắc phòng ngừa & Cách khắc phục**:
+  1. **Tự động đệm tiền tố ngữ cảnh (Smart Prefix Padding Recovery)**:
+     - Trong `generate_tts`: Nếu gặp `NoAudioReceived` hoặc văn bản quá ngắn (< 35 ký tự), tự động thử lại với các tiền tố dẫn chuyện tự nhiên ("Và rồi, ...", "Thế là, ...", "Lúc này, ...") kết hợp hoán đổi giọng đọc (HoaiMy <-> NamMinh).
+  2. **Vòng lặp phục hồi tuần tự (Sequential Recovery Pass)**:
+     - Trong `generate_scenes_tts_parallel`: Nếu có phân cảnh bị lỗi khi chạy song song, KHÔNG vội hủy job. Hệ thống tự động gom các cảnh chưa xong và chạy lại tuần tự (mỗi cảnh cách nhau 2.0s) để giải tỏa hoàn toàn WebSocket rate-limit.
+  3. **Tái sử dụng file âm thanh có sẵn**:
+     - Các cảnh đã tạo xong trước đó (Cảnh 1, 3, 4, 5) được giữ nguyên, chỉ xử lý lại đúng phân cảnh bị nghẽn (Cảnh 2), tiết kiệm tối đa thời gian.
+
+
+## 29. Chuyển Đổi Số Phân Cảnh Tự Động Theo Cốt Truyện Thay Vì Nhập Thủ Công Cố Định
+
+- **Yêu cầu của người dùng**:
+  - *"không cho chọn sô scanhr nữa số cảnh phụ thuộc vào cốt truyện"*
+  - Loại bỏ hoàn toàn ô chọn số phân cảnh trên giao diện UI.
+  - Số lượng phân cảnh phải do cốt truyện tự nhiên và AI quyết định, tránh tình trạng bị ép buộc cứng nhắc (như luôn luôn cắt ép thành đúng 5 cảnh hay 3 cảnh) làm gãy mạch truyện hoặc nông cạn nội dung.
+- **Nguyên nhân cốt lõi của hạn chế trước đây**:
+  - Giao diện có `target_scenes = c4.number_input(...)` cố định 5 cảnh (hoặc 3 cảnh).
+  - Prompt gửi tới Ollama LLM bị ép cứng: `Kịch bản phải có ĐÚNG {actual_scenes} phân cảnh`.
+  - Bộ lọc `_sanitize_scenes` và studio biên tập `run_studio_editorial_pipeline` kiểm tra nghiêm ngặt `len(scenes) == target_scenes` và cắt gọt `scenes[:target_scenes]`, khiến các kịch bản có diễn biến dài hơn hoặc ngắn hơn tự nhiên đều bị ép khuôn hoặc từ chối.
+- **Quy tắc & Giải pháp triển khai**:
+  1. **Loại bỏ input số cảnh trên Web UI (`src/app_batch.py`)**:
+     - Bỏ trường `number_input` số phân cảnh. Hiển thị caption rõ ràng: *"🎭 Số phân cảnh linh hoạt: Tự động phân bổ theo cốt truyện và diễn biến tự nhiên, không bị gò bó cố định số cảnh."*
+     - Khi submit job vào hàng đợi, truyền `target_scenes = None`.
+  2. **Prompt định hướng số cảnh tự do theo cốt truyện trong LLM (`src/llm_service.py`)**:
+     - Khi `target_scenes is None`, chỉ thị cho Ollama: *"SỐ PHÂN CẢNH TỰ DO THEO CỐT TRUYỆN: Hãy tự động quyết định số lượng phân cảnh tối ưu nhất (thường từ 3 đến 8 phân cảnh) sao cho mạch truyện phát triển tự nhiên, đầy đủ mở đầu, cao trào và kết thúc trọn vẹn nhất; tuyệt đối không bị gò bó hay cắt ngắn gượng ép; mỗi cảnh khoảng 5-10 giây."*
+     - Vẫn giữ nguyên khả năng nhận `target_scenes` cụ thể để bảo toàn tính tương thích ngược cho unit test và API cũ.
+  3. **Nới lỏng ràng buộc cắt gọt trong Studio Biên tập (`src/studio_editorial_service.py`)**:
+     - Khi `target_scenes is None`: `_sanitize_scenes` duyệt qua toàn bộ các cảnh trong câu chuyện mà không cắt lát.
+     - Vòng biên tập chấp nhận mọi kịch bản có `len(scenes) >= 1` thay vì bắt buộc bằng một số cứng.
+  4. **Đồng bộ hàng đợi bền vững (`src/autonomous_factory.py`, `src/batch_producer.py`)**:
+     - Cho phép `target_scenes: Optional[int] = None` xuyên suốt luồng sản xuất.
+     - Kiểm chứng 100% bằng 6 unit tests mới (`tests/test_dynamic_story_scenes.py`) và toàn bộ regression test suite (16/16 tests passed).

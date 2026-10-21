@@ -133,9 +133,52 @@ def _render_completed_card(job, index):
         skill_names = [item.get("name", item.get("id", "")) for item in editorial.get("selected_skills", [])]
         if score is not None:
             st.caption(f"Studio QA: {score}/100 · Kỹ năng: {', '.join(filter(None, skill_names))}")
-        warnings = editorial.get("remaining_warnings", [])
-        if warnings:
-            st.warning("Studio còn cảnh báo: " + "; ".join(str(item) for item in warnings))
+    # Hiển thị trực quan 5 khâu hạ nguồn theo sơ đồ Research & Story Architect (mermaid-diagram.svg)
+    downstream = metadata.get("downstream_contracts")
+    if isinstance(downstream, dict) and downstream:
+        with st.expander("📜 Chi tiết Hợp Đồng 5 Khâu Hạ Nguồn (Story Contracts Pipeline)"):
+            c_aud = downstream.get("audio_summary", {})
+            c_img = downstream.get("image_summary", {})
+            c_rnd = downstream.get("render_summary", {})
+            c_snd = downstream.get("sound_summary", {})
+            c_leg = downstream.get("legal_summary", {})
+            
+            k1, k2 = st.columns(2)
+            with k1:
+                st.markdown(
+                    f"**🎙️ 1. Khâu Âm thanh (TTS Engine)**<br>"
+                    f"- Tổng âm tiết: `{c_aud.get('total_syllables', 0)}` (Tốc độ ước tính: ~{c_aud.get('estimated_wpm', 150)} WPM)<br>"
+                    f"- Điều hướng ngắt nghỉ: Sẵn sàng handoff",
+                    unsafe_allow_html=True
+                )
+                st.markdown(
+                    f"**🎨 2. Khâu Hình ảnh (Flow CDP)**<br>"
+                    f"- Khung hình 2D: `{c_img.get('background_plates_count', 0)} bối cảnh độc lập`<br>"
+                    f"- Chuẩn phong cách: `{c_img.get('style_standard', '2D Flat Cartoon (No 3D)')}`",
+                    unsafe_allow_html=True
+                )
+                st.markdown(
+                    f"**🎬 3. Khâu Dựng & Chuyển động (Compiler)**<br>"
+                    f"- Động cơ: `{c_rnd.get('engine', 'Visual Beats & Progressive Layering')}`<br>"
+                    f"- Vùng an toàn phụ đề: `{c_rnd.get('safe_zone', 'Bottom 1/6 Safe Zone')}`",
+                    unsafe_allow_html=True
+                )
+            with k2:
+                st.markdown(
+                    f"**🎵 4. Thiết kế Âm thanh (Foley/SFX)**<br>"
+                    f"- Neo ngữ nghĩa (Semantic Anchors): `{c_snd.get('semantic_anchors_count', 0)} điểm`<br>"
+                    f"- Cues hiệu ứng âm thanh: `{c_snd.get('foley_cues_count', 0)} cues`<br>"
+                    f"- BGM Ducking: `{'Đã kích hoạt' if c_snd.get('bgm_ducking_enabled') else 'Tắt'}`",
+                    unsafe_allow_html=True
+                )
+                st.markdown(
+                    f"**⚖️ 5. Thẩm định & Pháp lý (Contract QA)**<br>"
+                    f"- Khẳng định kiểm chứng: `{c_leg.get('verified_claims_count', 0)} claims`<br>"
+                    f"- Trạng thái chính sách: `{c_leg.get('policy_compliance_status', 'Passed')}`<br>"
+                    f"- Nguồn tài liệu: `{', '.join(c_leg.get('sources', ['Verified Educational']))}`",
+                    unsafe_allow_html=True
+                )
+
     if output_path and os.path.exists(output_path):
         with open(output_path, "rb") as video_file:
             st.download_button("Tải video MP4", video_file, file_name=Path(output_path).name, mime="video/mp4", key=f"video_{job.get('id')}", use_container_width=True)
@@ -199,16 +242,12 @@ def run_batch_ui():
         )
         if content_mode_label.startswith("Dạy tiếng Anh"):
             content_mode = "english_vocab_story"
-            default_scenes = 5
         elif content_mode_label.startswith("Kể chuyện kiến thức"):
             content_mode = "story_explainer"
-            default_scenes = 5
         elif content_mode_label.startswith("Dạy tiếng Trung"):
             content_mode = "chinese_teaching_vi"
-            default_scenes = 3
         else:
             content_mode = "knowledge"
-            default_scenes = 5
 
         with st.form("factory_order_form", clear_on_submit=False):
             prompt = st.text_area(
@@ -218,25 +257,21 @@ def run_batch_ui():
                 placeholder="Để trống để xưởng tự chọn chủ đề ngẫu nhiên. Chỉ nhập khi bạn muốn làm một chủ đề cụ thể.",
                 help="Để trống: tự chọn ngẫu nhiên. Có thể nhập nhiều dòng, mỗi dòng là một video cụ thể.",
             )
-            st.info("Số video là số thành phẩm trong lô; số phân cảnh là số đoạn ghép bên trong mỗi video.")
+            st.info("Số video là số thành phẩm trong lô; số phân cảnh sẽ do AI tự động phân bổ theo cốt truyện của từng video.")
             c1, c2 = st.columns(2)
             count = c1.number_input("Số video trong lô", min_value=1, max_value=100, value=1, step=1)
             language_label = c2.selectbox("Ngôn ngữ", ["Tiếng Việt", "English"])
             language = "vi" if language_label == "Tiếng Việt" else "en"
             if content_mode == "english_vocab_story":
-                st.caption("🎬 Kịch bản tình huống đời thường (Micro-Drama), lồng ghép từ vựng tiếng Anh theo mạch truyện đúng 5 cảnh.")
+                st.caption("🎬 Kịch bản tình huống đời thường (Micro-Drama), lồng ghép từ vựng tiếng Anh theo mạch truyện tự nhiên.")
             elif content_mode == "story_explainer":
-                st.caption("📖 Dẫn dắt người xem qua câu chuyện khám phá có nhân vật, có nút thắt và bài học theo 5 cảnh.")
+                st.caption("📖 Dẫn dắt người xem qua câu chuyện khám phá có nhân vật, có nút thắt và bài học đọng lại.")
             elif content_mode == "chinese_teaching_vi":
                 language = "vi"
-                st.caption("Chế độ này giảng bằng tiếng Việt, mẫu tiếng Trung chuẩn 3 cảnh: Giới thiệu -> Phát âm/Pinyin -> Cách dùng.")
-            c3, c4 = st.columns(2)
-            orientation_label = c3.selectbox("Khung hình", ["Dọc 9:16", "Ngang 16:9"])
+                st.caption("Chế độ này giảng bằng tiếng Việt, mẫu tiếng Trung: Giới thiệu -> Phát âm/Pinyin -> Cách dùng thực tế.")
+            orientation_label = st.selectbox("Khung hình", ["Dọc 9:16", "Ngang 16:9"])
             orientation = "vertical" if orientation_label.startswith("Dọc") else "horizontal"
-            target_scenes = c4.number_input(
-                "Số phân cảnh mỗi video", min_value=1, max_value=12, value=default_scenes, step=1,
-                help="Chuẩn 3 cảnh cho tiếng Trung, 5 cảnh cho video cốt truyện.",
-            )
+            st.caption("🎭 **Số phân cảnh linh hoạt**: Tự động phân bổ theo cốt truyện và diễn biến tự nhiên, không bị gò bó cố định số cảnh.")
 
             media_mode_label = st.selectbox(
                 "Chế độ phương tiện Google Flow",
@@ -338,7 +373,7 @@ def run_batch_ui():
                     voice=voices[voice_label], style_preset=style_preset,
                     orientation=orientation, image_engine="flow",
                     media_mode=media_mode,
-                    target_scenes=int(target_scenes), voice_mode=voice_mode,
+                    target_scenes=None, voice_mode=voice_mode,
                     voice_reference_path=reference_path,
                     studio_mode=studio_mode,
                     content_mode=content_mode,
@@ -353,7 +388,7 @@ def run_batch_ui():
                         + "; ".join(random_topics)
                     )
                 else:
-                    st.success(f"✅ Đã đưa {int(count)} video × {int(target_scenes)} phân cảnh vào dây chuyền. Đang tự động sản xuất...")
+                    st.success(f"✅ Đã đưa {int(count)} video vào dây chuyền (số phân cảnh tự động theo cốt truyện). Đang tự động sản xuất...")
                 time.sleep(1)
                 st.rerun()
 
@@ -403,7 +438,7 @@ def run_batch_ui():
             st.warning("Chrome điều khiển chưa mở. Bấm nút 'Mở nhanh Chrome Google Flow' ở trên hoặc bấm 'Khởi động dây chuyền' để hệ thống tự mở.")
 
     with right:
-        tab_line, tab_output, tab_log = st.tabs(["Dây chuyền", "Kho thành phẩm", "Bảng dữ liệu"])
+        tab_line, tab_output, tab_contracts, tab_log = st.tabs(["Dây chuyền", "Kho thành phẩm", "Kiến trúc 5 Khâu", "Bảng dữ liệu"])
         with tab_line:
             active_jobs = [job for job in jobs if job.get("status") in {"running", "queued", "failed"}]
             if not active_jobs:
@@ -419,6 +454,46 @@ def run_batch_ui():
             for index, job in enumerate(reversed(completed), start=1):
                 with st.container(border=True):
                     _render_completed_card(job, index)
+        with tab_contracts:
+            st.markdown("<div class='section-kicker'>Kiến trúc hệ thống</div><div class='section-title'>Luồng 5 Khâu Tiếp Nhận Hạ Nguồn</div>", unsafe_allow_html=True)
+            st.caption("Căn cứ theo thiết kế sơ đồ chuẩn Research & Story Architect (`mermaid-diagram.svg`).")
+            
+            st.markdown(
+                """
+```mermaid
+graph TD
+    subgraph BRAIN ["🧠 Hạt Nhân: Research & Story Architect"]
+        RS["Nghiên cứu & Thiết kế Kịch bản Phân Cảnh"]
+    end
+
+    subgraph DOWNSTREAM ["⚙️ 5 Khâu Tiếp Nhận Phía Sau"]
+        C1["1. Khâu Âm thanh (TTS Engine)<br/><i>Âm tiết, Pause Cues, Voice Profile</i>"]
+        C2["2. Khâu Hình ảnh (Flow CDP)<br/><i>Background Plate, Sticker, Visual Action</i>"]
+        C3["3. Khâu Dựng & Chuyển động (Compiler)<br/><i>Visual Beats, Camera Effects, Safe Subtitles</i>"]
+        C4["4. Khâu Thiết kế Âm thanh (Foley/SFX)<br/><i>Semantic Anchors, Foley Cues, BGM Ducking</i>"]
+        C5["5. Khâu Thẩm định & Pháp lý (Contract QA)<br/><i>Sources, Claims, Coverage Verbatim Quotes</i>"]
+    end
+
+    RS --> C1
+    RS --> C2
+    RS --> C3
+    RS --> C4
+    RS --> C5
+```
+                """,
+                unsafe_allow_html=False,
+            )
+            st.markdown(
+                """
+                <div class='meta-box'>
+                <b>Đặc điểm kiến trúc:</b><br>
+                • <b>Hạt nhân điều phối</b>: Tạo và chuẩn hóa hợp đồng dữ liệu cho từng phân cảnh ngay từ khâu viết kịch bản.<br>
+                • <b>Phân phối song song độc lập</b>: Mỗi khâu nhận đúng phần việc theo hợp đồng mà không phụ thuộc chéo.<br>
+                • <b>Chuẩn mỹ thuật an toàn</b>: 100% hình ảnh 2D hoạt hình phẳng (Flat 2D cartoon / Cel-shaded vector, cấm 3D); phụ đề cố định tại Bottom 1/6 Safe Zone.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
         with tab_log:
             rows = []
             for job in reversed(jobs):

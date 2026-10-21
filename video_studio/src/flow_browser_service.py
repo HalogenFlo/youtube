@@ -39,12 +39,87 @@ ATTEMPTS_DIR = ROOT_DIR / "temp" / "flow_attempts"
 ATTEMPTS_DIR.mkdir(parents=True, exist_ok=True)
 _FLOW_BROWSER_LOCK = threading.Lock()
 
-# Nhận diện nhân vật nhất quán giữa các phân cảnh của kênh.
+# Nhận diện nhân vật nhất quán giữa các phân cảnh của kênh (Bắt buộc 2D hoạt hình, cấm 3D).
 STICKMAN_CANONICAL_GUIDANCE = (
-    "Keep the same canonical character CH01 in every shot: a clean minimalist stickman, "
-    "white round head, dark navy outline and oval eyes, light blue shirt #8CCFE8, friendly expression. "
+    "Style: Strictly vibrant 2D animation, flat 2D cartoon, hand-drawn vector art illustration, cel-shaded. "
+    "STRICTLY NO 3D rendering, NO CGI, NO realistic 3D models, NO claymation, NO 3D render. "
+    "Keep the same canonical character CH01 in every shot: a cute 2D minimalist stickman cartoon, "
+    "white round head, dark navy outline and oval eyes, light blue shirt #8CCFE8, friendly expressive emotions. "
     "No captions, subtitles, logos or watermarks inside the generated visual."
 )
+
+
+def is_valid_production_image(img_path_or_bytes: Any, min_color_variance: float = 8.0) -> bool:
+    """
+    Kiểm định nghiêm ngặt chất lượng ảnh:
+    Loại bỏ 100% ảnh placeholder mờ xám (monochrome skeleton / shimmer), ảnh phẳng một màu, hoặc lỗi tải.
+    """
+    try:
+        import io
+        from PIL import Image
+        import numpy as np
+
+        if isinstance(img_path_or_bytes, (str, Path)):
+            if not os.path.exists(img_path_or_bytes) or os.path.getsize(img_path_or_bytes) < 1000:
+                return False
+            img = Image.open(img_path_or_bytes)
+        elif isinstance(img_path_or_bytes, (bytes, bytearray)):
+            if len(img_path_or_bytes) < 1000:
+                return False
+            img = Image.open(io.BytesIO(img_path_or_bytes))
+        else:
+            return False
+
+        with img:
+            w, h = img.size
+            if w < 180 or h < 180:
+                return False
+            arr = np.array(img.convert("RGB"))
+
+        # 1. Tính độ bão hòa / phân tán màu (Color Variance):
+        # Ảnh 2D hoạt hình màu sắc phong phú luôn có chênh lệch giữa các kênh R, G, B.
+        # Ảnh placeholder / shimmer xám của Google Flow có R == G == B (variance = 0.00).
+        diff_rg = float(np.abs(arr[:, :, 0].astype(float) - arr[:, :, 1].astype(float)).mean())
+        diff_gb = float(np.abs(arr[:, :, 1].astype(float) - arr[:, :, 2].astype(float)).mean())
+        color_variance = diff_rg + diff_gb
+
+        if color_variance < min_color_variance:
+            safe_log(f"[!] Loại bỏ ảnh placeholder xám mờ (color_variance={color_variance:.2f} < {min_color_variance}, size={w}x{h})")
+            return False
+
+        # 2. Kiểm tra độ lệch chuẩn pixel (loại bỏ ảnh một màu trơn)
+        if float(arr.std()) < 15.0:
+            safe_log(f"[!] Loại bỏ ảnh đơn sắc phẳng (std={arr.std():.2f} < 15.0)")
+            return False
+
+        return True
+    except Exception as exc:
+        safe_log(f"[!] Lỗi khi kiểm tra chất lượng ảnh: {exc}")
+        return False
+
+
+def upgrade_to_high_res_flow_url(url: str) -> str:
+    """
+    Tự động nâng cấp URL ảnh của Google Flow từ thumbnail (=s512) lên độ phân giải cao (=s2048).
+    Ví dụ: https://flow.google.com/asb/XYZ=s512-rw -> https://flow.google.com/asb/XYZ=s2048-rw
+    """
+    import re
+    if "=s" in url:
+        return re.sub(r"=s\d+", "=s2048", url)
+    return url
+
+
+def _ensure_rgb_image(file_path: str) -> None:
+    """Đảm bảo ảnh tải về được lưu chuẩn 3 channels RGB (chống lỗi Grayscale Mode L / Palette / RGBA khi render video)."""
+    try:
+        from PIL import Image
+        if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+            with Image.open(file_path) as img:
+                if img.mode != "RGB":
+                    rgb_img = img.convert("RGB")
+                    rgb_img.save(file_path, "PNG")
+    except Exception:
+        pass
 
 
 def load_flow_config() -> Dict[str, Any]:
@@ -470,9 +545,9 @@ class FlowBrowserController:
                 pass
             ratio_hint = "vertical 9:16 portrait" if orientation == "vertical" else "horizontal 16:9 landscape"
             full_prompt = (
-                "Generate exactly ONE AI VIDEO CLIP, not a still image. Use the configured video model.\n"
+                "Generate exactly ONE 2D ANIMATION VIDEO CLIP, not a still image and strictly NO 3D. Strictly mute video, no audio generation, silent video only.\n"
                 f"Scene: {prompt.strip()}\n{STICKMAN_CANONICAL_GUIDANCE}\n"
-                f"Composition: {ratio_hint}. Cinematic motion, smooth camera movement, no audio."
+                f"Composition: {ratio_hint}. 2D hand-drawn motion, smooth 2D camera movement, flat cartoon aesthetics, no audio."
             )
             input_box.fill(full_prompt)
             page.wait_for_timeout(500)
@@ -556,6 +631,32 @@ class FlowBrowserController:
                         except Exception:
                             pass
 
+                # Phát hiện lỗi sinh từ Google Flow: Card "Không thành công / Rất tiếc, không tạo được video này."
+                # Thấy trong ảnh chẩn đoán của user: icon cảnh báo tam giác, "Không thành công", "Rất tiếc, không tạo được video này."
+                if elapsed > 15.0 and int(elapsed) % 6 < 3:
+                    try:
+                        failed_card_selectors = [
+                            "div:has-text('Không thành công')",
+                            "div:has-text('Rất tiếc, không tạo được video')",
+                            "div:has-text('Generation failed')",
+                            "div:has-text('Failed to generate')",
+                            "div:has-text('Something went wrong')",
+                        ]
+                        for f_sel in failed_card_selectors:
+                            failed_loc = page.locator(f_sel)
+                            if failed_loc.count() > 0 and failed_loc.first.is_visible():
+                                safe_log(f"[!] Phát hiện Google Flow thông báo sinh thất bại: '{f_sel}'.")
+                                # Thử click icon thùng rác để dọn dẹp card lỗi nếu có
+                                try:
+                                    trash_btn = page.locator("button[aria-label*='Xóa' i], button[aria-label*='Delete' i], button:has-text('delete')")
+                                    if trash_btn.count() > 0 and trash_btn.first.is_visible():
+                                        trash_btn.first.click(force=True, timeout=2000)
+                                except Exception:
+                                    pass
+                                return False, "Google Flow báo lỗi sinh nội dung: 'Không thành công / Rất tiếc, không tạo được video này'."
+                    except Exception:
+                        pass
+
                 candidate_urls = []
 
                 # Ưu tiên 1: URL từ network listener
@@ -565,18 +666,53 @@ class FlowBrowserController:
                             if n_url not in candidate_urls:
                                 candidate_urls.append(n_url)
 
-                # Kích hoạt preview trên thẻ video vừa sinh để ép Flow tải stream
+                # Ưu tiên 2: Kích hoạt tương tác chủ động (Active Trigger Engagement)
+                # Trên Google Flow, video hoàn thành hiển thị dạng Card thumbnail với icon Play / 'Mở video'.
+                # Cần click vào card/trigger để Flow mở player và kích hoạt nạp stream video hoặc hiển thị nút Download.
+                if elapsed > 15.0 and int(elapsed) % 10 < 3:
+                    try:
+                        triggers = page.locator(
+                            "[aria-label*='Mở video' i], img[alt*='Hình thu nhỏ của video'], "
+                            "button[aria-label*='Play' i], button:has-text('play_circle'), div:has-text('play_circle')"
+                        ).all()
+                        for trigger in triggers[:2]:
+                            if trigger.is_visible():
+                                try:
+                                    trigger.hover(timeout=1000)
+                                    trigger.click(force=True, timeout=2000)
+                                    page.wait_for_timeout(1000)
+                                    break
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
+                # Ưu tiên 3: Bắt sự kiện tải xuống trực tiếp từ nút Download trên giao diện Flow (nếu có)
                 try:
-                    play_btns = page.locator("button:has-text('play_circle'), [aria-label*='Play' i], [aria-label*='Mở video' i], div:has-text('play_circle')").all()
-                    if play_btns:
-                        play_btns[0].hover()
+                    dl_btns = page.locator(
+                        "button[aria-label*='Tải' i], button[aria-label*='Download' i], "
+                        "[aria-label*='Tải video' i], button:has-text('Tải xuống'), button:has-text('Download')"
+                    ).all()
+                    for dl_btn in dl_btns:
+                        if dl_btn.is_visible():
+                            try:
+                                with page.expect_download(timeout=8000) as download_info:
+                                    dl_btn.click(force=True, timeout=2000)
+                                download = download_info.value
+                                os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                                download.save_as(output_path)
+                                if os.path.exists(output_path) and os.path.getsize(output_path) > 10000:
+                                    safe_log(f"[✓] Đã tải trực tiếp video độc lập từ nút Download của Flow: {output_path}")
+                                    return True, output_path
+                            except Exception:
+                                pass
                 except Exception:
                     pass
 
-                # Ưu tiên 2: Thẻ <video> mới trong DOM
+                # Ưu tiên 4: Thẻ <video> mới trong DOM (sau khi trigger được click)
                 for v in page.locator("video").all():
                     try:
-                        src = v.get_attribute("src")
+                        src = v.get_attribute("src") or v.evaluate("el => el.currentSrc || el.src")
                         if src and ("blob:" in src or "http" in src):
                             if src not in self.seen_video_urls and src not in pre_existing_urls:
                                 if src not in candidate_urls:
@@ -596,11 +732,10 @@ class FlowBrowserController:
                         pass
 
                 # Nếu sau 20s mà chưa thấy URL mới, quét lại toàn bộ thẻ video trên trang
-                # phòng trường hợp Flow tái sử dụng URL hoặc video đã render xong từ trước
                 if not candidate_urls and elapsed > 20.0:
                     for v in page.locator("video").all():
                         try:
-                            src = v.get_attribute("src")
+                            src = v.get_attribute("src") or v.evaluate("el => el.currentSrc || el.src")
                             if src and ("blob:" in src or "http" in src) and src not in self.seen_video_urls:
                                 if src not in candidate_urls:
                                     candidate_urls.append(src)
@@ -688,8 +823,10 @@ class FlowBrowserController:
         def _on_image_response(res):
             try:
                 r_url = res.url
-                if ("flow-content.google/image/" in r_url or ("flow-content.google" in r_url and ".png" in r_url)) and res.status == 200:
-                    new_images.append(r_url)
+                if res.status in (200, 206):
+                    c_type = res.headers.get("content-type", "").lower()
+                    if "image/" in c_type or "/asb/" in r_url or "flow-content.google" in r_url:
+                        new_images.append(r_url)
             except Exception:
                 pass
 
@@ -747,6 +884,7 @@ class FlowBrowserController:
                                     os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
                                     with open(output_path, "wb") as f_out:
                                         f_out.write(data)
+                                    _ensure_rgb_image(output_path)
                                     safe_log(f"[✓] Đã tạo thành công ảnh từ Google Flow Tool (Nano Banana Pro): {output_path}")
                                     return True, output_path
                             except Exception:
@@ -800,7 +938,7 @@ class FlowBrowserController:
 
             ratio_hint = "vertical 9:16 portrait" if orientation == "vertical" else "horizontal 16:9 landscape"
             full_prompt = (
-                "Generate a high-detail still cinematic image, not a video. Use the configured image model (Imagen 3 / Nano Banana Pro).\n"
+                "Generate exactly ONE single still image for this scene, DO NOT generate multiple variants or batches.\n"
                 f"Scene: {prompt.strip()}\n{STICKMAN_CANONICAL_GUIDANCE}\n"
                 f"Style: {style_preset}. Composition: {ratio_hint}. 4k resolution, rich colors, no text, no captions."
             )
@@ -856,36 +994,42 @@ class FlowBrowserController:
                 # 2. KIỂM TRA NETWORK RESPONSE
                 for img_url in list(new_images):
                     if img_url not in existing_imgs:
-                        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-                        save_js = """
-                        async (src) => {
-                            const response = await fetch(src);
-                            const blob = await response.blob();
-                            return new Promise((resolve) => {
-                                const reader = new FileReader();
-                                reader.onloadend = () => resolve(reader.result);
-                                reader.readAsDataURL(blob);
-                            });
-                        }
-                        """
                         try:
-                            data_url = page.evaluate(save_js, img_url)
-                            if data_url and "," in data_url:
-                                b64 = data_url.split(",")[1]
-                                import base64
-                                with open(output_path, "wb") as f:
-                                    f.write(base64.b64decode(b64))
-                                safe_log(f"[✓] Đã tạo thành công ảnh từ Google Flow qua network: {output_path}")
-                                return True, output_path
+                            # Nâng cấp lên ảnh High-Res nếu là Google CDN thumbnail
+                            download_url = upgrade_to_high_res_flow_url(img_url)
+                            resp = page.request.get(download_url, timeout=10000)
+                            if resp.status != 200 and download_url != img_url:
+                                resp = page.request.get(img_url, timeout=10000)
+                            if resp.status == 200:
+                                img_bytes = resp.body()
+                                if img_bytes and len(img_bytes) > 2000:
+                                    # Kiểm tra thẩm định: Loại bỏ 100% placeholder mờ xám
+                                    if not is_valid_production_image(img_bytes):
+                                        existing_imgs.add(img_url)
+                                        continue
+                                    import hashlib
+                                    img_hash = hashlib.sha256(img_bytes).hexdigest()
+                                    if img_hash in self.seen_video_hashes:
+                                        safe_log(f"[!] Bỏ qua ảnh trùng lặp nội dung ({img_hash[:8]}), tiếp tục chờ ảnh mới...")
+                                        existing_imgs.add(img_url)
+                                        continue
+                                    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                                    with open(output_path, "wb") as f:
+                                        f.write(img_bytes)
+                                    _ensure_rgb_image(output_path)
+                                    self.seen_video_hashes.add(img_hash)
+                                    existing_imgs.add(img_url)
+                                    safe_log(f"[✓] Đã tạo thành công ảnh sắc nét từ Google Flow qua network: {output_path} ({len(img_bytes)} bytes)")
+                                    return True, output_path
                         except Exception:
                             pass
 
-                # 3. KIỂM TRA DOM (Card mới nhất trong gallery All media và khung chat)
+                # 3. KIỂM TRA DOM (Card ảnh mới nhất trong grid và gallery)
                 dom_img_selectors = [
+                    "img[src*='/asb/']",
                     "aside [role='grid'] img",
                     "main img[src*='flow-content']",
                     "main img[src*='googleusercontent']",
-                    "aside img",
                     "img[src*='flow-content']",
                     "img[src*='blob:']",
                 ]
@@ -895,13 +1039,44 @@ class FlowBrowserController:
                             src = img.get_attribute("src") or ""
                             if not src or src in existing_imgs:
                                 continue
-                            # Bỏ qua icon nhỏ, avatar và logo
-                            if any(k in src.lower() for k in ("avatar", "icon", "logo", "favicon", "profile")):
+                            # Bỏ qua avatar và logo giao diện
+                            if any(k in src.lower() for k in ("avatar", "ring/pr_32px", "favicon", "profile", "google.com/u/0/ogw")):
                                 continue
                             box = img.bounding_box()
-                            if box and (box["width"] < 100 or box["height"] < 100):
+                            if box and (box["width"] < 80 or box["height"] < 80):
                                 continue
 
+                            # Tải bằng page.request.get nếu là HTTP
+                            if "http" in src:
+                                try:
+                                    download_url = upgrade_to_high_res_flow_url(src)
+                                    resp = page.request.get(download_url, timeout=10000)
+                                    if resp.status != 200 and download_url != src:
+                                        resp = page.request.get(src, timeout=10000)
+                                    if resp.status == 200:
+                                        img_bytes = resp.body()
+                                        if img_bytes and len(img_bytes) > 2000:
+                                            # Kiểm tra thẩm định: Loại bỏ 100% placeholder mờ xám
+                                            if not is_valid_production_image(img_bytes):
+                                                existing_imgs.add(src)
+                                                continue
+                                            import hashlib
+                                            img_hash = hashlib.sha256(img_bytes).hexdigest()
+                                            if img_hash in self.seen_video_hashes:
+                                                existing_imgs.add(src)
+                                                continue
+                                            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                                            with open(output_path, "wb") as f:
+                                                f.write(img_bytes)
+                                            _ensure_rgb_image(output_path)
+                                            self.seen_video_hashes.add(img_hash)
+                                            existing_imgs.add(src)
+                                            safe_log(f"[✓] Đã lưu ảnh sắc nét thành công từ DOM Flow ({sel}): {output_path} ({len(img_bytes)} bytes)")
+                                            return True, output_path
+                                except Exception:
+                                    pass
+
+                            # Fallback qua FileReader nếu là blob:
                             save_js = """
                             async (src) => {
                                 const response = await fetch(src);
@@ -917,13 +1092,49 @@ class FlowBrowserController:
                             if data_url and "," in data_url:
                                 b64 = data_url.split(",")[1]
                                 import base64
-                                os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-                                with open(output_path, "wb") as f:
-                                    f.write(base64.b64decode(b64))
-                                safe_log(f"[✓] Đã lưu ảnh thành công từ thẻ DOM Flow ({sel}): {output_path}")
-                                return True, output_path
+                                img_bytes = base64.b64decode(b64)
+                                if len(img_bytes) > 2000 and is_valid_production_image(img_bytes):
+                                    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                                    with open(output_path, "wb") as f:
+                                        f.write(img_bytes)
+                                    _ensure_rgb_image(output_path)
+                                    existing_imgs.add(src)
+                                    safe_log(f"[✓] Đã lưu ảnh thành công từ thẻ DOM blob ({sel}): {output_path}")
+                                    return True, output_path
                         except Exception:
                             pass
+
+                # 4. THU HOẠCH THÔNG MINH TỪ GALLERY (Smart Gallery Harvest nếu trên màn hình đã có ảnh đẹp)
+                if time.time() - start_time > 20.0 and int(time.time() - start_time) % 10 < 3:
+                    try:
+                        gallery_imgs = page.locator("main img, [role='grid'] img, div[role='list'] img").all()
+                        for g_img in gallery_imgs:
+                            g_src = g_img.get_attribute("src") or ""
+                            if not g_src or g_src in existing_imgs:
+                                continue
+                            if any(k in g_src.lower() for k in ("avatar", "ring/pr_32px", "favicon", "profile")):
+                                continue
+                            if "http" in g_src:
+                                dl_url = upgrade_to_high_res_flow_url(g_src)
+                                g_resp = page.request.get(dl_url, timeout=8000)
+                                if g_resp.status != 200 and dl_url != g_src:
+                                    g_resp = page.request.get(g_src, timeout=8000)
+                                if g_resp.status == 200:
+                                    g_bytes = g_resp.body()
+                                    if g_bytes and len(g_bytes) > 2000 and is_valid_production_image(g_bytes):
+                                        import hashlib
+                                        g_hash = hashlib.sha256(g_bytes).hexdigest()
+                                        if g_hash not in self.seen_video_hashes:
+                                            os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+                                            with open(output_path, "wb") as f:
+                                                f.write(g_bytes)
+                                            _ensure_rgb_image(output_path)
+                                            self.seen_video_hashes.add(g_hash)
+                                            existing_imgs.add(g_src)
+                                            safe_log(f"[✓] Đã thu hoạch thành công ảnh đẹp từ Gallery Google Flow: {output_path} ({len(g_bytes)} bytes)")
+                                            return True, output_path
+                    except Exception:
+                        pass
 
             return False, f"Hết thời gian chờ ảnh từ Google Flow ({effective_timeout}s)."
         except Exception as exc:

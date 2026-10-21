@@ -548,3 +548,60 @@ Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow
   - [x] Chạy full test suite (`pytest`) đạt 100% passed (65/65 tests passed).
 - [x] **Task 4: Ghi chép sổ tay bài học (`tasks/lessons.md`)** (Bài học 19)
 
+---
+
+## 5. Kế Hoạch Tách Hai Dự Án Độc Lập (`video_studio` & `view_booster`)
+
+- [x] **Bước 1: Dừng các tiến trình cày view đang chạy**
+  - [x] Dừng tiến trình `cli_booster.py` và đóng các Chrome worker liên quan an toàn.
+
+- [x] **Bước 2: Chuẩn bị cấu trúc thư mục độc lập**
+  - [x] Tạo thư mục `video_studio/` và `view_booster/`.
+  - [x] Thiết lập cây thư mục chuẩn cho cả 2 dự án (`src/`, `tests/`, `scripts/`, cấu hình).
+
+- [x] **Bước 3: Phân tách và di chuyển file sang `view_booster/`**
+  - [x] Chuyển các module cày view: `app_view_booster.py`, `view_booster_manager.py`, `view_booster_service.py`, `human_simulator.py`, `channel_scraper.py`, `profile_manager.py`, `resource_guard.py` vào `view_booster/src/`.
+  - [x] Chuyển `cli_booster.py`, `booster_config.json`, `requirements.txt`.
+  - [x] Chuyển `docker/`, Dockerfile, docker-compose.yml và các scripts chạy booster (`run_view_booster_*.bat`).
+  - [x] Chuyển `tests/test_booster.py` và tạo `config.py` độc lập.
+  - [x] Tạo launcher `view_booster/run.bat` độc lập.
+
+- [x] **Bước 4: Phân tách và di chuyển file sang `video_studio/`**
+  - [x] Chuyển toàn bộ module video: `app.py`, `app_batch.py`, `batch_producer.py`, `autonomous_factory.py`, `llm_service.py`, `flow_image_service.py`, `flow_browser_service.py`, `image_service.py`, `tts_service.py`, `music_service.py`, `visual_beats.py`, `video_compiler.py`, `subtitle_builder.py`, `youtube_uploader_service.py`, `studio_editorial_service.py`, `studio_skill_registry.py`, `story_contract_models.py`, `config.py` vào `video_studio/src/`.
+  - [x] Chuyển `flow_config.json`, `flow_chrome_profile/`, `assets/`, `docs/`, `requirements.txt`, `.env`.
+  - [x] Chuyển các scripts chạy video: `run_web.bat`, `scripts/launch_flow_chrome.bat`, `scripts/*.py`.
+  - [x] Cập nhật đường dẫn `chrome_user_data_dir` trong `flow_config.json`.
+  - [x] Tạo launcher `video_studio/run.bat` độc lập.
+
+- [x] **Bước 5: Kiểm chứng tính toàn vẹn (Verification)**
+  - [x] Tạo Master Launcher `run.bat` ở gốc điều hướng tới cả 2 dự án.
+  - [x] Chạy unit test của `view_booster`: 9/9 tests passed (100%).
+  - [x] Chạy unit test của `video_studio`: 13/13 tests passed (100%).
+  - [x] Tổng cộng 22/22 tests passed, không phát sinh bất kỳ lỗi import hay đụng độ nào.
+  - [x] Dọn dẹp cache rác và IndexedDB trang web ngoài (Pippit, CapCut, Facebook) trong `flow_chrome_profile`: giải phóng thêm **938 MB**, đưa toàn bộ thư mục `video_studio` từ **1.66 GB** xuống còn **~723 MB** (đạt mục tiêu dưới 1 GB).
+
+
+
+- [x] **Bước 1: Khảo sát và phân loại dữ liệu rác**
+  - [x] Quét kích thước toàn bộ các thư mục trong workspace.
+  - [x] Kiểm tra các tiến trình đang hoạt động (tránh xóa nhầm profile Chrome đang chạy).
+  - [x] Phân loại rác an toàn (cache, logs, debug png/mp3 tạm) và dữ liệu cần lưu ý (docker images tar, chrome cache).
+
+- [x] **Bước 2: Dọn dẹp rác an toàn (Zero Risk Cleanup)**
+  - [x] Xóa `__pycache__` trong `src/`, `tests/` và `.pytest_cache/`.
+  - [x] Xóa các tệp test/debug tạm trong `temp/` (*.mp3, *.png, *.m4a, *.ass, *.mp4, streamlit*.log).
+  - [x] Xóa các thư mục test tạm: `temp/test_*`, `temp/flow_attempts`, `temp/gemini_animal_1`, `temp/dubbing`, `temp/downloads`, `temp/profiles/*_p6879a288`.
+  - [x] Xóa file log xoay vòng đã cũ: `output/booster.log.1` (10.5 MB).
+  - [x] Dọn thư mục log tác nhân teamwork cũ: `.agents/teamwork/`.
+
+- [x] **Bước 3: Dọn dẹp cache trình duyệt `flow_chrome_profile` (Giải phóng ~650MB)**
+  - [x] Xóa `Cache/Cache_Data` và `Code Cache` bên trong `flow_chrome_profile/Default/` (giữ nguyên Cookies, Local Storage, IndexedDB đăng nhập).
+
+- [x] **Bước 4: Kiểm tra và xử lý các file tar lớn trong `docker/images/` (~1.38GB)**
+  - [x] Đã xóa 2 file backup image: `yt-booster-image.tar` và `yt-booster.tar` theo yêu cầu của user, giải phóng thành công 1.38 GB.
+
+- [x] **Bước 5: Báo cáo kết quả và dung lượng đã giải phóng**
+  - [x] Đo lường lại dung lượng thư mục sau dọn dẹp (tổng giải phóng ~2.04 GB).
+  - [x] Kiểm chứng tính toàn vẹn của mã nguồn và test suite (13/13 tests passed).
+
+

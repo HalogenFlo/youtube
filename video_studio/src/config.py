@@ -134,7 +134,7 @@ def get_gpu_benchmark_sec_per_step() -> float:
 
 # --- CẤU HÌNH VIDEO & BIÊN TẬP ---
 DEFAULT_MAX_DURATION = 60      # Thời lượng tối đa 1 video phần (giây)
-DEFAULT_IMAGE_STYLE = "cinematic, detailed, 4k"
+DEFAULT_IMAGE_STYLE = "2d animation, flat 2d cartoon, colorful cel-shaded vector art"
 DEFAULT_FPS = 30               # FPS chuẩn hóa khi render video cuối cùng
 WAN_FPS = 16                   # FPS mặc định khi sinh clip Wan 2.1
 

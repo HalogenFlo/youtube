@@ -52,8 +52,17 @@ def apply_ken_burns(image_path: str, duration: float, orientation: str) -> Image
     # Kích thước chuẩn
     target_w, target_h = (480, 848) if orientation == "vertical" else (848, 480)
     
-    # Tạo clip từ ảnh tĩnh
-    clip = ImageClip(image_path).set_duration(duration)
+    # Tạo clip từ ảnh tĩnh (đảm bảo luôn chuyển sang RGB 3 channels)
+    try:
+        from PIL import Image
+        import numpy as np
+        with Image.open(image_path) as pil_img:
+            if pil_img.mode != "RGB":
+                pil_img = pil_img.convert("RGB")
+            img_arr = np.array(pil_img)
+        clip = ImageClip(img_arr).set_duration(duration)
+    except Exception:
+        clip = ImageClip(image_path).set_duration(duration)
     
     # Resize về kích thước chuẩn trước khi áp dụng hiệu ứng
     clip = clip.resize(newsize=(target_w, target_h))

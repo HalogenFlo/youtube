@@ -51,7 +51,18 @@ def apply_visual_beat_motion(
     """
     target_w, target_h = (1080, 1920) if orientation == "vertical" else (1920, 1080)
     
-    base_clip = ImageClip(image_path).set_duration(duration)
+    # Đảm bảo ảnh luôn ở định dạng 3 channels RGB (chống lỗi Mode L / Grayscale hoặc RGBA broadcast shape)
+    try:
+        from PIL import Image
+        import numpy as np
+        with Image.open(image_path) as pil_img:
+            if pil_img.mode != "RGB":
+                pil_img = pil_img.convert("RGB")
+            img_arr = np.array(pil_img)
+        base_clip = ImageClip(img_arr).set_duration(duration)
+    except Exception:
+        base_clip = ImageClip(image_path).set_duration(duration)
+
     base_clip = base_clip.resize(newsize=(target_w, target_h))
 
     if not beats:

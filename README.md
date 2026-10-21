@@ -1,6 +1,38 @@
-# 🎬 Xưởng Video Kiến Thức AI — Google Flow
+# 🚀 YouTube Automation Suite (Bộ Tự Động Hóa YouTube Đa Năng)
 
-Giao diện chính hiện là một dây chuyền sản xuất video tự động: nhập một chủ đề hoặc danh sách chủ đề, chọn số lượng video rồi để hệ thống tự viết kịch bản, tạo từng cảnh bằng Google Flow, sinh giọng đọc, dựng video và đóng gói metadata sẵn đăng.
+Hệ thống đã được tách biệt hoàn toàn thành **2 dự án độc lập**, gọn gàng và không phụ thuộc lẫn nhau:
+
+```
+youtube/
+├── run.bat                # Master Launcher (Menu chọn khởi chạy 1 trong 2 hệ thống)
+├── video_studio/          # [Dự án 1] Xưởng sản xuất Video AI tự động (Google Flow, TTS, Phân cảnh)
+│   ├── run.bat            # Menu điều khiển riêng cho Video Studio
+│   ├── run_web.bat        # Khởi chạy nhanh Web UI (Port 8502)
+│   ├── src/               # Pipeline làm video AI (LLM, Flow, TTS, MoviePy)
+│   ├── tests/             # Bộ kiểm thử Video Studio (13 tests)
+│   ├── assets/            # Kho ảnh nhân vật, background, âm thanh mẫu
+│   └── flow_chrome_profile/ # Profile Chrome CDP kết nối Google Flow
+│
+└── view_booster/          # [Dự án 2] Hệ thống cày view YouTube & Shorts Anti-Detect
+    ├── run.bat            # Menu điều khiển riêng cho View Booster
+    ├── cli_booster.py     # Script chạy ngầm 24/7
+    ├── src/               # Engine cày view (nodriver, CDP, human simulator)
+    ├── tests/             # Bộ kiểm thử Booster (9 tests)
+    └── docker/            # Cấu hình đóng gói Docker container
+```
+
+---
+
+## 🎮 Cách Khởi Chạy
+
+Bạn có thể chạy tệp **[`run.bat`](file:///c:/Users/Admin/Desktop/youtube/run.bat)** tại thư mục gốc để mở menu điều phối trung tâm:
+- Phím `[1]`: Vào **AI Video Studio** (sản xuất video tự động).
+- Phím `[2]`: Vào **YouTube View Booster** (cày view & Shorts đa luồng).
+- Phím `[3]`: Chạy kiểm thử tự động toàn bộ cả 2 hệ thống (22/22 tests).
+
+Hoặc bạn có thể truy cập trực tiếp vào từng thư mục dự án (`video_studio/` hoặc `view_booster/`) và dùng `run.bat` riêng của từng dự án.
+
+---
 
 ## Chạy xưởng tự động
 

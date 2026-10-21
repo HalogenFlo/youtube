@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1470.4089999999997 402.1" width="1470.4089999999997" height="402.1" style="--bg:#FFFFFF;--fg:#3B3B3B;--line:#3B3B3B;--accent:#005FB8;--muted:#3B3B3BCC;--surface:#F8F8F8;--border:#3B3B3B;background:var(--bg)">
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap');
+  text { font-family: 'Inter', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polygon points="0 0, 8 2.5, 0 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polygon points="8 0, 0 2.5, 8 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+</defs>
+<g class="subgraph" data-id="BRAIN" data-label="Skill Nghiên cứu &amp; Kiến trúc Nội dung">
+  <rect x="555.9574999999999" y="40" width="233.26499999999993" height="96.9" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <rect x="555.9574999999999" y="40" width="233.26499999999993" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="567.9574999999999" y="54" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">Skill Nghiên cứu &amp; Kiến trúc Nội dung</text>
+</g>
+<g class="subgraph" data-id="DOWNSTREAM" data-label="Các khâu tiếp nhận phía sau">
+  <rect x="40" y="265.20000000000005" width="1390.4089999999997" height="96.9" rx="0" ry="0" fill="var(--_group-fill)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <rect x="40" y="265.20000000000005" width="1390.4089999999997" height="28" rx="0" ry="0" fill="var(--_group-hdr)" stroke="var(--_node-stroke)" stroke-width="1" />
+  <text x="52" y="279.20000000000005" font-size="12" font-weight="600" fill="var(--_text-sec)" dy="4.199999999999999">Các khâu tiếp nhận phía sau</text>
+</g>
+<polyline class="edge" data-from="RS" data-to="AUDIO" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Âm tiết, Pause, Voice Profile" points="605.5016666666666,120.9 605.5016666666666,166.9 219.54174999999992,166.9 219.54174999999992,247.20000000000002 163.30150000000003,247.20000000000002 163.30149999999998,309.20000000000005" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="RS" data-to="IMAGE" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Background Plate, Sticker, Visual Action" points="639.0458333333331,120.9 639.0458333333331,178.9 429.61474999999984,178.9 429.61474999999984,247.20000000000002 403.68149999999986,247.20000000000002 403.68149999999986,309.20000000000005" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="RS" data-to="RENDER" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Visual Beats, Camera Effects, Safe Subtitles" points="672.5899999999998,120.9 672.5899999999998,309.20000000000005" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="RS" data-to="SOUND" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Semantic Anchors, Foley Cues, BGM Ducking" points="706.1341666666665,120.9 706.1341666666665,178.9 934.2697499999997,178.9 934.2697499999997,247.20000000000002 967.4334999999996,247.20000000000002 967.4334999999999,309.20000000000005" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="RS" data-to="LEGAL" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="Sources, Claims, Coverage Verbatim Quotes" points="739.6783333333332,120.9 739.6783333333331,166.9 1201.4179999999997,166.9 1201.4179999999997,247.20000000000002 1270.4279999999999,247.20000000000002 1270.4279999999997,309.20000000000005" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<g class="edge-label" data-from="RS" data-to="AUDIO" data-label="Âm tiết, Pause, Voice Profile">
+  <rect x="147.04174999999992" y="185.9" width="144.766" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="219.4247499999999" y="201.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">Âm tiết, Pause, Voice Profile</text>
+</g>
+<g class="edge-label" data-from="RS" data-to="IMAGE" data-label="Background Plate, Sticker, Visual Action">
+  <rect x="326.11474999999984" y="185.9" width="206.542" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="429.38574999999986" y="201.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">Background Plate, Sticker, Visual Action</text>
+</g>
+<g class="edge-label" data-from="RS" data-to="RENDER" data-label="Visual Beats, Camera Effects, Safe Subtitles">
+  <rect x="562.5899999999997" y="185.9" width="219.01599999999996" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="672.0979999999997" y="201.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">Visual Beats, Camera Effects, Safe Subtitles</text>
+</g>
+<g class="edge-label" data-from="RS" data-to="SOUND" data-label="Semantic Anchors, Foley Cues, BGM Ducking">
+  <rect x="818.7697499999997" y="185.9" width="230.302" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="933.9207499999997" y="201.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">Semantic Anchors, Foley Cues, BGM Ducking</text>
+</g>
+<g class="edge-label" data-from="RS" data-to="LEGAL" data-label="Sources, Claims, Coverage Verbatim Quotes">
+  <rect x="1088.9179999999997" y="185.9" width="224.362" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="1201.0989999999997" y="201.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">Sources, Claims, Coverage Verbatim Quotes</text>
+</g>
+<g class="node" data-id="RS" data-label="Research &amp; Story Architect" data-shape="rectangle">
+  <rect x="571.9574999999999" y="84" width="201.26499999999993" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="672.5899999999998" y="102.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">Research &amp; Story Architect</text>
+</g>
+<g class="node" data-id="AUDIO" data-label="1. Khâu Âm thanh (TTS Engine)" data-shape="rectangle">
+  <rect x="56" y="309.20000000000005" width="214.60299999999995" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="163.30149999999998" y="327.65000000000003" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">1. Khâu Âm thanh (TTS Engine)</text>
+</g>
+<g class="node" data-id="IMAGE" data-label="2. Khâu Hình ảnh (Flow CDP)" data-shape="rectangle">
+  <rect x="298.6029999999999" y="309.20000000000005" width="210.15699999999995" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="403.68149999999986" y="327.65000000000003" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">2. Khâu Hình ảnh (Flow CDP)</text>
+</g>
+<g class="node" data-id="RENDER" data-label="3. Khâu Dựng &amp; Chuyển động (Remotion)" data-shape="rectangle">
+  <rect x="536.7599999999998" y="309.20000000000005" width="271.65999999999997" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="672.5899999999997" y="327.65000000000003" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">3. Khâu Dựng &amp; Chuyển động (Remotion)</text>
+</g>
+<g class="node" data-id="SOUND" data-label="4. Khâu Thiết kế Âm thanh (Foley/SFX)" data-shape="rectangle">
+  <rect x="836.4199999999998" y="309.20000000000005" width="262.02699999999993" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="967.4334999999999" y="327.65000000000003" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">4. Khâu Thiết kế Âm thanh (Foley/SFX)</text>
+</g>
+<g class="node" data-id="LEGAL" data-label="5. Khâu Thẩm định &amp; Pháp lý (Contract QA)" data-shape="rectangle">
+  <rect x="1126.4469999999997" y="309.20000000000005" width="287.962" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="1270.4279999999997" y="327.65000000000003" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">5. Khâu Thẩm định &amp; Pháp lý (Contract QA)</text>
+</g>
+</svg>

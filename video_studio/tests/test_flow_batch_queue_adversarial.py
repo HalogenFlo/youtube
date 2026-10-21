@@ -214,7 +214,13 @@ class TestFlowBatchQueueAdversarial(unittest.TestCase):
             for fail_idx in failing_indices:
                 if f"scene_flow_{fail_idx}.png" in output_path:
                     return False, f"Permanent error on scene {fail_idx}"
-            Path(output_path).write_bytes(b"VALID_IMAGE_CONTENT")
+            import numpy as np
+            from PIL import Image
+            arr = np.zeros((512, 286, 3), dtype=np.uint8)
+            arr[:200, :, :] = [135, 206, 235]
+            arr[200:350, :, :] = [34, 139, 34]
+            arr[350:, :, :] = [255, 69, 0]
+            Image.fromarray(arr).save(output_path, "PNG")
             return True, output_path
 
         mock_gen.side_effect = mock_gen_impl
