@@ -663,3 +663,9 @@
   1. Bổ sung chỉ thị `CRITICAL MEMORY RESET` và `STRICT DIALOGUE LOGIC` trong [`build_museai_story_script_prompt`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py#L232-L380): cấm lục lại bộ nhớ cũ (`Lumi`/`Uga`), cấm nhân vật đọc mô tả hành động ngôi thứ 3, cấm thoại phi logic và nâng chuẩn văn phong kể chuyện điện ảnh/tri thức sâu sắc.
   2. Tự động thoát khỏi `/thread/...` cũ về trang chủ `https://muse.ai/` trước khi bấm `New side chat` trong [`generate_3d_script_via_museai`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py#L1334-L1352).
   3. Triển khai bộ lọc [`is_third_person_stage_direction`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py#L516-L561) trong [`build_scene_dialogue_segments`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py#L564-L660): tự động phát hiện mọi câu mô tả hành động ngôi thứ 3 bị gán nhầm vào `character_1`/`character_2` và chuyển về đúng giọng `narrator` (`Người dẫn chuyện`).
+
+## Lesson 36 - Video cuoi long tieng Anh (Veo)
+- Trieu chung: chon Tieng Viet nhung video cuoi noi tieng Anh.
+- Nguyen nhan: compiler moviepy bi 'maximum recursion depth exceeded' trong thread Streamlit/Playwright -> fallback FFmpeg concat giu am thanh goc cua Veo (tieng Anh), bo TTS tieng Viet.
+- Khac phuc: chay compiler trong thread moi (stack sach); fallback luon bo am thanh Veo va ghep mp3 TTS.
+- Phong ngua: khong bao gio dung am thanh goc cua Veo trong output cuoi.

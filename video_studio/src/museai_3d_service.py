@@ -83,6 +83,19 @@ FORBIDDEN_2D_PATTERN = re.compile(
 )
 
 
+def strip_forbidden_2d_terms(text: str) -> str:
+    """
+    Xoa cac cum tu 2D kem tien to phu dinh ("no 2D cartoon, no stickman...") truoc khi chen vao prompt,
+    tranh bien thanh cau mau thuan lap lai ("no cinematic 3D CGI animation" x3) lam Veo tu choi prompt.
+    """
+    cleaned = re.sub(r"\b(?:strictly\s+)?no\s+" + FORBIDDEN_2D_PATTERN.pattern.strip(), "", str(text or ""), flags=re.IGNORECASE)
+    cleaned = FORBIDDEN_2D_PATTERN.sub("cinematic 3D CGI animation", cleaned)
+    cleaned = re.sub(r"(cinematic 3D CGI animation)(?:[\s,]+cinematic 3D CGI animation)+", r"\1", cleaned)
+    cleaned = re.sub(r"(?:\s*,){2,}", ",", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip(" ,.;:-")
+
+
 def clean_and_build_flow_3d_video_prompt(
     scene_prompt: str,
     character_anchor: str = "",
@@ -98,8 +111,7 @@ def clean_and_build_flow_3d_video_prompt(
     - Đồng bộ diễn xuất biểu cảm 3D, mấp máy môi (lip-sync speaking gestures) và tương tác giữa các nhân vật khớp với lời thoại.
     - Ép Google Flow render đúng 1 video clip hoạt hình 3D CGI thật (Pixar / DreamWorks / UE5).
     """
-    cleaned_action = FORBIDDEN_2D_PATTERN.sub("cinematic 3D CGI animation", str(scene_prompt or "")).strip()
-    cleaned_action = re.sub(r"\s+", " ", cleaned_action).strip(" ,.;:-")
+    cleaned_action = strip_forbidden_2d_terms(scene_prompt)
 
     ratio_hint = (
         "vertical 9:16 portrait (1080x1920)"
@@ -163,8 +175,7 @@ def clean_and_build_flow_3d_image_prompt(
     except ModuleNotFoundError:
         from video_studio.src.flow_character_vault import build_7_point_character_dna
 
-    cleaned_action = FORBIDDEN_2D_PATTERN.sub("cinematic 3D CGI animation", str(scene_prompt or "")).strip()
-    cleaned_action = re.sub(r"\s+", " ", cleaned_action).strip(" ,.;:-")
+    cleaned_action = strip_forbidden_2d_terms(scene_prompt)
 
     ratio_hint = (
         "vertical 9:16 portrait (1080x1920)"
@@ -215,6 +226,9 @@ def sanitize_prompt_for_flow_retry(prompt_text: str) -> str:
     """
     txt = str(prompt_text or "")
     age_patterns = [
+        (r"\b(?:[1-9]|1[0-7])-year-old\b", "stylized"),
+        (r"\b(?:spear|knife|dagger|axe|sword|club)\b", "wooden walking stick"),
+        (r"\b(?:hungry|starving|rumbling stomach|pleading)\b", "curious"),
         (r"\b\d{1,2}-year-old\s+(?:boy|girl|child|kid)\b", "stylized Pixar 3D animated young explorer character"),
         (r"\b(?:young\s+)?(?:boy|girl|child|kid|children|kids)\b", "stylized Pixar 3D animated adventurer character"),
         (r"\b(?:terrified|horrified|panic|screaming|crying|bleeding|attacking|destroying|violent|deadly)\b", "expressive cinematic"),
@@ -1505,7 +1519,7 @@ class MuseAIFlowHybridController:
                                 status_callback(
                                     int(elapsed),
                                     f"MuseAI đang viết kịch bản 3D ({int(elapsed)}s) — "
-                                    f"Đã viết {streamed_scene_count}/{expected_scenes} phân cảnh...",
+                                    f"Đã viết {streamed_scene_count}/{max(expected_scenes, streamed_scene_count)} phân cảnh...",
                                 )
                             except Exception:
                                 pass
@@ -2147,6 +2161,15 @@ class MuseAIFlowHybridController:
             )
             if attempt_num >= 2:
                 full_3d_prompt = sanitize_prompt_for_flow_retry(full_3d_prompt)
+            if attempt_num >= 3:
+                # Lan cuoi: prompt toi gian (chi hanh dong + phong cach) de tranh bo loc an toan / prompt qua dai cua Veo
+                full_3d_prompt = sanitize_prompt_for_flow_retry(
+                    f"Pixar-style 3D CGI animated short clip, {strip_forbidden_2d_terms(raw_prompt)}, "
+                    f"{cam_dir}, vertical 9:16 portrait, silent, no text."
+                    if orientation == "vertical"
+                    else f"Pixar-style 3D CGI animated short clip, {strip_forbidden_2d_terms(raw_prompt)}, "
+                    f"{cam_dir}, horizontal 16:9, silent, no text."
+                )
 
             safe_log(
                 f"[*] [BƯỚC 2 - GOOGLE FLOW Cảnh {scene_num}/{total_scenes}] "
@@ -2788,12 +2811,34 @@ def merge_flow_3d_scenes_into_final_movie(
                     sc["use_video_ai"] = has_vid
                 words_ts = build_exact_tts_timestamps(scenes)
                 safe_log("[*] [BƯỚC 4 - COMPILER] Đang ghép nối các cảnh 3D Google Flow + lồng tiếng đa vai + phụ đề...")
-                comp_ok, compiled_list, comp_err = compile_video_pipeline(
-                    scenes=scenes,
-                    words_timestamps=words_ts,
-                    max_duration=3600.0,
-                    orientation=orientation,
-                )
+                # Chay compiler trong thread moi (stack sach): luong Streamlit/Playwright da sau nen moviepy
+                # de bi "maximum recursion depth exceeded" va roi vao fallback giu am thanh Veo tieng Anh.
+                comp_box: Dict[str, Any] = {}
+
+                def _run_compiler() -> None:
+                    try:
+                        comp_box["res"] = compile_video_pipeline(
+                            scenes=scenes,
+                            words_timestamps=words_ts,
+                            max_duration=3600.0,
+                            orientation=orientation,
+                        )
+                    except BaseException as exc_c:
+                        comp_box["res"] = (False, [], f"{type(exc_c).__name__}: {exc_c}")
+
+                old_stack = threading.stack_size()
+                try:
+                    threading.stack_size(64 * 1024 * 1024)
+                except (ValueError, RuntimeError):
+                    pass
+                comp_thread = threading.Thread(target=_run_compiler, name="museai-compiler")
+                comp_thread.start()
+                comp_thread.join()
+                try:
+                    threading.stack_size(old_stack)
+                except (ValueError, RuntimeError):
+                    pass
+                comp_ok, compiled_list, comp_err = comp_box.get("res", (False, [], "compiler thread khong tra ket qua"))
                 if comp_ok and compiled_list and os.path.exists(compiled_list[0]):
                     os.makedirs(os.path.dirname(os.path.abspath(final_output_path)), exist_ok=True)
                     shutil.copy2(compiled_list[0], final_output_path)
@@ -2818,17 +2863,25 @@ def merge_flow_3d_scenes_into_final_movie(
     try:
         lines = [f"file '{os.path.abspath(p).replace(chr(92), '/')}'" for p in valid_paths]
         concat_file.write_text("\n".join(lines), encoding="utf-8")
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", str(concat_file),
-            "-c:v", "libx264",
-            "-preset", "fast",
-            "-crf", "18",
-            "-c:a", "aac",
-            final_output_path,
+        # Luon bo am thanh goc cua Veo (hay tu sinh giong tieng Anh); chi dung long tieng TTS da tao neu co.
+        audio_paths = [
+            str(sc.get("audio_path"))
+            for sc in scenes
+            if isinstance(sc, dict) and sc.get("video_path") and os.path.exists(str(sc.get("video_path")))
+            and sc.get("audio_path") and os.path.exists(str(sc.get("audio_path")))
         ]
+        audio_concat = Path(final_output_path).with_suffix(".audio.concat.txt")
+        cmd = ["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", str(concat_file)]
+        if len(audio_paths) == len(valid_paths):
+            audio_concat.write_text(
+                "\n".join(f"file '{os.path.abspath(p).replace(chr(92), '/')}'" for p in audio_paths),
+                encoding="utf-8",
+            )
+            cmd += ["-f", "concat", "-safe", "0", "-i", str(audio_concat),
+                    "-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-shortest"]
+        else:
+            cmd += ["-map", "0:v:0", "-an"]
+        cmd += ["-c:v", "libx264", "-preset", "fast", "-crf", "18", final_output_path]
         subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
         if os.path.exists(final_output_path) and os.path.getsize(final_output_path) > 10000:
             return True, final_output_path
@@ -2836,11 +2889,12 @@ def merge_flow_3d_scenes_into_final_movie(
     except Exception as exc:
         return False, f"Lỗi ghép video FFmpeg: {exc}"
     finally:
-        if concat_file.exists():
-            try:
-                concat_file.unlink()
-            except Exception:
-                pass
+        for tmp_file in (concat_file, Path(final_output_path).with_suffix(".audio.concat.txt")):
+            if tmp_file.exists():
+                try:
+                    tmp_file.unlink()
+                except Exception:
+                    pass
 
 
 # ==============================================================================

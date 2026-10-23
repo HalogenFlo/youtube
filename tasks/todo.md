@@ -888,3 +888,12 @@ Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow
 - [x] **Kiểm chứng thực tế & Unit Test**:
   - [x] Đã test trực tiếp trên Chrome cổng 9222: ngay khi gọi `thumbs[0].hover()`, thẻ `<video src="https://flow-content.google/video/e55239f9-...">` của Cảnh 2 xuất hiện tức thì sau 1 giây!
   - [x] Chạy `pytest video_studio/tests/test_museai_3d.py -v`: **22/22 PASSED**.
+
+## Whiteboard Stickman (ban tay ve) - 2026-10-23 19:50
+Muc tieu: option tao video kieu whiteboard: nhan vat que + so do/chu duoc 'ban tay lia qua' ve hien dan, giong tay MuseAI viet kich ban; moi nhan vat 1 giong, truyen cam theo cam xuc.
+- [ ] 1. video_studio/src/whiteboard_video.py: layout items (text/circle/arrow/box/stickman), lich reveal, render frame (wipe + ban tay), render scene mp4 (ffmpeg pipe + audio)
+- [ ] 2. Giong: preset rieng moi nhan vat + modifier cam xuc (rate/pitch) trong tts_service/build_scene_dialogue_segments
+- [ ] 3. Prompt MuseAI che do whiteboard (whiteboard_items + emotion tung cau thoai)
+- [ ] 4. Pipeline: visual_mode='whiteboard' bo qua Google Flow (0 credit): TTS truoc -> render local -> ghep
+- [ ] 5. UI app_museai: lua chon Whiteboard
+- [ ] 6. Test (unit + e2e render that), cap nhat docs/so do

@@ -189,6 +189,25 @@ def _synthesize_offline_speech_audio_ffmpeg(text: str, output_path: str) -> Tupl
 
 
 
+# Điều chỉnh tốc độ (%) và cao độ (Hz) theo cảm xúc của từng câu thoại (cộng vào preset của nhân vật)
+EMOTION_PROSODY: Dict[str, Tuple[int, int]] = {
+    "happy": (8, 6),
+    "excited": (14, 10),
+    "surprised": (6, 14),
+    "angry": (10, -3),
+    "sad": (-12, -8),
+    "thinking": (-8, -3),
+    "neutral": (0, 0),
+}
+
+
+def _shift_prosody(value: str, delta: int, unit: str) -> str:
+    """Cộng delta vào chuỗi kiểu edge-tts ("+5%", "-2Hz"), giữ đúng định dạng có dấu."""
+    m = re.match(r"^\s*([+-]?\d+)\s*(?:%|Hz)?\s*$", str(value or ""))
+    base = int(m.group(1)) if m else 0
+    return f"{base + int(delta):+d}{unit}"
+
+
 def resolve_voice_and_prosody(voice_spec: str, default_rate: str = "+0%") -> Tuple[str, str, str, str]:
     """
     Tách thông số `voice_spec` (VD: 'vi-VN-HoaiMyNeural|story_warm') thành:
@@ -202,6 +221,10 @@ def resolve_voice_and_prosody(voice_spec: str, default_rate: str = "+0%") -> Tup
         "char_boy_bright": {"base_voice": "vi-VN-NamMinhNeural", "rate": "+11%", "pitch": "+9Hz", "eq_filter": ""},
         "char_elder_deep": {"base_voice": "vi-VN-NamMinhNeural", "rate": "-6%", "pitch": "-9Hz", "eq_filter": ""},
         "char_female_bright": {"base_voice": "vi-VN-HoaiMyNeural", "rate": "+12%", "pitch": "+10Hz", "eq_filter": ""},
+        "char_girl_cute": {"base_voice": "vi-VN-HoaiMyNeural", "rate": "+16%", "pitch": "+18Hz", "eq_filter": ""},
+        "char_hero_deep": {"base_voice": "vi-VN-NamMinhNeural", "rate": "+2%", "pitch": "-4Hz", "eq_filter": ""},
+        "char_comic": {"base_voice": "vi-VN-NamMinhNeural", "rate": "+18%", "pitch": "+14Hz", "eq_filter": ""},
+        "char_mother_warm": {"base_voice": "vi-VN-HoaiMyNeural", "rate": "-2%", "pitch": "-5Hz", "eq_filter": ""},
     }
     try:
         from src.config import STORYTELLING_VOICE_PRESETS
@@ -215,12 +238,18 @@ def resolve_voice_and_prosody(voice_spec: str, default_rate: str = "+0%") -> Tup
 
     raw = str(voice_spec or "vi-VN-HoaiMyNeural").strip()
     if "|" in raw:
-        base_v, preset_key = raw.split("|", 1)
-        preset = presets_map.get(preset_key.strip(), {})
+        parts = [p.strip() for p in raw.split("|")]
+        base_v, preset_key = parts[0], parts[1]
+        emotion_key = parts[2].lower() if len(parts) > 2 else "neutral"
+        preset = presets_map.get(preset_key, {})
         eff_rate = preset.get("rate", default_rate) if default_rate in ("+0%", "0%", "") else default_rate
         eff_pitch = preset.get("pitch", "+0Hz")
         eq_flt = preset.get("eq_filter", "")
-        return base_v.strip(), eff_rate, eff_pitch, eq_flt
+        d_rate, d_pitch = EMOTION_PROSODY.get(emotion_key, (0, 0))
+        if d_rate or d_pitch:
+            eff_rate = _shift_prosody(eff_rate, d_rate, "%")
+            eff_pitch = _shift_prosody(eff_pitch, d_pitch, "Hz")
+        return base_v, eff_rate, eff_pitch, eq_flt
 
     # Mặc định tự động áp dụng preset ấm áp truyền cảm cho tiếng Việt nếu chưa chỉ định
     if raw == "vi-VN-HoaiMyNeural":
