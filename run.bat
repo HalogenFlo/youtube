@@ -16,12 +16,14 @@ echo   [3] Chay toan bo Unit Tests (Kiem tra ca 2 he thong)
 echo   [0] Thoat
 echo.
 echo =====================================================================
+set "choice="
 set /p choice="Nhap lua chon cua ban (0-3): "
 
 if "%choice%"=="1" goto video
 if "%choice%"=="2" goto booster
 if "%choice%"=="3" goto test_all
 if "%choice%"=="0" exit /b
+if "%choice%"=="" exit /b
 goto menu
 
 :video

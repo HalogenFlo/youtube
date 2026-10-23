@@ -22,6 +22,7 @@ echo   [6] Don dep du lieu tam (temp files)
 echo   [0] Thoat
 echo.
 echo =====================================================================
+set "choice="
 set /p choice="Nhap lua chon cua ban (0-6): "
 
 if "%choice%"=="1" goto web
@@ -31,6 +32,7 @@ if "%choice%"=="4" goto factory
 if "%choice%"=="5" goto test
 if "%choice%"=="6" goto clean
 if "%choice%"=="0" exit /b
+if "%choice%"=="" exit /b
 goto menu
 
 :web

@@ -4,7 +4,10 @@
 
 import os
 import gc
-import torch
+try:
+    import torch
+except (ImportError, OSError):
+    torch = None
 from typing import Tuple, List, Dict, Any
 from src.config import SD_MODEL_DEFAULT, SD_RESOLUTIONS, DEFAULT_IMAGE_STYLE
 

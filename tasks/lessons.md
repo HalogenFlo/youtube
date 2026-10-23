@@ -1,5 +1,106 @@
 # Bài Học Kinh Nghiệm (Lessons Learned)
 
+## 0. Khớp 1:1 Số Khung Hình Video Với Nhịp Câu Chuyện & Cấm Tuyệt Đối Lặp Lại Khung Hình (`-stream_loop -1`)
+- **Triệu chứng & Bối cảnh phát sinh**:
+  - Người dùng phản hồi: *"số khung hình không khớp với câu chuyện, 1 khung sài nhiều lần lặp đi lặp lại quá, không cho tự chọn số khung mà số khung hình và câu chuyện phải khớp nhau, không có 1 khung video lặp lại hoài"*.
+- **Nguyên nhân gốc rễ (Root Causes)**:
+  1. Mỗi clip video 3D do Google Flow (Veo) tạo ra có thời lượng cố định khoảng **8–10 giây** (`10.01s`).
+  2. Khi người dùng chọn cứng 4 phân cảnh, toàn bộ câu chuyện dài ~97 giây (gồm cả lời dẫn chuyện nhiều câu + lời đối thoại nhân vật) bị dồn nén vào 4 cảnh, khiến file âm thanh mỗi cảnh dài từ **21.6s đến 28.2s** (`scene_001.mp3 = 21.63s`, `scene_002.mp3 = 28.16s`).
+  3. Trong `video_studio/src/video_compiler.py`, cả nhánh FFmpeg (`-stream_loop -1`) lẫn nhánh MoviePy (`vfx.loop`) đều xử lý trường hợp `audio_dur > vid_dur` bằng cách **phát lặp đi lặp lại (loop) cùng 1 video clip từ đầu** gần 3 lần liên tiếp trong cùng 1 cảnh!
+- **Cách khắc phục & Quy tắc phòng ngừa**:
+  1. **Bỏ thanh trượt chọn cứng số khung hình trên UI (`app_museai.py`)**: Để hệ thống tự động xác định số khung hình theo đúng mạch câu chuyện (`target_scenes = None`).
+  2. **Bộ tự động chia khung hình theo nhịp câu chuyện (`expand_scenes_to_match_story_beats` trong `museai_3d_service.py`)**:
+     - Mỗi khung hình video (~8–10s) chỉ đảm nhận đúng **1 nhịp câu chuyện/thoại ngắn (~15–26 từ, tương đương ~6–9.5 giây đọc)**.
+     - Nếu bất kỳ phân cảnh nào từ MuseAI dài hơn `26` từ (ví dụ vừa có phần dẫn chuyện mở cảnh dài vừa có phần đối thoại nhân vật), hệ thống tự động tách thành các khung hình con độc lập (`Nhịp 1/K`, `Nhịp 2/K`...) với `raw_video_prompt` và `camera_directive` khác nhau (Khung mở cảnh góc toàn/trung ➔ Khung nhân vật tương tác góc cận) để Google Flow sinh khung hình mới hoàn toàn cho từng nhịp.
+     - Đánh dấu `is_expanded_shot = True` cho các khung đã tách để `build_scene_dialogue_segments` không tự động chèn thêm lời thoại phụ làm đội lại số từ của khung.
+  3. **Xóa bỏ hoàn toàn cơ chế lặp video (`-stream_loop -1` & `vfx.loop`) trong `video_compiler.py`**:
+     - Thay thế `vfx.loop` bằng `vfx.speedx(clip, final_duration=duration)` trong `process_video_clip`.
+     - Thay thế `-stream_loop -1` bằng bộ lọc `setpts={pts_factor:.4f}*PTS` trong `_compile_part_with_ffmpeg_native` để mỗi khung hình video chỉ chạy **đúng 1 lượt duy nhất từ 0% đến 100%** khớp với câu thoại, tuyệt đối không bao giờ tua lại từ đầu.
+
+## 0. Nâng Cấp Kịch Bản & Lồng Tiếng Đa Giọng Đọc (Người Dẫn Chuyện + Tương Tác Nhân Vật) Đồng Bộ 100% Với Cảnh 3D
+- **Triệu chứng & Bối cảnh phát sinh**:
+  - Người dùng phản hồi kịch bản và lồng tiếng trước đó "chẳng đâu vào đâu", mong muốn kết hợp giữa **Người dẫn chuyện (Narrator)** và **Tương tác / Đối thoại giữa các nhân vật (Character Dialogue)** trong từng cảnh.
+- **Nguyên nhân gốc rễ (Root Causes)**:
+  1. Ở lần chạy bị lỗi đọc nhầm JSON mẫu 1 cảnh trước đó (`muse_flow_3d_20261023_145325`), file MP3 đọc câu mẫu *"Lời dẫn tiếng Việt tự nhiên, cuốn hút cho Cảnh 1."* trong khi hình ảnh video lại là cậu bé Leo nhặt chiếc la bàn.
+  2. Hàm `merge_flow_3d_scenes_into_final_movie` trước đây chỉ gọi `generate_scenes_tts_parallel` với **1 giọng nữ duy nhất (`vi-VN-HoaiMyNeural`)** đọc trơn toàn bộ chuỗi mô tả ngôi thứ ba (`narration`). Kể cả khi kịch bản có lời thoại nhân vật trong ngoặc kép (như Cảnh 3: `'Mang hạt giống về, cậu bé sẽ được an toàn.'`), cùng một giọng dẫn chuyện vẫn đọc phẳng lì, không có giọng riêng cho từng nhân vật và các cảnh khác thiếu hẳn lời tương tác của nhân vật.
+  3. Prompt `video_prompt` gửi sang Google Flow chưa gắn chỉ dẫn diễn xuất biểu cảm mặt 3D, mấp máy môi (`lip-sync speaking gestures`) và tương tác trực tiếp giữa các nhân vật khớp với lời thoại của cảnh đó.
+- **Cách khắc phục & Quy tắc phòng ngừa**:
+  1. **Thiết lập hệ thống Preset giọng đọc đa vai (`STORYTELLING_VOICE_PRESETS`) trong `config.py` & `tts_service.py`**:
+     - `story_warm` (Người dẫn chuyện): `vi-VN-HoaiMyNeural` (`rate="+5%"`, `pitch="-1Hz"` — ấm áp, truyền cảm).
+     - `char_boy_bright` (Nhân vật chính / Cậu bé Leo): `vi-VN-NamMinhNeural` (`rate="+11%"`, `pitch="+9Hz"` — trẻ trung, hào hứng, sáng rõ).
+     - `char_elder_deep` (Nhân vật phụ / Trưởng lão / Thần Hộ Mệnh): `vi-VN-NamMinhNeural` (`rate="-6%"`, `pitch="-9Hz"` — trầm ấm, uy nghiêm).
+     - `char_female_bright` (Nhân vật nữ trẻ / Tinh linh): `vi-VN-HoaiMyNeural` (`rate="+12%"`, `pitch="+10Hz"` — trong trẻo, cao sáng).
+  2. **Bộ bóc tách & nâng cấp hội thoại thông minh (`build_scene_dialogue_segments`)**:
+     - Yêu cầu MuseAI sinh trực tiếp mảng `dialogue_lines` kết hợp `narrator` + `character_1` + `character_2` ngay trong prompt.
+     - Nếu đọc kịch bản cũ trên MuseAI chỉ có `narration`: tự động tách các câu trong dấu ngoặc kép/đơn (`'...'`, `"..."`) thành lời thoại nhân vật đúng giọng vai, đồng thời tự động bổ sung câu tương tác tự nhiên của nhân vật bám sát từ khóa ngữ cảnh của cảnh đó (`la bàn`, `cánh cửa`, `hạt giống`, `ánh sáng`...) để **100% các phân cảnh đều có cả Người dẫn chuyện lẫn Nhân vật tương tác**.
+  3. **Tổng hợp âm thanh đa giọng (`synthesize_museai_scenes_interactive_tts`) & Đồng bộ Phụ đề + Hình ảnh 3D**:
+     - Dùng `generate_multivoice_tts` ghép từng lượt giọng dẫn chuyện và giọng nhân vật thành `scene_00X.mp3`, cập nhật `sc["narration"]` khớp 100% từng từ đã đọc để `build_exact_tts_timestamps` căn chuẩn phụ đề.
+     - Nhúng `3D Character Performance & Dialogue Sync` vào `clean_and_build_flow_3d_video_prompt` để Google Flow vẽ biểu cảm mặt, mấp máy môi và hành động tương tác giữa các nhân vật khớp 1:1 với lời lồng tiếng.
+
+## 0. Khắc Phục Lỗi Đọc Nhầm Kịch Bản 1/1 Cảnh (`'Tên câu chuyện 3D'`) Từ Prompt Của User & Chuẩn Hóa Đưa Tuần Tự Từng Cảnh (1..N) Sang Google Flow
+- **Triệu chứng & Bối cảnh phát sinh**:
+  - Người dùng thiết lập 4 phân cảnh (`target_scenes = 4`), trên tab MuseAI đã sinh kịch bản 4 cảnh `"Hạt Giống Ánh Sáng Cuối Cùng"`, nhưng log tiến độ của Studio lại báo:
+    `MuseAI đã viết xong kịch bản 'Tên câu chuyện 3D' (1 cảnh). Đang chuyển sang tab Google Flow để sinh video 3D từng cảnh...`
+    `[*] [Cảnh 1/1] Đang chờ Google Flow render video 3D...`
+- **Nguyên nhân gốc rễ (Root Causes)**:
+  1. **Tự đọc nhầm chính câu hỏi của user (Self-Prompt Poisoning)**:
+     - Hàm `build_museai_story_script_prompt` trước đây nhúng nguyên một khối ```` ```json { "story_title": "Tên câu chuyện 3D", ... "scenes": [{ "scene_num": 1, "narration": "Lời dẫn tiếng Việt tự nhiên, cuốn hút cho Cảnh 1." }] } ``` ```` vào nội dung tin nhắn gửi cho MuseAI.
+     - Biến `before_body_len` lại được đo **trước khi** bấm gửi tin nhắn. Ngay khi tin nhắn của user vừa gửi lên khung chat MuseAI, bong bóng chat màu xanh của user xuất hiện trên DOM (`document.body.innerText`). Trong 12 giây đầu khi MuseAI đang suy nghĩ (`Thinking...`), độ dài trang đứng yên 2 nhịp (`stable_ticks >= 2`), khiến nhánh fallback `parse_museai_story_json(new_text)` đọc luôn khối JSON mẫu 1 cảnh nằm trong chính bong bóng tin nhắn của user!
+  2. **Thu hoạch quá sớm khi MuseAI đang stream dở thẻ `<pre>` (Premature Stream Read)**:
+     - Code cũ dùng `document.querySelectorAll('pre, code')` (bị nhân đôi vì `<pre>` chứa `<code>`) và ngay khi mới thấy `"scenes"` ở Cảnh 1 chỉ đợi cứng `2.5s` rồi đọc luôn, chưa kiểm tra xem khối `<pre>` đã ngừng tăng độ dài và đã đủ `target_scenes` (4 cảnh) hay chưa.
+  3. **Bấm nhầm nút `"Tạo bộ sưu tập"` và chờ 15s ở `textarea` ẩn trên Google Flow**:
+     - Trên trang Google Flow, thẻ `textarea` duy nhất là `g-recaptcha-response` bị ẩn (`visible: false`), còn ô nhập thật là `div.ProseMirror[role='textbox']`. Lệnh `wait_for_selector("textarea", timeout=15000)` làm trễ 15s vô ích mỗi cảnh.
+     - Selector `button[aria-label*='tạo' i]` khớp nhầm vào nút `"Tạo bộ sưu tập"` ở thanh bên trái thay vì nút gửi `"Bắt đầu tạo"` (`button[aria-label='Bắt đầu tạo']`).
+     - URL video trên Google Flow có dạng `https://flow-content.google/video/<UUID>?Expires=...`; nếu không chuẩn hóa phần đường dẫn trước dấu `?` và không kiểm tra `seen_video_hashes` ở nhánh nút Download, Cảnh 2 có nguy cơ tải nhầm lại video của Cảnh 1.
+- **Cách khắc phục & Quy tắc phòng ngừa**:
+  1. **Loại bỏ hoàn toàn khối JSON mẫu giả trong Prompt & Chặn Placeholder**:
+     - Không nhúng khối code JSON 1 cảnh có sẵn dữ liệu mẫu vào prompt gửi đi.
+     - Thêm `_is_template_placeholder_story` trong `parse_museai_story_json` để từ chối mọi JSON mẫu (`"Tên câu chuyện 3D"`).
+  2. **Đo `baseline_body_len` SAU KHI gửi tin nhắn & Kiểm tra hoàn tất đủ $N$ cảnh (`is_museai_script_complete`)**:
+     - Chỉ quét thẻ `<pre>` của câu trả lời MuseAI, theo dõi số cảnh đang stream (`Đã viết X/4 phân cảnh...`), đợi đến khi độ dài `<pre>` ngừng tăng và `len(scenes) >= target_scenes` mới kết thúc Bước 1.
+     - Hỗ trợ `read_latest_script_from_museai_tab` để đọc ngay kịch bản 4 cảnh đang có sẵn trên tab MuseAI mà không bắt người dùng chờ viết lại.
+  3. **Đưa tuần tự từng cảnh (Cảnh 1/N ➔ Cảnh 2/N ➔ ... ➔ Cảnh N/N) vào Google Flow**:
+     - Bắt trực tiếp `div.ProseMirror[role='textbox']` và chỉ bấm đúng nút `button[aria-label='Bắt đầu tạo']` / `button[aria-label='Start generation']`.
+     - Chuẩn hóa URL bằng `normalize_flow_video_url` (bỏ `?Expires=`) và kiểm tra `seen_video_hashes` (SHA-256) trên mọi nhánh tải video để đảm bảo mỗi cảnh nhận đúng video 3D riêng biệt của cảnh đó.
+     - Hiển thị bảng trạng thái từng cảnh trực tiếp trên giao diện Streamlit (`app_museai.py`).
+
+
+## 0. Kiến Trúc Hybrid 3D: MuseAI (Viết Kịch Bản) + Google Flow (Sinh Video 3D) + TTS Compiler
+- **Bối cảnh & Điểm nghẽn cũ**:
+  1. *MuseAI video*: Khi yêu cầu MuseAI render trực tiếp video, có lúc máy ảo Python của MuseAI tự vẽ hình học 2D.
+  2. *Google Flow cũ*: File `src/flow_browser_service.py` trước đây bị khóa cứng lệnh ép 2D stickman (`STICKMAN_CANONICAL_GUIDANCE`), khiến Google Veo không thể vẽ hoạt hình 3D Pixar chân thực. Đồng thời quy trình cũ phụ thuộc Ollama Local.
+- **Giải pháp tối ưu của Luồng Hybrid Mới**:
+  1. **Tab 1 — MuseAI (`https://muse.ai/`)**: Đóng vai Đạo diễn kịch bản Pixar 3D, tự sáng tác cốt truyện có đầu có cuối (**Mở đầu Hook ➔ Diễn biến ➔ Cao trào ➔ Kết thúc**), khóa ngoại hình nhân vật 3D (`character_anchor`) và bối cảnh (`environment_anchor`).
+  2. **Tab 2 — Google Flow (`https://flow.google.com/`)**: Nhận kịch bản 3D từ MuseAI, xóa sạch toàn bộ lệnh cấm 3D cũ và ép chuẩn **`PIXAR_3D_CANONICAL_GUIDANCE`** (Unreal Engine 5 Lumen / DreamWorks / Pixar RenderMan), tự động sinh video clip 3D cho từng cảnh (`scene_001.mp4 ... scene_00N.mp4`).
+  3. **Bước 3 — Compiler**: Tự động lồng tiếng đọc truyện TTS tiếng Việt + phụ đề đáy + ghép toàn bộ các clip 3D của Google Flow thành 1 bộ phim hoàn chỉnh lưu vào `output/`.
+  4. Cả 2 tab chạy chung trên cùng một cửa sổ Chrome CDP cổng 9222 (`flow_chrome_profile`), không xung đột, không tốn VRAM GPU.
+
+
+## 0. Bản Vá Luồng MuseAI 3D (Khắc Phục Bắt Nhầm Tab & Kỹ Thuật 3D Character Sheet Anchor)
+- **Bối cảnh lỗi thực tế**:
+  1. *Lỗi bắt nhầm tab Chrome*: Khi Chrome mở đồng thời cả Web Studio (`localhost:8502`) hoặc YouTube Studio, nếu chưa mở sẵn tab `muse.ai`, code cũ dễ bắt nhầm tab không liên quan.
+  2. *MuseAI lười tạo video 3D thật*: Đôi khi nếu chuyển thẳng từ kịch bản sang video, MuseAI có xu hướng chạy máy ảo Python viết script Pillow/Canvas vẽ các hình học 2D.
+- **Giải pháp & Thiết kế chuẩn xác trong bản fix**:
+  1. *Lọc domain chính xác*: Chỉ nhận diện tab có chứa `muse.ai`, `miramuseai`. Nếu chưa có tab, bộ điều khiển **tự động gọi `context.new_page()`** và điều hướng thẳng tới `https://muse.ai/` trên cùng cửa sổ Chrome (`flow_chrome_profile`).
+  2. *Kỹ thuật 4 bước & Character Sheet Anchor*:
+     - **Bước 1**: Kêu MuseAI viết cốt truyện 3D có đầu có cuối dạng JSON.
+     - **Bước 2 (Chốt chặn mấu chốt)**: Kêu MuseAI sinh ảnh **Pixar 3D Reference Character Sheet** (nhiều góc mặt/trang phục) + **3D Storyboard** trước. Khi đã có ảnh tham chiếu 3D trong phiên chat, MuseAI bắt buộc phải gọi mô hình Image-to-Video 3D để tạo chuyển động, triệt tiêu hoàn toàn việc dùng code vẽ hình học 2D.
+     - **Bước 3**: Tạo video 3D từng cảnh (Scene 1 -> Scene $N$) bám theo Character Sheet.
+     - **Bước 4**: Ghép nối thành bộ phim hoàn chỉnh `final_3d_story_merged.mp4`.
+
+
+## 0. Luồng Hoạt Hình 3D Độc Lập 100% MuseAI Cloud Agent (Không Phụ Thuộc Local AI)
+- **Bối cảnh & Vấn đề**: 
+  - Trước đây luồng MuseAI dùng AI Local (Ollama) để biên soạn kịch bản trước khi gửi sang MuseAI. Điều này đòi hỏi máy phải chạy Ollama, tốn VRAM/RAM và có thể bị nghẽn nếu Ollama chưa tải model.
+  - Người dùng mong muốn luồng tối ưu hơn: giao 100% việc sáng tác cốt truyện, khóa nhân vật 3D, tạo clip từng cảnh và ghép phim cho chính MuseAI trên cloud.
+- **Giải pháp & Thiết kế**:
+  - **3 Bước khép kín trên Chrome CDP**:
+    1. Bước 1: Kêu MuseAI đóng vai Pixar/DreamWorks Animation Director tự viết cốt truyện (Hook -> Rising Action -> Climax -> Resolution), tự khóa `character_anchor` 3D và chia danh sách các phân cảnh.
+    2. Bước 2: Tự động trích xuất kịch bản từ câu trả lời của MuseAI (hỗ trợ cả JSON code block lẫn phân tích cú pháp phân cảnh dạng văn bản thường) và gửi prompt tạo video 3D tuần tự cho từng cảnh (Scene 1 -> Scene $N$).
+    3. Bước 3: Kêu chính MuseAI ghép nối (merge) toàn bộ các video phân cảnh thành 1 bộ phim hoàn chỉnh `final_3d_story_merged.mp4` và tải về máy.
+  - **Cô lập Chrome Profile (`museai_chrome_profile`)**: Chrome mở cổng CDP 9222 với thư mục profile riêng biệt, tránh hoàn toàn lỗi không mở được cổng debug khi người dùng đang mở các tab Chrome thông thường khác trên máy tính.
+
+
 ## 1. Tránh import thư viện nặng (Diffusers / PyTorch) ở Module Level
 - **Hiện tượng lỗi**: `AttributeError: '_DummyXPU' object has no attribute 'device_count'` và `ImportError: cannot import name 'CLIPImageProcessor' from 'transformers'`.
 - **Nguyên nhân gốc rễ**: 
@@ -446,3 +547,119 @@
   4. **Đồng bộ hàng đợi bền vững (`src/autonomous_factory.py`, `src/batch_producer.py`)**:
      - Cho phép `target_scenes: Optional[int] = None` xuyên suốt luồng sản xuất.
      - Kiểm chứng 100% bằng 6 unit tests mới (`tests/test_dynamic_story_scenes.py`) và toàn bộ regression test suite (16/16 tests passed).
+
+## 30. Triệt Tiêu Deadlock OS Pipe Buffer Khi Stream Raw Frames Vào FFmpeg Stdin
+- **Hiện tượng lỗi**: Tiến trình dựng hoạt hình HTML5/Vector (`html_frame_animator.py`) bị đứng vô hạn tại `proc.stdin.write(img.tobytes())`, CPU 0% và test suite bị treo.
+- **Nguyên nhân gốc rễ**: 
+  - `subprocess.Popen` được gọi với cả `stdout=subprocess.PIPE` và `stderr=subprocess.PIPE`.
+  - Trong quá trình encode video độ phân giải cao (1080x1920), FFmpeg liên tục in banner và thông số progress vào `stderr`.
+  - Khi bộ đệm pipe hệ điều hành (64KB trên Windows) bị đầy, FFmpeg bị block chờ tiến trình cha đọc `stderr`. Ngược lại, tiến trình Python cha lại đang block ở vòng lặp ghi `proc.stdin.write` chờ FFmpeg tiêu thụ frame, dẫn đến tình trạng Deadlock hai chiều (Two-way Pipe Deadlock).
+- **Quy tắc phòng ngừa**:
+  1. Luôn thêm `"-loglevel", "error"` vào danh sách tham số `ffmpeg` khi giao tiếp qua pipe để dập tắt banner không cần thiết.
+  2. Đặt `stdout=subprocess.DEVNULL` thay vì `PIPE` vì FFmpeg xuất trực tiếp ra file MP4.
+  3. Chỉ dùng `stderr=subprocess.PIPE` kèm `timeout` khi gọi `proc.communicate()` sau khi đã đóng hoàn toàn `proc.stdin`.
+
+## 31. Chống Lỗi Khóa File Windows (WinError 32) Khi Dọn Dẹp File Tạm MoviePy/FFmpeg
+- **Hiện tượng lỗi**: `PermissionError: [WinError 32] The process cannot access the file because it is being used by another process` khi `tearDown` gọi `temp_dir.cleanup()`.
+- **Nguyên nhân gốc rễ**: 
+  - Khi MoviePy áp dụng hiệu ứng (ví dụ `loop(clip)`), đối tượng clip gốc bị bọc lồng bên trong (`clip.clip`). Việc chỉ gọi `clip.close()` không tự động đóng `clip.clip.reader`, khiến file `.mp4` tạm vẫn bị Windows khóa handle.
+- **Quy tắc phòng ngừa**:
+  1. Trong `video_compiler.py`: Duyệt đóng đệ quy cả `c.close()`, `c.reader.close()`, `c.clip.close()` và `c.clip.reader.close()`.
+  2. Kích hoạt `import gc; gc.collect()` trước các bước xóa thư mục tạm.
+  3. Bọc an toàn hàm `tearDown` với khối `try-except` cho `temp_dir.cleanup()`.
+
+## 32. Cơ Chế Tự Phục Hồi TTS Ba Lớp (Triple-Tier Self-Healing Speech Synthesis)
+- **Hiện tượng lỗi**: Dịch vụ Microsoft Edge TTS thỉnh thoảng trả về `403 Invalid response status` hoặc rớt kết nối WebSocket, làm toàn bộ pipeline sản xuất video bị hủy bỏ.
+- **Nguyên nhân gốc rễ**: Edge-TTS phụ thuộc vào kết nối trực tuyến và token động `Sec-MS-GEC`. Khi gặp sự cố mạng hoặc rate-limit, hàm sinh giọng đọc cũ chỉ ném ngoại lệ và thoát.
+- **Quy tắc phòng ngừa**:
+  1. **Lớp 1 (Primary)**: Thử Microsoft Edge-TTS qua `edge_tts.Communicate` với các giọng dự phòng (HoaiMy, NamMinh).
+  2. **Lớp 2 (Cloud Fallback)**: Tự động chuyển tiếp sang Google Translate TTS (`translate_tts?client=tw-ob`) để lấy giọng đọc tiếng Việt thực tế mà không cần token.
+  3. **Lớp 3 (Offline Emergency Synthesizer)**: Bộ tổng hợp formant âm sắc FFmpeg (`_synthesize_offline_speech_audio_ffmpeg`) tích hợp formant F0/F1/F2 và đường nét 6 thanh điệu tiếng Việt, đảm bảo hệ thống luôn có audio hợp lệ để xuất video thành phẩm ngay cả khi ngắt toàn bộ internet.
+
+## 33. Lỗi Import `STAGE_LABELS_VI` và Chuẩn Hóa Script Chạy Hệ Thống (.bat)
+- **Hiện tượng lỗi**:
+  1. Khi chạy `run.bat` hoặc mở Web UI Streamlit, tiến trình văng lỗi `ImportError: cannot import name 'STAGE_LABELS_VI' from 'src.autonomous_factory'`.
+  2. Bấm chọn phím `1` (Khởi chạy Web UI) trong menu `video_studio/run.bat` bị báo thiếu file `run_web.bat`.
+  3. Menu `view_booster/run.bat` báo lỗi `'Shorts' is not recognized as an internal or external command`.
+  4. Các file `.bat` tải về mang định dạng Unix LF khiến cmd.exe bị lỗi hoặc thoát bất thường khi người dùng double-click.
+- **Nguyên nhân gốc rễ**:
+  - Giao diện UI mới `app_batch.py` đã gọi từ điển nhãn trạng thái `STAGE_LABELS_VI` nhưng module `src/autonomous_factory.py` trong zip chưa khai báo biến này.
+  - Tệp `run_web.bat` chưa được cấu hình lại sau khi đồng bộ mã nguồn v2.
+  - Lệnh `title YouTube View & Shorts Booster Launcher` dùng ký tự `&` không có escape `^&`, khiến cmd hiểu lầm `Shorts` là một lệnh riêng.
+  - Các tệp batch khi giải nén từ zip bị lưu dạng xuống dòng Unix `\n` thay vì Windows `\r\n` (CRLF).
+- **Quy tắc phòng ngừa**:
+  1. Đảm bảo toàn bộ export từ điển (`STAGE_LABELS_VI`) luôn đồng bộ giữa các tầng UI và Core Engine.
+  2. Escape mọi ký tự đặc biệt (`^&`) trong tiêu đề batch và đảm bảo 100% tệp `.bat` dùng chuẩn xuống dòng Windows CRLF (`\r\n`).
+  3. Cung cấp file launcher độc lập `video_studio/run_web.bat` và `view_booster/scripts/run_view_booster_ui.bat` với cơ chế tự động dò tìm `python.exe` và `chrome.exe`.
+
+
+## 27. Khắc Phục Lỗi Kẹt Ở Màn Hình Chỉnh Sửa Clip (`/edit/<clip_id>`) Và Card Lỗi Cũ Trên Google Flow (Cảnh 2/N Báo "Không Thành Công")
+- **Hiện tượng lỗi**:
+  - Cảnh 1/N sinh và tải về thành công, nhưng ngay khi sang Cảnh 2/N (`[Khung 2/15 - Opening Hook - Nhịp 2/3]`), Google Flow lập tức báo lỗi ở cả 2 lần thử:
+    `Google Flow báo lỗi sinh nội dung: 'Không thành công / Rất tiếc, không tạo được video này'.`
+- **Nguyên nhân gốc rễ**:
+  1. *Kẹt trong chế độ chỉnh sửa clip (`/project/<uuid>/edit/<clip_id>`)*: Ở cuối Cảnh 1, khi hệ thống click vào thumbnail video mới (`[aria-label*='Mở video' i]`, `img[alt*='Hình thu nhỏ của video']`) để kích hoạt stream tải về, Google Flow tự động điều hướng URL từ trang dự án chính (`/project/<uuid>`) sang trang chỉnh sửa clip (`/project/<uuid>/edit/<clip_id>`). Tại trang `/edit/`, ô nhập dưới đáy màn hình bị đổi thành **`"Mô tả cách chỉnh sửa video này…"` (model `Omni 1.1 Flash`)** chứ không còn là **`"Bạn muốn tạo gì?"` (model `Veo`)**. Hàm `_remember_flow_project_url` trước đó chỉ cắt `/tool/` mà không cắt `/edit/`, khiến URL `/edit/` bị lưu đè vào `flow_config.json`! Khi Cảnh 2 nạp prompt tạo cảnh 3D mới vào ô `"Mô tả cách chỉnh sửa video này…"`, Google Flow lập tức báo `"Không thành công / Rất tiếc, không tạo được video này"`.
+  2. *Card lỗi `"Không thành công"` của lần thử 1 vẫn còn nằm trên DOM*: Khi lần thử 1 thất bại, thẻ `div:has-text('Không thành công')` vẫn hiển thị trên lưới dự án. Sang lần thử 2 (`thử lại 2/2`), đúng ở giây thứ 16 (`elapsed > 15.0`), bộ kiểm tra lỗi nhìn thấy thẻ `"Không thành công"` cũ của lần 1 và ngắt luôn lần thử 2!
+  3. *Bộ lọc an toàn của Veo với từ khóa tuổi trẻ em*: Các cụm từ như `"9-year-old boy"` đi kèm biểu cảm căng thẳng đôi khi bị bộ lọc của Veo từ chối ở lần thử 1.
+- **Quy tắc phòng ngừa & Giải pháp đã triển khai**:
+  1. **Cắt triệt để `/edit/` và `/tool/` khỏi `project_url`**: Trong `load_hybrid_config()`, `_remember_flow_project_url()` ([`museai_3d_service.py`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py)) và `_remember_project_url()` ([`flow_browser_service.py`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/flow_browser_service.py)), luôn chuẩn hóa `url.split("/tool/", 1)[0].split("/edit/", 1)[0].split("?", 1)[0].rstrip("/")`.
+  2. **Tự động thoát chế độ `/edit/` (`_exit_flow_edit_mode_if_needed`)**: Trước khi nhập prompt Cảnh mới VÀ ngay sau khi tải xong video của Cảnh trước, nếu URL chứa `/edit/` hoặc `/tool/`, tự động bấm nút `"Đã chỉnh sửa xong cảnh"` / `"Quay lại"` hoặc điều hướng về `project_url` chính; đồng thời `_find_google_flow_composer` trả về `None` nếu trang đang ở `/edit/`.
+  3. **Đếm số card lỗi trước khi gửi (`pre_existing_failed_count`)**: Dọn dẹp card lỗi cũ trước khi submit và chỉ báo lỗi khi số card `"Không thành công"` tăng thêm (`cur_failed_count > pre_existing_failed_count`).
+  4. **Làm sạch prompt tự động khi Retry (`sanitize_prompt_for_flow_retry`)**: Từ lần thử 2 trở đi (`attempt_num >= 2`), tự động chuyển đổi các cụm từ tuổi trẻ em nhạy cảm (`"9-year-old boy"`, `"child"`) thành `"stylized Pixar 3D animated young explorer character"` để vượt bộ lọc Veo 100%.
+
+
+## 28. Tự Động Tạo Dự Án Mới (`Dự Án Mới` / `New Project`) & Chuyển Sang Direct Video Composer (`Video · 720p · 8 giây · 9:16 · x1`) Trên Google Flow
+- **Vấn đề thực tế**:
+  1. Nếu dùng chung 1 project Google Flow qua nhiều video, trang dự án bị tích tụ rất nhiều lịch sử trò chuyện trong bảng **Tác nhân (`Agent`)**, nhiều thẻ `<video>` cũ và các thẻ báo lỗi cũ.
+  2. Khi vừa bấm **`Dự án mới` (`New project`)** trên Google Flow:
+     - Mặc định bảng chat **Tác nhân (`Phiên không có tiêu đề`)** ở bên phải sẽ mở ra (nơi mọi câu lệnh bị cộng dồn vào ngữ cảnh hội thoại).
+     - Và khi đóng bảng Tác nhân, thanh công cụ tạo trực tiếp ở giữa màn hình lại mặc định ở chế độ **`🍌 Nano Banana 2.1 · 16:9 · x1` (`Hình ảnh` / Image)** chứ chưa phải **`Video` (`9:16`)**!
+- **Giải pháp kỹ thuật đã triển khai**:
+  1. **Tự động tạo Dự án mới mỗi lần sản xuất video (`start_fresh_google_flow_project`)**:
+     - Trước khi bắt đầu sinh chuỗi cảnh cho một video/tập phim mới, hệ thống tự động về `https://flow.google.com/` và bấm **`Dự án mới` (`New project`)** để tạo một không gian làm việc hoàn toàn trống, sạch 100% ngữ cảnh cũ.
+  2. **Đóng bảng Tác nhân & Chuyển sang Direct Video Composer (`_ensure_direct_video_composer_mode`)**:
+     - Tự động bấm **`Bắt đầu phiên mới`** (`button[aria-label='Bắt đầu phiên mới']`) và bấm **`Đóng`** (`button[aria-label='Đóng']`) bảng chat Tác nhân bên phải để chuyển sang ô nhập trực tiếp **`"Bạn muốn tạo những gì?"`** (không lưu lịch sử hội thoại, mỗi cảnh là một lệnh tạo độc lập 100%).
+     - Tự động bấm nút **`Điều kiện kích hoạt cài đặt`** (`button[aria-label='Điều kiện kích hoạt cài đặt']`) và chọn đúng:
+       - Chế độ: **`videocam Video`**
+       - Tỷ lệ khung hình: **`9:16`** (cho Shorts/TikTok/Reels dọc) hoặc **`16:9`** (cho YouTube ngang)
+       - Số lượng: **`x1`** (`Video · 720p · 8 giây · 9:16 · x1`).
+
+
+## 29. Ngăn Chặn Tái Sử Dụng Nhầm Kịch Bản Cũ Trên Tab MuseAI Khi Người Dùng Nhập Cốt Truyện Mới
+- **Hiện tượng lỗi**:
+  - Người dùng nhập cốt truyện mới vào ô `topic` và bấm `"🎬 BẮT ĐẦU SẢN XUẤT PHIM 3D"`, nhưng hệ thống lại đọc ngay kịch bản cũ (`"Hạt Giống Ánh Sáng Cuối Cùng"`) đang hiển thị sẵn trên tab MuseAI từ phiên trước mà không gửi cốt truyện mới lên MuseAI.
+- **Nguyên nhân gốc rễ**:
+  1. Checkbox `reuse_existing_script` (`"⚡ Đọc ngay kịch bản 3D đang có sẵn trên tab MuseAI"`) trong `app_museai.py` bị đặt mặc định `value=True`.
+  2. Hàm `generate_3d_script_via_museai` khi thấy `reuse_existing_if_ready=True` đã đọc thẳng khối `<pre>` cũ trên tab MuseAI mà không kiểm tra xem kịch bản đó có khớp với `topic` người dùng vừa nhập hay không, cũng không bấm `New side chat` trên MuseAI để làm sạch khung chat cũ.
+- **Quy tắc phòng ngừa & Giải pháp**:
+  1. Đặt mặc định `reuse_existing_script = False` và làm trống giá trị mặc định của ô nhập `topic` trong [`video_studio/src/app_museai.py`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/app_museai.py).
+  2. Bổ sung hàm [`does_script_match_user_topic`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py#L765-L801): kể cả khi bật `reuse_existing_if_ready=True`, nếu kịch bản trên tab MuseAI không khớp với từ khóa trong `topic` của người dùng thì tuyệt đối bỏ qua kịch bản cũ.
+  3. Trước khi gửi cốt truyện mới lên MuseAI, tự động bấm `button[aria-label='New side chat']` trên tab `https://muse.ai/` để mở khung chat mới hoàn toàn trống (`Pre count: 0`).
+
+
+## 30. Cơ Chế Hover Card Mới Nhất (`index 0`) Trên Lưới Google Flow Để Nạp Thẻ `<video>` Ngay Lập Tức Cho Cảnh 2..N
+- **Hiện tượng lỗi**:
+  - Cảnh 1/6 tải về cực nhanh (~20–30 giây), nhưng sang Cảnh 2/6 thì Google Flow đã tạo xong video trên màn hình từ giây thứ 30 mà hệ thống cứ đếm chờ đến 600s rồi báo timeout (`Hết thời gian chờ (600s) video Cảnh 2 từ Google Flow`).
+- **Nguyên nhân gốc rễ**:
+  1. Trên lưới dự án Google Flow (`Tất cả nội dung nghe nhìn`), mọi video mới tạo xong được chèn vào **vị trí đầu tiên bên trái (`index 0`)** dưới dạng thẻ ảnh thu nhỏ `<img alt="Hình thu nhỏ của video đã tạo">`, trong khi video Cảnh 1 bị đẩy lùi về cuối danh sách (`index -1`).
+  2. Google Flow **chỉ gắn thẻ `<video src="https://flow-content.google/video/...">` khi con trỏ chuột di (hover) lên thẻ `<img alt="Hình thu nhỏ của video đã tạo">` đó**.
+  3. Đoạn code cũ đưa `visible_triggers[-1]` (tức là Cảnh 1 cũ ở cuối danh sách!) lên đầu mảng kiểm tra kèm lệnh `break` ngay vòng lặp đầu tiên, khiến hệ thống chỉ hover vào Cảnh 1 mà **không bao giờ hover vào `thumbs[0]` (Cảnh 2 mới nhất ở đầu danh sách)**!
+- **Quy tắc phòng ngừa & Giải pháp (`_hover_newest_flow_video_thumbnails`)**:
+  1. Trước khi gửi prompt Cảnh mới, lưu toàn bộ URL ảnh thumbnail hiện có vào `pre_existing_thumb_urls`.
+  2. Trong vòng lặp chờ (`elapsed > 14.0`), tìm các thẻ `img[alt*='Hình thu nhỏ của video']` hiển thị trên trang, **luôn ưu tiên hover từ `index 0` (mới nhất) và các thumbnail chưa có trong `pre_existing_thumb_urls`**.
+  3. **Chỉ gọi `.hover()` và TUYỆT ĐỐI không gọi `.click()`** lên thumbnail để Google Flow nạp stream `<video>` ngay tại lưới dự án trong 1 giây mà không bị nhảy sang trang chỉnh sửa `/edit/`.
+
+
+## 35. Nâng Cấp Chất Lượng Kịch Bản & Kịch Bản Nói (Chống Câu Cụtlủn Ngô Nghê, Chống Nhân Vật Tự Đọc Lời Dẫn Ngôi Thứ 3 & Xóa Ký Ức Cũ MuseAI)
+
+- **Triệu chứng**:
+  - Khi người dùng nhập chủ đề `"cách mà ngôn ngữ ra đời"`, kịch bản MuseAI sinh ra câu chuyện `"Lumi và Tiếng Nói Đầu Tiên"` có lời dẫn cụt lủn 7–8 chữ và câu thoại phi logic / ngô nghê:
+    - Cảnh 1: Đang ở thời con người chưa biết nói mà nhân vật Lumi lại mở miệng nói tiếng Việt sõi: *"Không có tiếng nói, làm sao mình hiểu nhau đây, Uga ơi?"*.
+    - Cảnh 2: Nhân vật Uga (`character_2`) lại tự đọc lời dẫn sân khấu ngôi thứ 3 bằng giọng nhân vật: *"Uga chỉ tay, hét lên một tiếng báo nguy cho Lumi!"*.
+- **Nguyên nhân gốc rễ**:
+  1. Tab MuseAI đang đứng ở URL `/thread/...` cũ và tự động tìm kiếm bộ nhớ cũ (`Searched memory for Lumi Uga storyboard`).
+  2. Prompt cũ trong `build_museai_story_script_prompt` ép cứng mỗi cảnh chỉ được viết 8–12 từ dẫn chuyện + 8–12 từ thoại nhân vật và ép dùng bộ từ nối máy móc (`"Ngày xưa..."`, `"Thế nhưng..."`, `"Chính vì vậy..."`), khiến LLM viết câu cụt lủn và nhét cả lời mô tả hành động ngôi thứ 3 vào miệng nhân vật.
+- **Cách khắc phục & Phòng ngừa**:
+  1. Bổ sung chỉ thị `CRITICAL MEMORY RESET` và `STRICT DIALOGUE LOGIC` trong [`build_museai_story_script_prompt`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py#L232-L380): cấm lục lại bộ nhớ cũ (`Lumi`/`Uga`), cấm nhân vật đọc mô tả hành động ngôi thứ 3, cấm thoại phi logic và nâng chuẩn văn phong kể chuyện điện ảnh/tri thức sâu sắc.
+  2. Tự động thoát khỏi `/thread/...` cũ về trang chủ `https://muse.ai/` trước khi bấm `New side chat` trong [`generate_3d_script_via_museai`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py#L1334-L1352).
+  3. Triển khai bộ lọc [`is_third_person_stage_direction`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py#L516-L561) trong [`build_scene_dialogue_segments`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py#L564-L660): tự động phát hiện mọi câu mô tả hành động ngôi thứ 3 bị gán nhầm vào `character_1`/`character_2` và chuyển về đúng giọng `narrator` (`Người dẫn chuyện`).

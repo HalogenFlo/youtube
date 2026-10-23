@@ -28,9 +28,15 @@ Thumbs.db
 
 # Chrome automation profile & debug artifacts
 flow_chrome_profile/
+video_studio/flow_chrome_profile/
 scratch/
 flow_screen.png
 flow_after_click.png
 debug_*.png
+*.mp4
+*.mp3
+*TEMP_MPY*
+video_studio/temp/
+video_studio/output/
 .agents/
 

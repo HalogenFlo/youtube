@@ -57,12 +57,61 @@ DUBBING_BG_VOLUME_LOW = 0.12
 # --- CẤU HÌNH CÁC MODEL AI ---
 # Ollama Configuration
 OLLAMA_API_URL = "http://localhost:11434/api/generate"
-OLLAMA_MODEL_DEFAULT = "qwen2.5:14b"
+OLLAMA_MODEL_DEFAULT = os.getenv("OLLAMA_MODEL", "qwen2.5:14b")
 
 # TTS Configuration (edge-tts)
 TTS_VOICES_VI = {
+    "🌟 Nữ miền Nam — Hoài My (Kể chuyện truyền cảm, ấm áp)": "vi-VN-HoaiMyNeural|story_warm",
+    "🔥 Nam miền Bắc — Nam Minh (Thuyết minh cuốn hút, nhịp nhanh Shorts)": "vi-VN-NamMinhNeural|narrator_dynamic",
+    "🔬 Nữ miền Nam — Hoài My (Giải thích khoa học, rõ chữ, năng lượng cao)": "vi-VN-HoaiMyNeural|science_bright",
+    "🌙 Nam miền Bắc — Nam Minh (Kể chuyện đêm khuya / Bí ẩn trầm sâu)": "vi-VN-NamMinhNeural|mystery_deep",
     "Nữ (vi-VN-HoaiMyNeural)": "vi-VN-HoaiMyNeural",
-    "Nam (vi-VN-NamMinhNeural)": "vi-VN-NamMinhNeural"
+    "Nam (vi-VN-NamMinhNeural)": "vi-VN-NamMinhNeural",
+}
+
+STORYTELLING_VOICE_PRESETS = {
+    "story_warm": {
+        "base_voice": "vi-VN-HoaiMyNeural",
+        "rate": "+5%",
+        "pitch": "-1Hz",
+        "eq_filter": "highpass=f=80,equalizer=f=190:width_type=o:width=1.2:g=2.6,equalizer=f=3300:width_type=o:width=1.4:g=2.0,acompressor=threshold=-18dB:ratio=2.4:attack=15:release=180:makeup=1.8",
+    },
+    "narrator_dynamic": {
+        "base_voice": "vi-VN-NamMinhNeural",
+        "rate": "+8%",
+        "pitch": "-2Hz",
+        "eq_filter": "highpass=f=75,equalizer=f=165:width_type=o:width=1.1:g=3.0,equalizer=f=3200:width_type=o:width=1.4:g=2.4,acompressor=threshold=-18dB:ratio=2.6:attack=12:release=160:makeup=2.0",
+    },
+    "science_bright": {
+        "base_voice": "vi-VN-HoaiMyNeural",
+        "rate": "+9%",
+        "pitch": "+0Hz",
+        "eq_filter": "highpass=f=85,equalizer=f=200:width_type=o:width=1.2:g=1.8,equalizer=f=3600:width_type=o:width=1.5:g=2.5,acompressor=threshold=-18dB:ratio=2.4:attack=12:release=150:makeup=1.8",
+    },
+    "mystery_deep": {
+        "base_voice": "vi-VN-NamMinhNeural",
+        "rate": "-2%",
+        "pitch": "-4Hz",
+        "eq_filter": "highpass=f=70,equalizer=f=150:width_type=o:width=1.2:g=3.5,equalizer=f=2900:width_type=o:width=1.3:g=1.6,acompressor=threshold=-19dB:ratio=2.5:attack=18:release=210:makeup=2.0",
+    },
+    "char_boy_bright": {
+        "base_voice": "vi-VN-NamMinhNeural",
+        "rate": "+11%",
+        "pitch": "+9Hz",
+        "eq_filter": "highpass=f=95,equalizer=f=240:width_type=o:width=1.2:g=1.5,equalizer=f=3600:width_type=o:width=1.4:g=2.8,acompressor=threshold=-18dB:ratio=2.5:attack=10:release=140:makeup=2.0",
+    },
+    "char_elder_deep": {
+        "base_voice": "vi-VN-NamMinhNeural",
+        "rate": "-6%",
+        "pitch": "-9Hz",
+        "eq_filter": "highpass=f=65,equalizer=f=135:width_type=o:width=1.2:g=4.0,equalizer=f=2800:width_type=o:width=1.3:g=1.8,acompressor=threshold=-19dB:ratio=2.6:attack=18:release=220:makeup=2.2",
+    },
+    "char_female_bright": {
+        "base_voice": "vi-VN-HoaiMyNeural",
+        "rate": "+12%",
+        "pitch": "+10Hz",
+        "eq_filter": "highpass=f=100,equalizer=f=260:width_type=o:width=1.2:g=1.4,equalizer=f=3800:width_type=o:width=1.4:g=2.6,acompressor=threshold=-18dB:ratio=2.4:attack=10:release=140:makeup=1.9",
+    },
 }
 TTS_VOICES_EN = {
     "Nữ Mỹ (en-US-EmmaNeural)": "en-US-EmmaNeural",

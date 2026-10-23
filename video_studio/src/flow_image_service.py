@@ -62,6 +62,7 @@ def generate_flow_media(
             timeout_sec=timeout_sec,
             status_callback=status_callback,
             is_cancelled_callback=is_cancelled_callback,
+            style_preset=style_preset,
         )
     else:
         success, result_path = controller.generate_scene_image(

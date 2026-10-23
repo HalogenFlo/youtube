@@ -1,30 +1,42 @@
-"""Giao diện điều hành xưởng sản xuất video kiến thức tự động."""
+"""Giao diện điều hành xưởng sản xuất video kiến thức tự động (Luồng gốc tối giản + Đa luồng & Hoạt hình HTML5)."""
 
 import html
 import hashlib
+import json
 import os
 import time
 from pathlib import Path
+from typing import Any, Dict
 
 import pandas as pd
 import streamlit as st
 
 from src.autonomous_factory import (
+    ACTIVE_PROCESSING_STATES,
+    STAGE_LABELS_VI,
     add_factory_jobs,
+    approve_job_for_publishing,
     cancel_job,
     clear_failed_jobs,
     clear_finished_jobs,
+    clear_missing_video_jobs,
+    delete_job,
     ensure_factory_worker,
-    restart_factory_worker,
     get_factory_state,
+    publish_approved_job,
+    rerun_job_stage_or_scene,
+    rerun_missing_video_jobs,
+    resolve_job_video_and_metadata_paths,
+    restart_factory_worker,
     retry_failed_jobs,
     set_factory_paused,
     skip_current_job,
+    update_job_metadata_or_script,
 )
-from src.config import ASSETS_DIR, DEFAULT_IMAGE_STYLE, TTS_VOICES_EN, TTS_VOICES_VI, TTS_VOICES_ZH
-from src.flow_browser_service import get_flow_readiness, get_flow_controller
-from src.voice_clone_service import XTTS_LANGUAGES, voice_clone_available
 from src.batch_producer import build_random_video_topics
+from src.config import ASSETS_DIR, DEFAULT_IMAGE_STYLE, TTS_VOICES_EN, TTS_VOICES_VI, TTS_VOICES_ZH
+from src.flow_browser_service import get_flow_controller, get_flow_readiness
+from src.voice_clone_service import XTTS_LANGUAGES, voice_clone_available
 
 
 def check_chrome_flow_status() -> bool:
@@ -60,7 +72,7 @@ def _inject_factory_css() -> None:
         .job-card { background:#0d1923; border:1px solid #203443; border-radius:16px; padding:15px 17px; margin:8px 0; }
         .job-title { color:#edf7fb; font-weight:700; font-size:.92rem; margin-bottom:5px; }
         .job-meta { color:#8197a7; font-size:.76rem; }
-        .meta-box { background:#0a141d; border-left:3px solid #49ddb2; padding:12px 14px; border-radius:8px; color:#b9cad5; }
+        .meta-box { background:#0a141d; border-left:3px solid #49ddb2; padding:14px 16px; border-radius:10px; color:#d0e0ea; margin:10px 0; line-height:1.65; }
         .stButton > button, .stDownloadButton > button { border-radius:11px; font-weight:700; }
         div[data-testid="stProgress"] > div > div { background-color:#46ddb1; }
         </style>
@@ -70,21 +82,35 @@ def _inject_factory_css() -> None:
 
 
 def _status_counts(jobs):
-    return {status: sum(job.get("status") == status for job in jobs) for status in ("queued", "running", "completed", "failed")}
+    queued = sum(1 for j in jobs if j.get("status") == "queued")
+    running = sum(1 for j in jobs if j.get("status") in ACTIVE_PROCESSING_STATES)
+    completed = sum(1 for j in jobs if j.get("status") in ("completed", "ready_for_review", "approved", "published", "needs_review"))
+    failed = sum(1 for j in jobs if j.get("status") in ("failed", "cancelled"))
+    return {"queued": queued, "running": running, "completed": completed, "failed": failed}
 
 
-def _render_job(job):
-    labels = {"queued": "Chờ sản xuất", "running": "Đang sản xuất", "completed": "Hoàn tất", "failed": "Cần xử lý"}
-    turbo_badge = " · <span style='color:#49ddb2;font-weight:bold;'>⚡ Turbo</span>" if job.get("settings", {}).get("turbo_mode") else ""
+def _render_job(job: Dict[str, Any]) -> None:
+    labels = {
+        "queued": "Chờ sản xuất",
+        "running": "Đang sản xuất",
+        "completed": "Hoàn tất",
+        "failed": "Cần xử lý",
+        "cancelled": "Đã hủy",
+    }
+    status = str(job.get("status") or "queued")
+    stage = str(job.get("current_stage") or job.get("lifecycle_state") or status)
+    stage_vi = STAGE_LABELS_VI.get(stage, labels.get(status, status))
+    turbo_badge = " · <span style='color:#49ddb2;font-weight:bold;'>⚡ Đa luồng Turbo</span>" if job.get("settings", {}).get("turbo_mode") else ""
+    engine_name = job.get("settings", {}).get("image_engine", "flow")
+    engine_badge = " · <span style='color:#38bdf8;font-weight:bold;'>🎨 HTML5 Animation</span>" if engine_name in ("html_frames", "cartoon_2d") else ""
     st.markdown(
-        f"<div class='job-card'><div class='job-title'>#{job.get('video_index')} · {html.escape(job.get('topic',''))}{turbo_badge}</div>"
-        f"<div class='job-meta'>{labels.get(job.get('status'), job.get('status'))} · {html.escape(job.get('message',''))}</div></div>",
+        f"<div class='job-card'><div class='job-title'>#{job.get('video_index')} · {html.escape(str(job.get('topic','')))}{turbo_badge}{engine_badge}</div>"
+        f"<div class='job-meta'>{html.escape(stage_vi)} · {html.escape(str(job.get('message','')))}</div></div>",
         unsafe_allow_html=True,
     )
     st.progress(int(job.get("progress", 0)))
-    status = job.get("status")
     job_id = job.get("id")
-    if status == "running":
+    if status in ACTIVE_PROCESSING_STATES:
         if st.button("⏭️ Bỏ qua video này", key=f"skip_btn_{job_id}", help="Ngắt tiến trình video này và chuyển sang việc tiếp theo ngay lập tức"):
             skip_current_job(job_id)
             st.rerun()
@@ -94,98 +120,174 @@ def _render_job(job):
             st.rerun()
 
 
-def _render_completed_card(job, index):
+def _render_completed_card(job: Dict[str, Any], index: int) -> None:
+    """
+    Hiển thị thẻ thành phẩm đúng như luồng gốc của người dùng:
+    - Xem ngay Video MP4
+    - Hiển thị trực tiếp Tiêu đề (Title), Mô tả (Description), TikTok Caption và Hashtag ngay bên dưới video
+    - Có hộp sao chép nhanh 1-click và nút Tải video MP4 / Metadata JSON
+    """
+    job_id = str(job.get("id", f"idx_{index}"))
     raw_metadata = job.get("metadata")
     metadata = raw_metadata if isinstance(raw_metadata, dict) else {}
     raw_publishing = metadata.get("publishing")
     publishing = raw_publishing if isinstance(raw_publishing, dict) else {}
-    output_path = job.get("output_path", "")
-    title = publishing.get("title") or job.get("topic", "Video kiến thức")
-    raw_hashtags = publishing.get("hashtags", [])
-    hashtags = " ".join(raw_hashtags) if isinstance(raw_hashtags, list) else str(raw_hashtags)
+    pkg = metadata.get("publishing_package") if isinstance(metadata.get("publishing_package"), dict) else {}
+    qa_report = metadata.get("qa_report") if isinstance(metadata.get("qa_report"), dict) else {}
+
+    output_path, metadata_path = resolve_job_video_and_metadata_paths(job)
+    if not output_path:
+        output_path = job.get("output_path") or metadata.get("final_path") or ""
+    if not metadata_path:
+        metadata_path = metadata.get("metadata_path") or ""
+
+    yt_spec = pkg.get("youtube") if isinstance(pkg.get("youtube"), dict) else {}
+    tt_spec = pkg.get("tiktok") if isinstance(pkg.get("tiktok"), dict) else {}
     raw_platforms = publishing.get("platforms")
     platforms = raw_platforms if isinstance(raw_platforms, dict) else {}
-    raw_yt = platforms.get("youtube")
-    youtube_meta = raw_yt if isinstance(raw_yt, dict) else {}
-    raw_tt = platforms.get("tiktok")
-    tiktok_meta = raw_tt if isinstance(raw_tt, dict) else {}
-    youtube_title = youtube_meta.get("title", title)
-    youtube_description = youtube_meta.get("description", publishing.get("description", ""))
-    tiktok_caption = tiktok_meta.get("caption", publishing.get("tiktok_caption", youtube_description))
-    raw_editorial = metadata.get("editorial_report")
-    editorial = raw_editorial if isinstance(raw_editorial, dict) else {}
-    st.markdown(f"#### {index}. {title}")
-    if output_path and os.path.exists(output_path):
-        st.video(output_path)
-    st.markdown(
-        f"<div class='meta-box'><b>YouTube title:</b> {html.escape(youtube_title)}<br>"
-        f"<b>YouTube description:</b> {html.escape(youtube_description)}<br>"
-        f"<b>TikTok caption:</b> {html.escape(tiktok_caption)}<br>"
-        f"<b>Hashtag:</b> {html.escape(hashtags)}<br>"
-        f"<b>Nhãn AI:</b> Bật “Altered content” trên YouTube và “AI-generated content” trên TikTok.</div>",
-        unsafe_allow_html=True,
-    )
-    if publishing.get("manual_review_required"):
-        risk_text = ", ".join(publishing.get("risk_flags", []))
-        st.warning(f"Metadata cần kiểm tra thủ công trước khi đăng. Nhóm rủi ro: {risk_text}")
-    if editorial:
-        score = editorial.get("overall_score")
-        skill_names = [item.get("name", item.get("id", "")) for item in editorial.get("selected_skills", [])]
-        if score is not None:
-            st.caption(f"Studio QA: {score}/100 · Kỹ năng: {', '.join(filter(None, skill_names))}")
-    # Hiển thị trực quan 5 khâu hạ nguồn theo sơ đồ Research & Story Architect (mermaid-diagram.svg)
-    downstream = metadata.get("downstream_contracts")
-    if isinstance(downstream, dict) and downstream:
-        with st.expander("📜 Chi tiết Hợp Đồng 5 Khâu Hạ Nguồn (Story Contracts Pipeline)"):
-            c_aud = downstream.get("audio_summary", {})
-            c_img = downstream.get("image_summary", {})
-            c_rnd = downstream.get("render_summary", {})
-            c_snd = downstream.get("sound_summary", {})
-            c_leg = downstream.get("legal_summary", {})
-            
-            k1, k2 = st.columns(2)
-            with k1:
-                st.markdown(
-                    f"**🎙️ 1. Khâu Âm thanh (TTS Engine)**<br>"
-                    f"- Tổng âm tiết: `{c_aud.get('total_syllables', 0)}` (Tốc độ ước tính: ~{c_aud.get('estimated_wpm', 150)} WPM)<br>"
-                    f"- Điều hướng ngắt nghỉ: Sẵn sàng handoff",
-                    unsafe_allow_html=True
-                )
-                st.markdown(
-                    f"**🎨 2. Khâu Hình ảnh (Flow CDP)**<br>"
-                    f"- Khung hình 2D: `{c_img.get('background_plates_count', 0)} bối cảnh độc lập`<br>"
-                    f"- Chuẩn phong cách: `{c_img.get('style_standard', '2D Flat Cartoon (No 3D)')}`",
-                    unsafe_allow_html=True
-                )
-                st.markdown(
-                    f"**🎬 3. Khâu Dựng & Chuyển động (Compiler)**<br>"
-                    f"- Động cơ: `{c_rnd.get('engine', 'Visual Beats & Progressive Layering')}`<br>"
-                    f"- Vùng an toàn phụ đề: `{c_rnd.get('safe_zone', 'Bottom 1/6 Safe Zone')}`",
-                    unsafe_allow_html=True
-                )
-            with k2:
-                st.markdown(
-                    f"**🎵 4. Thiết kế Âm thanh (Foley/SFX)**<br>"
-                    f"- Neo ngữ nghĩa (Semantic Anchors): `{c_snd.get('semantic_anchors_count', 0)} điểm`<br>"
-                    f"- Cues hiệu ứng âm thanh: `{c_snd.get('foley_cues_count', 0)} cues`<br>"
-                    f"- BGM Ducking: `{'Đã kích hoạt' if c_snd.get('bgm_ducking_enabled') else 'Tắt'}`",
-                    unsafe_allow_html=True
-                )
-                st.markdown(
-                    f"**⚖️ 5. Thẩm định & Pháp lý (Contract QA)**<br>"
-                    f"- Khẳng định kiểm chứng: `{c_leg.get('verified_claims_count', 0)} claims`<br>"
-                    f"- Trạng thái chính sách: `{c_leg.get('policy_compliance_status', 'Passed')}`<br>"
-                    f"- Nguồn tài liệu: `{', '.join(c_leg.get('sources', ['Verified Educational']))}`",
-                    unsafe_allow_html=True
-                )
+    raw_yt = platforms.get("youtube") if isinstance(platforms.get("youtube"), dict) else {}
+    raw_tt = platforms.get("tiktok") if isinstance(platforms.get("tiktok"), dict) else {}
 
-    if output_path and os.path.exists(output_path):
-        with open(output_path, "rb") as video_file:
-            st.download_button("Tải video MP4", video_file, file_name=Path(output_path).name, mime="video/mp4", key=f"video_{job.get('id')}", use_container_width=True)
-    metadata_path = metadata.get("metadata_path")
-    if metadata_path and os.path.exists(metadata_path):
-        with open(metadata_path, "rb") as metadata_file:
-            st.download_button("Tải metadata JSON", metadata_file, file_name=Path(metadata_path).name, mime="application/json", key=f"meta_{job.get('id')}", use_container_width=True)
+    title = (
+        yt_spec.get("recommended_title")
+        or raw_yt.get("title")
+        or publishing.get("title")
+        or job.get("topic", "Video kiến thức")
+    )
+    youtube_title = yt_spec.get("recommended_title") or raw_yt.get("title") or title
+    youtube_description = (
+        yt_spec.get("description")
+        or raw_yt.get("description")
+        or publishing.get("description")
+        or f"{title} — Giải thích kiến thức trực quan, dễ hiểu."
+    )
+    tiktok_caption = (
+        tt_spec.get("caption")
+        or raw_tt.get("caption")
+        or publishing.get("tiktok_caption")
+        or youtube_description
+    )
+    raw_hashtags = (
+        yt_spec.get("hashtags")
+        or tt_spec.get("hashtags")
+        or publishing.get("hashtags")
+        or ["#khoahoc", "#kienthuc", "#khampha", "#shorts", "#xuhuong"]
+    )
+    hashtags = " ".join(raw_hashtags) if isinstance(raw_hashtags, list) else str(raw_hashtags)
+
+    hdr_left, hdr_right = st.columns([0.84, 0.16])
+    hdr_left.markdown(f"#### {index}. {html.escape(str(title))}")
+    if hdr_right.button("🗑️ Xóa", key=f"del_hdr_{job_id}", help="Xóa video này khỏi kho thành phẩm", use_container_width=True):
+        delete_job(job_id)
+        st.success("Đã xóa video.")
+        time.sleep(0.4)
+        st.rerun()
+
+    col_vid, col_meta = st.columns([1.0, 1.35], gap="medium")
+
+    with col_vid:
+        if output_path and os.path.exists(output_path):
+            st.video(output_path)
+            dl1, dl2, dl3 = st.columns([1, 1, 0.9])
+            with open(output_path, "rb") as video_file:
+                dl1.download_button(
+                    "⬇️ Tải MP4",
+                    video_file,
+                    file_name=Path(output_path).name,
+                    mime="video/mp4",
+                    key=f"video_{job_id}",
+                    use_container_width=True,
+                )
+            if metadata_path and os.path.exists(metadata_path):
+                with open(metadata_path, "rb") as metadata_file:
+                    dl2.download_button(
+                        "📄 Metadata",
+                        metadata_file,
+                        file_name=Path(metadata_path).name,
+                        mime="application/json",
+                        key=f"meta_{job_id}",
+                        use_container_width=True,
+                    )
+            if dl3.button("🗑️ Xóa video", key=f"del_vid_{job_id}", help="Xóa video này khỏi kho thành phẩm", use_container_width=True):
+                delete_job(job_id)
+                st.success("Đã xóa video.")
+                time.sleep(0.4)
+                st.rerun()
+        else:
+            st.markdown(
+                """
+                <div style="background: rgba(251,191,36,0.08); border: 1px dashed rgba(251,191,36,0.4); border-radius: 12px; padding: 18px 14px; text-align: center; margin-bottom: 12px;">
+                    <div style="font-size: 28px; margin-bottom: 6px;">⚠️</div>
+                    <div style="font-weight: 700; color: #fbbf24; font-size: 0.95rem; margin-bottom: 4px;">File video MP4 không còn trên đĩa</div>
+                    <div style="font-size: 0.8rem; color: #94a3b8; line-height: 1.4;">
+                        File MP4 đã bị xóa trong đợt dọn dẹp dung lượng ổ đĩa.<br>
+                        Checkpoint âm thanh và hình ảnh các cảnh vẫn còn nguyên.
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            c_r1, c_r2 = st.columns(2)
+            if c_r1.button("🔄 Render lại video này", key=f"re_render_{job_id}", type="primary", use_container_width=True, help="Tự động ghép lại âm thanh và hình ảnh đã có sẵn thành file MP4 hoàn chỉnh"):
+                ok, msg = rerun_job_stage_or_scene(job_id, target_stage="rendering")
+                if ok:
+                    st.success(msg)
+                    time.sleep(0.8)
+                    st.rerun()
+                else:
+                    st.error(msg)
+            if c_r2.button("🗑️ Xóa bản ghi này", key=f"del_card_{job_id}", use_container_width=True, help="Xóa job này khỏi kho thành phẩm"):
+                delete_job(job_id)
+                st.rerun()
+
+    with col_meta:
+        st.markdown(
+            f"<div class='meta-box'>"
+            f"<b>📌 Tiêu đề YouTube (Title):</b> {html.escape(str(youtube_title))}<br><br>"
+            f"<b>📝 Mô tả YouTube (Description):</b><br>{html.escape(str(youtube_description)).replace(chr(10), '<br>')}<br><br>"
+            f"<b>🎵 Mô tả TikTok (Caption):</b><br>{html.escape(str(tiktok_caption)).replace(chr(10), '<br>')}<br><br>"
+            f"<b>🏷️ Hashtag:</b> <span style='color:#55e8b9;font-weight:700;'>{html.escape(str(hashtags))}</span><br>"
+            f"<b>🛡️ Nhãn AI:</b> Bật “Altered content” trên YouTube và “AI-generated content” trên TikTok."
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        st.caption("📋 **Sao chép nhanh (Bấm biểu tượng Copy ở góc phải mỗi ô):**")
+        st.code(f"""{youtube_title}
+
+{youtube_description}
+
+{hashtags}""", language="text")
+
+        qa_score = qa_report.get("overall_score")
+        if qa_score is not None:
+            st.caption(f"✅ Điểm kiểm định chất lượng video thực tế (Post-Render QA): **{qa_score}/100**")
+
+        with st.expander("🛠️ Tùy chọn nâng cao (Sửa Tiêu đề / Mô tả / Chạy lại nếu cần)"):
+            new_title = st.text_input("Sửa tiêu đề", value=str(youtube_title), key=f"ed_t_{job_id}")
+            new_desc = st.text_area("Sửa mô tả", value=str(youtube_description), height=80, key=f"ed_d_{job_id}")
+            new_tags = st.text_input("Sửa hashtag", value=str(hashtags), key=f"ed_h_{job_id}")
+            c_btn1, c_btn2, c_btn3 = st.columns(3)
+            if c_btn1.button("💾 Lưu Tiêu đề", key=f"save_m_{job_id}", use_container_width=True):
+                update_job_metadata_or_script(
+                    job_id=job_id,
+                    title=new_title,
+                    description=new_desc,
+                    tiktok_caption=new_desc,
+                    hashtags=[t.strip() for t in new_tags.split() if t.strip()],
+                    lock_edited_fields=True,
+                )
+                st.success("Đã cập nhật tiêu đề, mô tả và hashtag!")
+                time.sleep(0.5)
+                st.rerun()
+            if c_btn2.button("🔄 Dựng lại video", key=f"rr_v_{job_id}", use_container_width=True):
+                rerun_job_stage_or_scene(job_id, target_stage="rendering")
+                st.info("Đã đưa vào hàng đợi dựng lại.")
+                time.sleep(0.5)
+                st.rerun()
+            if c_btn3.button("🗑️ Xóa bản ghi", key=f"del_m_{job_id}", use_container_width=True):
+                delete_job(job_id)
+                st.rerun()
 
 
 def run_batch_ui():
@@ -208,11 +310,12 @@ def run_batch_ui():
         <div class="factory-hero">
           <div class="eyebrow">Autonomous Knowledge Studio</div>
           <div class="factory-title">Xưởng video kiến thức AI</div>
-          <div class="factory-sub">Nạp một chủ đề, để hệ thống tự viết kịch bản, tạo cảnh bằng Google Flow, dựng video và đóng gói tiêu đề cùng hashtag sẵn đăng.</div>
+          <div class="factory-sub">Chỉ cần nhập chủ đề (hoặc để trống), hệ thống tự viết kịch bản, dựng hoạt hình nhiều frame / Google Flow đa luồng và xuất sẵn Video kèm Tiêu đề, Mô tả, Hashtag.</div>
           <div class="status-row">
+            <span class="status-chip ok">● Hoạt hình HTML5 Nhiều Frame sẵn sàng</span>
             <span class="status-chip {'ok' if flow_ready else 'warn'}">● Google Flow {flow_label}</span>
             <span class="status-chip {'warn' if state.get('paused') else 'ok'}">● {line_state}</span>
-            <span class="status-chip">Lưu hàng đợi tự động</span>
+            <span class="status-chip ok">⚡ Đa luồng Turbo & Tự động tạo Title/Hashtag</span>
           </div>
         </div>
         """,
@@ -229,12 +332,17 @@ def run_batch_ui():
     left, right = st.columns([1.05, 1.55], gap="large")
 
     with left:
-        st.markdown("<div class='section-kicker'>Kho ý tưởng</div><div class='section-title'>Tạo lệnh sản xuất mới</div><div class='section-copy'>Mỗi dòng là một video riêng. Nếu chỉ có một chủ đề, AI sẽ tự chia thành nhiều tập.</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div class='section-kicker'>Kho ý tưởng</div>"
+            "<div class='section-title'>Tạo lệnh sản xuất mới</div>"
+            "<div class='section-copy'>Chỉ cần nhập chủ đề (mỗi dòng 1 video) rồi bấm Khởi động dây chuyền. AI sẽ tự lo toàn bộ kịch bản, hình ảnh, lồng tiếng, phụ đề, tiêu đề và hashtag.</div>",
+            unsafe_allow_html=True,
+        )
         content_mode_label = st.selectbox(
             "Loại video",
             [
-                "Dạy tiếng Anh qua cốt truyện (Micro-Drama)",
                 "Kể chuyện kiến thức dẫn dắt (Story Explainer)",
+                "Dạy tiếng Anh qua cốt truyện (Micro-Drama)",
                 "Dạy tiếng Trung cho người Việt",
                 "Video kiến thức thông thường",
             ],
@@ -254,90 +362,96 @@ def run_batch_ui():
                 "Chủ đề cụ thể (không bắt buộc)",
                 value="",
                 height=110,
-                placeholder="Để trống để xưởng tự chọn chủ đề ngẫu nhiên. Chỉ nhập khi bạn muốn làm một chủ đề cụ thể.",
-                help="Để trống: tự chọn ngẫu nhiên. Có thể nhập nhiều dòng, mỗi dòng là một video cụ thể.",
+                placeholder="Để trống để xưởng tự chọn chủ đề ngẫu nhiên. Hoặc nhập mỗi dòng một chủ đề để xuất hàng loạt video.",
+                help="Bạn chỉ cần nhập ý tưởng/chủ đề, không cần viết cốt truyện hay chia cảnh.",
             )
-            st.info("Số video là số thành phẩm trong lô; số phân cảnh sẽ do AI tự động phân bổ theo cốt truyện của từng video.")
             c1, c2 = st.columns(2)
             count = c1.number_input("Số video trong lô", min_value=1, max_value=100, value=1, step=1)
             language_label = c2.selectbox("Ngôn ngữ", ["Tiếng Việt", "English"])
             language = "vi" if language_label == "Tiếng Việt" else "en"
-            if content_mode == "english_vocab_story":
-                st.caption("🎬 Kịch bản tình huống đời thường (Micro-Drama), lồng ghép từ vựng tiếng Anh theo mạch truyện tự nhiên.")
-            elif content_mode == "story_explainer":
-                st.caption("📖 Dẫn dắt người xem qua câu chuyện khám phá có nhân vật, có nút thắt và bài học đọng lại.")
-            elif content_mode == "chinese_teaching_vi":
+            if content_mode == "chinese_teaching_vi":
                 language = "vi"
-                st.caption("Chế độ này giảng bằng tiếng Việt, mẫu tiếng Trung: Giới thiệu -> Phát âm/Pinyin -> Cách dùng thực tế.")
-            orientation_label = st.selectbox("Khung hình", ["Dọc 9:16", "Ngang 16:9"])
+
+            orientation_label = st.selectbox("Khung hình", ["Dọc 9:16 (TikTok / Shorts)", "Ngang 16:9 (YouTube)"])
             orientation = "vertical" if orientation_label.startswith("Dọc") else "horizontal"
-            st.caption("🎭 **Số phân cảnh linh hoạt**: Tự động phân bổ theo cốt truyện và diễn biến tự nhiên, không bị gò bó cố định số cảnh.")
 
             media_mode_label = st.selectbox(
-                "Chế độ phương tiện Google Flow",
+                "Chế độ tạo Hình ảnh / Video AI",
                 [
-                    "🎬 Video Flow cho mọi cảnh (Mỗi phân cảnh 1 video nhỏ ghép thành video lớn)",
-                    "Hybrid — Cảnh đầu video Flow, còn lại ảnh",
-                    "Nhanh & ổn định — Ảnh Flow + chuyển động",
+                    "🖼️ Vẽ tranh AI theo cốt truyện (Google Flow Image + Chuyển động Camera mượt)",
+                    "🎬 Video AI cho mọi cảnh (Google Flow Video - Mỗi cảnh 1 clip chuyển động)",
+                    "Hybrid — Cảnh đầu Video AI, các cảnh sau Ảnh AI",
+                    "🎨 Vẽ Vector Canvas 2D (Thử nghiệm: Đồ họa vector hình que, không vẽ bối cảnh AI)",
                 ],
-                index=2,
-                help="Khuyên dùng ảnh Flow + chuyển động. Video Flow mọi cảnh có thể bị xếp hàng rất lâu khi Google quá tải.",
-            )
-            studio_mode = st.checkbox(
-                "Studio biên tập local nhiều vai",
-                value=True,
-                help="Thêm vòng kiểm chứng, sửa hook, độ rõ ràng, tính nhất quán hình ảnh và chính sách trước khi sản xuất.",
+                index=0,
+                help="Khuyên dùng: Chọn 'Vẽ tranh AI theo cốt truyện' để AI vẽ hình ảnh nghệ thuật chi tiết và chân thực đúng theo từng phân cảnh kịch bản.",
             )
             turbo_mode = st.checkbox(
-                "⚡ Chế độ Turbo Batch (Tăng tốc song song)",
+                "⚡ Chế độ Đa luồng Turbo (Tăng tốc sinh song song)",
                 value=True,
-                help="Tăng tốc tối đa: sinh giọng đọc TTS song song và tạo ảnh Flow dạng batch (chuẩn 2 hình song song).",
+                help="Chạy nhiều luồng cùng lúc cho cả Giọng đọc TTS, Vẽ frame hoạt hình/ảnh và Render FFmpeg.",
             )
-            flow_workers = 2
+            flow_workers = 4
             tts_workers = 4
             if turbo_mode:
-                with st.expander("⚙️ Tinh chỉnh luồng Turbo (Nâng cao)"):
+                with st.expander("⚙️ Tinh chỉnh số luồng chạy song song"):
                     tc1, tc2 = st.columns(2)
-                    flow_workers = int(tc1.number_input(
-                        "Luồng tạo ảnh (Flow)",
-                        min_value=1,
-                        max_value=4,
-                        value=2,
-                        step=1,
-                        help="Google Flow xử lý tối ưu 2 hình song song cùng lúc để tránh cảnh báo High Demand.",
-                    ))
-                    tts_workers = int(tc2.number_input("Luồng tạo audio (TTS)", min_value=1, max_value=8, value=4, step=1))
+                    flow_workers = int(tc1.number_input("Số luồng tạo Hoạt hình / Ảnh", min_value=1, max_value=8, value=4, step=1))
+                    tts_workers = int(tc2.number_input("Số luồng tạo Giọng đọc (TTS)", min_value=1, max_value=8, value=4, step=1))
 
-            if media_mode_label.startswith("🎬 Video Flow") or "mọi cảnh" in media_mode_label:
+            selected_image_engine = "flow"
+            if media_mode_label.startswith("🖼️ Vẽ tranh AI") or media_mode_label.startswith("🖼️"):
+                selected_image_engine = "flow"
+                media_mode = "flow_image"
+            elif media_mode_label.startswith("🎬 Video AI") or "mọi cảnh" in media_mode_label:
+                selected_image_engine = "flow"
                 media_mode = "flow_video"
             elif media_mode_label.startswith("Hybrid"):
+                selected_image_engine = "flow"
                 media_mode = "hybrid"
+            elif media_mode_label.startswith("🎨 Vẽ Vector"):
+                selected_image_engine = "html_frames"
+                media_mode = "html_animation"
             else:
+                selected_image_engine = "flow"
                 media_mode = "flow_image"
 
+            style_presets_map = {
+                "🎥 Hoạt hình 3D kể chuyện (như video mẫu)": "stylized 3D animated feature film, expressive characters, cinematic lighting, detailed environments, consistent materials and character design",
+                "🎬 Hoạt hình điện ảnh (Cinematic 2D, sống động, giàu chi tiết)": "vibrant 2D animation, cinematic lighting, beautifully illustrated, cel-shaded, rich colors, detailed background, 4k",
+                "🎨 Minh họa truyện kể (Storybook Illustration, ấm áp)": "storybook illustration art, soft painterly style, rich storytelling atmosphere, warm detailed background, 4k",
+                "✨ Hoạt hình Anime hiện đại (Modern Anime Style, sắc nét)": "modern anime art style, vibrant aesthetic, detailed character and scenery, studio quality, 4k",
+                "📸 Bối cảnh thực tế điện ảnh (Cinematic Photorealistic, 4K)": "cinematic photorealistic, realistic lighting, highly detailed environment, 8k render, masterpiece",
+                "✏️ Nhân vật hình que Stickman tối giản (Minimalist Stickman)": "minimalist flat 2d stickman cartoon, clean whiteboard illustration, cel-shaded vector art",
+            }
+            selected_style_label = st.selectbox(
+                "Phong cách mỹ thuật hình ảnh",
+                list(style_presets_map.keys()),
+                index=0 if media_mode == "flow_video" else 1,
+                help="Chọn phong cách để AI vẽ bối cảnh và nhân vật theo đúng định hướng câu chuyện bạn muốn.",
+            )
+            style_preset = style_presets_map[selected_style_label]
+
             voices = {**TTS_VOICES_VI, **TTS_VOICES_EN}
-            voice_mode_label = st.radio(
-                "Nguồn giọng đọc",
-                ["Giọng có sẵn — nhanh", "Clone giọng local — XTTS-v2"],
-                horizontal=True,
-            )
-            voice_mode = "clone_local" if voice_mode_label.startswith("Clone") else "edge"
-            voice_label = st.selectbox("Giọng có sẵn", list(voices.keys()))
-            chinese_voice_label = st.selectbox(
-                "Giọng phát âm tiếng Trung",
-                list(TTS_VOICES_ZH.keys()),
-                disabled=content_mode != "chinese_teaching_vi",
-            )
-            voice_upload = st.file_uploader(
-                "File giọng mẫu cho chế độ clone (6-30 giây)", type=["wav", "mp3", "m4a"],
-                help="Chỉ được dùng giọng của bạn hoặc giọng đã được chủ sở hữu cho phép.",
-            )
-            voice_consent = st.checkbox("Tôi xác nhận đây là giọng của tôi hoặc tôi có quyền sử dụng giọng này.")
-            st.caption("XTTS-v2 local hỗ trợ English và 15 ngôn ngữ khác, nhưng chưa hỗ trợ tiếng Việt. Video tiếng Việt hiện dùng giọng có sẵn.")
-            if not voice_clone_available():
-                st.error("Engine clone local chưa được cài đặt.")
-            style_preset = st.text_input("Phong cách hình ảnh", value=DEFAULT_IMAGE_STYLE)
-            submitted = st.form_submit_button("Khởi động dây chuyền", type="primary", use_container_width=True)
+            voice_label = st.selectbox("Giọng đọc AI", list(voices.keys()))
+            chinese_voice_label = list(TTS_VOICES_ZH.keys())[0]
+            if content_mode == "chinese_teaching_vi":
+                chinese_voice_label = st.selectbox("Giọng phát âm tiếng Trung", list(TTS_VOICES_ZH.keys()))
+
+            with st.expander("🎙️ Tùy chọn Clone giọng & Tùy biến prompt (Không bắt buộc)"):
+                voice_mode_label = st.radio(
+                    "Nguồn giọng đọc",
+                    ["Giọng có sẵn — nhanh", "Clone giọng local — XTTS-v2"],
+                    horizontal=True,
+                )
+                voice_mode = "clone_local" if voice_mode_label.startswith("Clone") else "edge"
+                voice_upload = st.file_uploader("File giọng mẫu (6-30 giây)", type=["wav", "mp3", "m4a"])
+                voice_consent = st.checkbox("Tôi xác nhận có quyền sử dụng giọng này.")
+                custom_style = st.text_input("Ghi đè phong cách tùy chỉnh (để trống để dùng danh sách trên)", value="")
+                if custom_style.strip():
+                    style_preset = custom_style.strip()
+
+            submitted = st.form_submit_button("🚀 Khởi động dây chuyền", type="primary", use_container_width=True)
 
         if submitted:
             if voice_mode == "clone_local" and language not in XTTS_LANGUAGES:
@@ -350,8 +464,8 @@ def run_batch_ui():
                 if not production_prompt:
                     random_topics = build_random_video_topics(int(count), content_mode)
                     production_prompt = "\n".join(random_topics)
-                # Trải nghiệm 1-Click: Nếu Flow chưa mở, tự động khởi chạy Chrome ngay lập tức
-                if not flow_ready and media_mode in ("flow_image", "flow_video", "hybrid"):
+
+                if selected_image_engine == "flow" and not flow_ready and media_mode in ("flow_image", "flow_video", "hybrid"):
                     with st.spinner("Đang tự động khởi chạy Chrome Google Flow..."):
                         ctrl = get_flow_controller()
                         flow_ok, flow_msg = ctrl.connect()
@@ -368,14 +482,21 @@ def run_batch_ui():
                     reference_file = voice_dir / f"voice_{digest}{suffix}"
                     reference_file.write_bytes(voice_bytes)
                     reference_path = str(reference_file)
+
                 add_factory_jobs(
-                    prompt=production_prompt, count=int(count), language=language,
-                    voice=voices[voice_label], style_preset=style_preset,
-                    orientation=orientation, image_engine="flow",
+                    prompt=production_prompt,
+                    count=int(count),
+                    language=language,
+                    voice=voices[voice_label],
+                    style_preset=style_preset,
+                    orientation=orientation,
+                    image_engine=selected_image_engine,
                     media_mode=media_mode,
-                    target_scenes=None, voice_mode=voice_mode,
+                    target_scenes=None,
+                    voice_mode=voice_mode,
                     voice_reference_path=reference_path,
-                    studio_mode=studio_mode,
+                    voice_consent_verified=bool(voice_consent if voice_mode == "clone_local" else True),
+                    studio_mode=True,
                     content_mode=content_mode,
                     chinese_voice=TTS_VOICES_ZH[chinese_voice_label],
                     turbo_mode=turbo_mode,
@@ -383,37 +504,25 @@ def run_batch_ui():
                     tts_workers=tts_workers,
                 )
                 if random_topics:
-                    st.success(
-                        f"✅ Xưởng đã tự chọn {int(count)} chủ đề và bắt đầu sản xuất: "
-                        + "; ".join(random_topics)
-                    )
+                    st.success(f"✅ Xưởng đã tự chọn {int(count)} chủ đề và bắt đầu sản xuất: " + "; ".join(random_topics))
                 else:
-                    st.success(f"✅ Đã đưa {int(count)} video vào dây chuyền (số phân cảnh tự động theo cốt truyện). Đang tự động sản xuất...")
-                time.sleep(1)
+                    st.success(f"✅ Đã đưa {int(count)} video vào dây chuyền sản xuất tự động!")
+                time.sleep(0.8)
                 st.rerun()
 
         st.markdown("<br><div class='section-kicker'>Điều khiển xưởng</div>", unsafe_allow_html=True)
-        if flow_status != "ready":
-            if st.button("🚀 Mở nhanh Chrome Google Flow (Cổng 9222)", type="primary" if flow_status == "disconnected" else "secondary", use_container_width=True):
-                with st.spinner("Đang kết nối Chrome Google Flow..."):
-                    flow_ok, flow_msg = get_flow_controller().connect()
-                    if flow_ok:
-                        st.success("Google Flow đã sẵn sàng!")
-                    else:
-                        st.info(flow_msg)
-                    time.sleep(1)
-                    st.rerun()
         a, b = st.columns(2)
         if state.get("paused"):
-            if a.button("Tiếp tục sản xuất", type="primary", use_container_width=True):
+            if a.button("▶️ Tiếp tục sản xuất", type="primary", use_container_width=True):
                 set_factory_paused(False)
                 st.rerun()
         else:
-            if a.button("Tạm dừng sau video này", use_container_width=True):
+            if a.button("⏸️ Tạm dừng sau video này", use_container_width=True):
                 set_factory_paused(True)
                 st.rerun()
-        if b.button("Làm mới trạng thái", use_container_width=True):
+        if b.button("🔄 Làm mới trạng thái", use_container_width=True):
             st.rerun()
+
         a2, b2 = st.columns(2)
         if a2.button("Chạy lại việc lỗi", disabled=counts["failed"] == 0, use_container_width=True):
             retry_failed_jobs()
@@ -421,90 +530,75 @@ def run_batch_ui():
         if b2.button("Xóa việc lỗi", disabled=counts["failed"] == 0, use_container_width=True):
             clear_failed_jobs()
             st.rerun()
-        if counts["queued"] > 0 and counts["running"] == 0:
-            if st.button("▶️ Bắt đầu sản xuất ngay", type="primary", use_container_width=True, help="Kích hoạt dây chuyền sản xuất video trong hàng đợi"):
-                restart_factory_worker()
-                st.rerun()
-        if counts["running"] > 0:
-            if st.button("⏭️ Bỏ qua video đang làm", type="secondary", use_container_width=True, help="Ngắt tiến trình video hiện tại và lập tức chuyển sang video tiếp theo trong hàng đợi"):
-                skip_current_job()
-                st.rerun()
-        if st.button("🔄 Khởi động lại dây chuyền (Reset Worker)", use_container_width=True, help="Giải phóng các tác vụ bị kẹt và đánh thức worker nền ngay lập tức"):
-            restart_factory_worker()
-            st.rerun()
-        if flow_status == "login_required":
-            st.warning("Chrome điều khiển đã mở nhưng Google Flow chưa đăng nhập. Hãy đăng nhập một lần trong cửa sổ Chrome Flow, sau đó bấm Làm mới trạng thái.")
-        elif flow_status == "disconnected":
-            st.warning("Chrome điều khiển chưa mở. Bấm nút 'Mở nhanh Chrome Google Flow' ở trên hoặc bấm 'Khởi động dây chuyền' để hệ thống tự mở.")
 
     with right:
-        tab_line, tab_output, tab_contracts, tab_log = st.tabs(["Dây chuyền", "Kho thành phẩm", "Kiến trúc 5 Khâu", "Bảng dữ liệu"])
-        with tab_line:
-            active_jobs = [job for job in jobs if job.get("status") in {"running", "queued", "failed"}]
-            if not active_jobs:
-                st.info("Dây chuyền đang trống. Tạo một lệnh sản xuất để bắt đầu.")
-            for job in active_jobs[:20]:
-                _render_job(job)
-            if len(active_jobs) > 20:
-                st.caption(f"Còn {len(active_jobs) - 20} việc khác đang trong hàng đợi.")
+        tab_output, tab_line, tab_log = st.tabs([
+            f"🎬 Kho thành phẩm ({counts['completed']})",
+            f"⚙️ Dây chuyền đang chạy ({counts['running'] + counts['queued']})",
+            "📊 Bảng dữ liệu",
+        ])
         with tab_output:
-            completed = [job for job in jobs if job.get("status") == "completed"]
+            completed = [
+                job for job in jobs
+                if job.get("status") in ("completed", "ready_for_review", "approved", "published", "needs_review")
+            ]
             if not completed:
-                st.info("Video hoàn tất sẽ xuất hiện ở đây cùng tiêu đề, mô tả và hashtag.")
+                st.info("Video hoàn tất sẽ xuất hiện ngay tại đây cùng Tiêu đề, Mô tả và Hashtag sẵn sàng đăng.")
+            else:
+                missing_count = sum(1 for j in completed if not resolve_job_video_and_metadata_paths(j)[0])
+                if missing_count > 0:
+                    st.warning(
+                        f"⚠️ Phát hiện **{missing_count}/{len(completed)}** video cũ bị thiếu file MP4 trên đĩa (do đợt dọn rác bộ nhớ trước đó)."
+                    )
+                    top_b1, top_b2 = st.columns(2)
+                    if top_b1.button("🔄 Render lại tất cả video thiếu file", key="bulk_rerun_missing", type="primary", use_container_width=True, help="Tự động sử dụng audio và hình ảnh có sẵn trong checkpoint để ghép lại video MP4"):
+                        cnt = rerun_missing_video_jobs()
+                        st.success(f"Đã đưa {cnt} video vào hàng đợi dựng lại!")
+                        time.sleep(1)
+                        st.rerun()
+                    if top_b2.button("🧹 Dọn dẹp bản ghi cũ không còn file", key="bulk_clean_missing", use_container_width=True, help="Xóa các mục mồ côi không còn file khỏi danh sách thành phẩm"):
+                        removed = clear_missing_video_jobs()
+                        st.success(f"Đã dọn dẹp {removed} bản ghi.")
+                        time.sleep(1)
+                        st.rerun()
+                    st.markdown("<hr style='margin: 8px 0 16px 0; border: none; border-top: 1px solid #1e293b;'>", unsafe_allow_html=True)
+
             for index, job in enumerate(reversed(completed), start=1):
                 with st.container(border=True):
                     _render_completed_card(job, index)
-        with tab_contracts:
-            st.markdown("<div class='section-kicker'>Kiến trúc hệ thống</div><div class='section-title'>Luồng 5 Khâu Tiếp Nhận Hạ Nguồn</div>", unsafe_allow_html=True)
-            st.caption("Căn cứ theo thiết kế sơ đồ chuẩn Research & Story Architect (`mermaid-diagram.svg`).")
-            
-            st.markdown(
-                """
-```mermaid
-graph TD
-    subgraph BRAIN ["🧠 Hạt Nhân: Research & Story Architect"]
-        RS["Nghiên cứu & Thiết kế Kịch bản Phân Cảnh"]
-    end
 
-    subgraph DOWNSTREAM ["⚙️ 5 Khâu Tiếp Nhận Phía Sau"]
-        C1["1. Khâu Âm thanh (TTS Engine)<br/><i>Âm tiết, Pause Cues, Voice Profile</i>"]
-        C2["2. Khâu Hình ảnh (Flow CDP)<br/><i>Background Plate, Sticker, Visual Action</i>"]
-        C3["3. Khâu Dựng & Chuyển động (Compiler)<br/><i>Visual Beats, Camera Effects, Safe Subtitles</i>"]
-        C4["4. Khâu Thiết kế Âm thanh (Foley/SFX)<br/><i>Semantic Anchors, Foley Cues, BGM Ducking</i>"]
-        C5["5. Khâu Thẩm định & Pháp lý (Contract QA)<br/><i>Sources, Claims, Coverage Verbatim Quotes</i>"]
-    end
+        with tab_line:
+            active_jobs = [
+                job for job in jobs
+                if job.get("status") in ACTIVE_PROCESSING_STATES or job.get("status") in ("queued", "failed")
+            ]
+            if not active_jobs:
+                st.info("Dây chuyền đang trống. Nhập chủ đề ở cột trái và bấm 'Khởi động dây chuyền' để bắt đầu.")
+            for job in active_jobs[:20]:
+                _render_job(job)
 
-    RS --> C1
-    RS --> C2
-    RS --> C3
-    RS --> C4
-    RS --> C5
-```
-                """,
-                unsafe_allow_html=False,
-            )
-            st.markdown(
-                """
-                <div class='meta-box'>
-                <b>Đặc điểm kiến trúc:</b><br>
-                • <b>Hạt nhân điều phối</b>: Tạo và chuẩn hóa hợp đồng dữ liệu cho từng phân cảnh ngay từ khâu viết kịch bản.<br>
-                • <b>Phân phối song song độc lập</b>: Mỗi khâu nhận đúng phần việc theo hợp đồng mà không phụ thuộc chéo.<br>
-                • <b>Chuẩn mỹ thuật an toàn</b>: 100% hình ảnh 2D hoạt hình phẳng (Flat 2D cartoon / Cel-shaded vector, cấm 3D); phụ đề cố định tại Bottom 1/6 Safe Zone.
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
         with tab_log:
             rows = []
             for job in reversed(jobs):
                 publishing = job.get("metadata", {}).get("publishing", {})
-                rows.append({"Mã": job.get("id"), "Video": job.get("video_index"), "Chủ đề": job.get("topic"), "Trạng thái": job.get("status"), "Tiến độ": f"{job.get('progress', 0)}%", "Tiêu đề AI": publishing.get("title", ""), "Cập nhật": job.get("updated_at", "")})
+                pkg_yt = job.get("metadata", {}).get("publishing_package", {}).get("youtube", {})
+                title_ai = pkg_yt.get("recommended_title") or publishing.get("title", "")
+                hashtags_ai = " ".join(pkg_yt.get("hashtags") or publishing.get("hashtags", []))
+                rows.append({
+                    "Mã": job.get("id"),
+                    "Video": job.get("video_index"),
+                    "Chủ đề": job.get("topic"),
+                    "Trạng thái": job.get("status"),
+                    "Tiến độ": f"{job.get('progress', 0)}%",
+                    "Tiêu đề (Title)": title_ai,
+                    "Hashtag": hashtags_ai,
+                    "Cập nhật": job.get("updated_at", ""),
+                })
             if rows:
                 st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
             else:
                 st.caption("Chưa có dữ liệu sản xuất.")
 
-    # Tự động cập nhật giao diện theo thời gian thực nếu đang có việc chạy hoặc trong hàng đợi
     if counts["running"] > 0 or counts["queued"] > 0:
         time.sleep(2.5)
         st.rerun()

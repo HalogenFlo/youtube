@@ -10,7 +10,11 @@ from collections import Counter
 from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Dict, Any, Tuple, Optional, List
-from playwright.async_api import async_playwright, BrowserContext, Page
+try:
+    from playwright.async_api import async_playwright, BrowserContext, Page
+except ImportError:
+    async_playwright = None
+    BrowserContext = Page = Any
 from src.config import OUTPUT_DIR, BASE_DIR, GMAIL_YTB, PASS_YTB
 
 YOUTUBE_STUDIO_URL = "https://studio.youtube.com"

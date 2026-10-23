@@ -4,7 +4,10 @@
 
 import os
 import subprocess
-import yt_dlp
+try:
+    import yt_dlp
+except ImportError:
+    yt_dlp = None
 from typing import Tuple
 from src.config import DOWNLOAD_DIR
 

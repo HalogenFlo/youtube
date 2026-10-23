@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul
-title YouTube View & Shorts Booster Launcher
+title YouTube View ^& Shorts Booster Launcher
 cd /d "%~dp0"
 
 :menu
@@ -16,6 +16,7 @@ echo   [4] Don dep du lieu tam va profiles
 echo   [0] Thoat
 echo.
 echo =====================================================================
+set "choice="
 set /p choice="Nhap lua chon cua ban (0-4): "
 
 if "%choice%"=="1" goto ui
@@ -23,6 +24,7 @@ if "%choice%"=="2" goto cli
 if "%choice%"=="3" goto test
 if "%choice%"=="4" goto clean
 if "%choice%"=="0" exit /b
+if "%choice%"=="" exit /b
 goto menu
 
 :ui

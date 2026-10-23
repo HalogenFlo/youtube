@@ -1,4 +1,156 @@
-# Kế Hoạch Tích Hợp Google Flow ("gg flow") & Progressive Layering Video Engine
+# Kế Hoạch Nâng Cấp Cơ Chế Cốt Truyện Dài Nhiều Tập (Ít Tập / Nhiều Tập) & Duy Trì Mạch Truyện (Mở Đầu - Cao Trào - Kết Thúc Mỗi Tập)
+
+## 1. Mục tiêu & Thiết kế Kiến trúc
+1. **Hỗ trợ linh hoạt chế độ Phim lẻ (1 tập), Ít tập (Mini-Series 2–3 tập) và Nhiều tập (Series dài kỳ 4–10+ tập)**:
+   - Mỗi tập (mỗi video `.mp4`) đều bắt buộc có cấu trúc 3 hồi rõ ràng: **Mở đầu (Opening Hook / Recap nối tập) ➔ Cao trào kịch tính (Climax) ➔ Kết thúc tập (Resolution / Cliffhanger mở tập tiếp theo)**.
+2. **Duy trì cốt truyện dài & Khóa nhân vật xuyên suốt các tập (`Series Continuity & Memory`)**:
+   - Tập 1 khởi tạo `character_anchor`, `environment_anchor` và tóm tắt sự kiện Tập 1.
+   - Từ Tập 2 trở đi, prompt gửi lên MuseAI tự động nhúng **`previous_episodes_summary`** (diễn biến các tập trước) và khóa cứng **`locked_character_anchor`** từ Tập 1 để câu chuyện liền mạch 100%, nhân vật giữ nguyên tên và tạo hình 3D qua mọi tập.
+   - Các tập giữa (Tập $2 \dots T-1$) mở đầu bằng cầu nối sự kiện tập trước, đẩy lên cao trào riêng của tập đó và kết thúc bằng nút mở sang tập kế tiếp; Tập cuối ($T/T$) đẩy lên Đại cao trào (*Grand Climax*) và khép lại bằng Đại kết cục (*Grand Finale*).
+   - Lưu trữ bền vững bộ nhớ chuỗi tập (`series_memory_ledger.json`) để có thể tiếp nối cốt truyện bất cứ lúc nào.
+
+## 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Viết Unit Tests (Red State) trong `video_studio/tests/test_museai_3d.py`**
+  - [x] Test `build_museai_story_script_prompt` với thông số `episode_num`, `total_episodes`, `previous_episodes_summary`, `locked_character_anchor` đảm bảo mỗi tập đều có Mở đầu + Cao trào + Kết thúc và duy trì mạch truyện từ tập trước.
+  - [x] Test `run_museai_multi_episode_series_pipeline` chạy chuỗi nhiều tập (ví dụ 3 tập), tự động truyền `character_anchor` và tóm tắt cốt truyện từ Tập 1 sang Tập 2 và Tập 3.
+- [x] **Task 2: Triển khai Multi-Episode Story Continuity Engine trong `video_studio/src/museai_3d_service.py` (Green State)**
+  - [x] Nâng cấp `build_museai_story_script_prompt` và `generate_3d_script_via_museai` hỗ trợ `episode_num`, `total_episodes`, `previous_episodes_summary`, `locked_character_anchor`.
+  - [x] Xây dựng hàm `summarize_episode_for_continuity` và `run_museai_multi_episode_series_pipeline` sản xuất tuần tự từ Tập 1 đến Tập $T$, mỗi tập xuất ra 1 video `.mp4` hoàn chỉnh có đủ Mở đầu - Cao trào - Kết thúc.
+- [x] **Task 3: Nâng cấp Giao diện Web UI `video_studio/src/app_museai.py`**
+  - [x] Thêm bộ chọn **Chế độ Cốt truyện & Số tập**: `🎬 Phim lẻ 1 tập trọn vẹn`, `📺 Ít tập (Mini-Series 2–3 tập)`, `📚 Nhiều tập (Series dài kỳ 4–10 tập)`, hoặc `🔗 Viết tiếp tập mới từ cốt truyện vừa tạo`.
+  - [x] Hiển thị tiến độ từng Tập (Tập $E/T$) và danh sách toàn bộ các video tập phim đã hoàn thành.
+- [x] **Task 4: Kiểm chứng toàn diện (Verification)**
+  - [x] Chạy `pytest video_studio/tests/test_museai_3d.py` đạt 100% Green (17/17 passed).
+
+---
+
+# Kế Hoạch Khớp 1:1 Số Khung Hình Video Với Mạch Câu Chuyện & Cấm Tuyệt Đối Lặp Lại Khung Hình (No Video Looping)
+
+## 1. Phân tích nguyên nhân gốc rễ (Root Cause Analysis)
+1. **Tại sao 1 khung hình video bị lặp đi lặp lại nhiều lần trong phiên `muse_flow_3d_20261023_160326`**:
+   - Mỗi video clip 3D do Google Flow (Veo) tạo ra có thời lượng cố định khoảng **8–10 giây** (`10.01s`).
+   - Khi cố định số cảnh là 4, toàn bộ câu chuyện dài ~97 giây (gồm cả lời dẫn chuyện dài + lời thoại nhân vật tương tác) bị dồn vào 4 cảnh, khiến file âm thanh mỗi cảnh dài từ **21.6s đến 28.2s** (`scene_001.mp3 = 21.63s`, `scene_002.mp3 = 28.16s`, `scene_003.mp3 = 23.07s`, `scene_004.mp3 = 24.50s`).
+   - Trong `video_studio/src/video_compiler.py` (dòng 306), FFmpeg đang dùng cờ `"-stream_loop", "-1"` để lặp lại file `.mp4` cho đủ độ dài file `.mp3`. Hậu quả là mỗi clip 10s bị phát lặp đi lặp lại gần **3 lần liên tiếp** trong cùng một cảnh!
+2. **Giải pháp triệt để 3 tầng**:
+   - **Tầng 1 (Giao diện UI `app_museai.py`)**: Bỏ thanh trượt bắt chọn cứng số khung cảnh. Để hệ thống tự động xác định số khung hình theo đúng độ dài và nhịp câu chuyện.
+   - **Tầng 2 (Tự động chia khung hình theo nhịp câu chuyện `expand_scenes_to_match_story_beats` trong `museai_3d_service.py`)**:
+     + Mỗi khung video (~8–10s) chỉ đảm nhận đúng **1 nhịp câu chuyện/lượt thoại (~6–9.5 giây, khoảng 15–26 từ)**.
+     + Nếu câu chuyện hoặc phân cảnh từ MuseAI dài hơn 1 khung video (ví dụ vừa có đoạn dẫn chuyện mở cảnh vừa có đoạn đối thoại nhân vật), hệ thống tự động tách thành các khung hình độc lập (Khung dẫn chuyện góc toàn/trung ➔ Khung nhân vật tương tác góc cận/trung cận) để Google Flow sinh **khung hình video mới cho từng nhịp**, không dồn nhiều nhịp vào 1 clip.
+   - **Tầng 3 (Bộ dựng phim FFmpeg `video_compiler.py`)**:
+     + Xóa bỏ hoàn toàn `-stream_loop -1` và `vfx.loop`.
+     + Đo thời lượng thực của clip (`vid_dur`) và thời lượng thoại (`audio_dur`), dùng `setpts` co giãn nhịp khung hình mượt mà để mỗi clip chỉ chạy **đúng 1 lượt duy nhất từ đầu đến cuối câu thoại**, tuyệt đối không bao giờ tua lại từ đầu.
+
+## 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Viết Unit Tests (Red State) trong `video_studio/tests/test_museai_3d.py`**
+  - [x] Test `expand_scenes_to_match_story_beats`: tự động tách các phân cảnh có lời dẫn + thoại dài thành nhiều khung hình ngắn khớp thời lượng 1 clip (~6–9.5s/khung), mỗi khung có `raw_video_prompt` / `camera_directive` hành động/góc máy riêng.
+  - [x] Test `_compile_part_with_ffmpeg_native` không bao giờ sử dụng `-stream_loop -1` cho video cảnh mà dùng `setpts` khớp 1:1 thời lượng.
+- [x] **Task 2: Triển khai Auto Story-Beat Shot Alignment & Non-Looping Compiler (Green State)**
+  - [x] Cập nhật `build_museai_story_script_prompt` và thêm `expand_scenes_to_match_story_beats` trong `video_studio/src/museai_3d_service.py`.
+  - [x] Cập nhật `video_studio/src/video_compiler.py` loại bỏ `-stream_loop -1` và `vfx.loop`, thay bằng đồng bộ `setpts` / `speedx` 1 lượt duy nhất.
+  - [x] Cập nhật `video_studio/src/app_museai.py` bỏ thanh trượt chọn số khung cố định, chuyển sang chế độ tự động chia khung khớp 1:1 theo câu chuyện.
+- [x] **Task 3: Kiểm chứng Unit Tests & Render lại E2E không lặp hình**
+  - [x] Chạy `pytest video_studio/tests/test_museai_3d.py` đạt 100% Green (15/15 passed).
+
+---
+
+# Kế Hoạch Nâng Cấp Kịch Bản & Lồng Tiếng Đa Giọng Đọc (Dẫn Chuyện + Tương Tác Nhân Vật) Đồng Bộ 100% Hình Ảnh 3D
+
+## 1. Phân tích nguyên nhân gốc rễ (Root Cause Analysis)
+1. **Tại sao kịch bản và lồng tiếng trước đó "chẳng đâu vào đâu"**:
+   - Ở lần chạy lỗi trước (`muse_flow_3d_20261023_145325`), do bộ đọc lấy nhầm JSON mẫu 1 cảnh trong câu hỏi của user, file lồng tiếng đọc câu mẫu *"Lời dẫn tiếng Việt tự nhiên, cuốn hút cho Cảnh 1."* trong khi hình ảnh video lại là cậu bé Leo nhặt chiếc la bàn.
+   - Ngay cả khi đọc đúng kịch bản 4 cảnh từ MuseAI, hàm `merge_flow_3d_scenes_into_final_movie` trước đây chỉ dùng **1 giọng đọc đơn điệu duy nhất (`vi-VN-HoaiMyNeural`)** đọc trơn một mạch đoạn văn mô tả ngôi thứ ba (`narration`). Khi trong kịch bản có lời thoại nhân vật trong ngoặc kép (ví dụ Cảnh 3: `'Mang hạt giống về, cậu bé sẽ được an toàn.'`), cùng một giọng nữ dẫn chuyện vẫn đọc đều đều, hoặc ở các cảnh khác nhân vật chỉ đứng im mà không có đối thoại/tương tác.
+   - `video_prompt` gửi sang Google Flow chưa gắn chặt chỉ dẫn diễn xuất biểu cảm/mấp máy môi và tương tác nhân vật khớp với lời thoại trong cảnh đó.
+
+## 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Viết Unit Tests (Red State) trong `video_studio/tests/test_museai_3d.py`**
+  - [x] Test cấu hình giọng đọc nhân vật (`resolve_voice_and_prosody` hỗ trợ `narrator`, `char_boy_bright`, `char_elder_deep`, `char_female_bright` với cao độ `pitch` và tốc độ `rate` phân biệt rõ rệt).
+  - [x] Test `build_museai_story_script_prompt` bắt buộc MuseAI sinh `dialogue_lines` kết hợp **Người dẫn chuyện (`narrator`) + Tương tác nhân vật (`character_1`, `character_2`)** và đồng bộ 1:1 với `video_prompt`.
+  - [x] Test `build_scene_dialogue_segments` tự động bóc tách lời dẫn chuyện + lời thoại nhân vật (kể cả khi kịch bản cũ trên MuseAI chỉ có `narration` đơn thuần hoặc lời thoại trong ngoặc `'...'`), gán đúng giọng từng vai.
+  - [x] Test `synthesize_museai_scenes_interactive_tts` tạo audio đa giọng đọc cho từng cảnh và cập nhật khớp 100% phụ đề `narration` + `video_prompt`.
+- [x] **Task 2: Triển khai Multi-Voice Narrator + Character Dialogue Engine (Green State)**
+  - [x] Bổ sung preset giọng nhân vật hoạt hình 3D vào `video_studio/src/config.py` và nâng cấp `resolve_voice_and_prosody` trong `video_studio/src/tts_service.py`.
+  - [x] Nâng cấp `build_museai_story_script_prompt`, `parse_museai_story_json`, `build_scene_dialogue_segments`, `clean_and_build_flow_3d_video_prompt`, và `synthesize_museai_scenes_interactive_tts` trong `video_studio/src/museai_3d_service.py`.
+  - [x] Cập nhật bảng theo dõi trực tiếp trên `video_studio/src/app_museai.py` để hiển thị rõ từng lượt **🎙️ Dẫn chuyện** và **🗣️ Nhân vật tương tác** của mỗi phân cảnh.
+- [x] **Task 3: Kiểm chứng Unit Test & Chạy thực nghiệm E2E tổng hợp âm thanh đa giọng đọc**
+  - [x] Chạy `pytest video_studio/tests/test_museai_3d.py` đạt 100% Green (12/12 passed).
+  - [x] Chạy thử nghiệm E2E trên kịch bản 4 cảnh `"Hạt Giống Ánh Sáng Cuối Cùng"` để xác nhận file MP3 từng cảnh có sự phối hợp nhịp nhàng giữa giọng Người dẫn chuyện và giọng các Nhân vật tương tác.
+
+---
+
+# Kế Hoạch Sửa Lỗi Triệt Để Luồng Studio Video 3D (MuseAI ➔ Google Flow): Đọc Đủ N Cảnh & Đưa Tuần Tự Từng Cảnh
+
+## 1. Phân tích nguyên nhân gốc rễ (Root Cause Analysis)
+1. **Lỗi chọn 4 cảnh nhưng hệ thống chỉ sinh `1/1` (`'Tên câu chuyện 3D'`)**:
+   - **Tự đọc nhầm chính câu lệnh mẫu của user (Self-Prompt Poisoning)**: Trong `build_museai_story_script_prompt`, câu lệnh gửi lên MuseAI có đính kèm một khối JSON mẫu 1 cảnh (`"story_title": "Tên câu chuyện 3D"`, `"narration": "Lời dẫn tiếng Việt tự nhiên, cuốn hút cho Cảnh 1."`).
+   - Biến `before_body_len` được đo **trước khi** gửi tin nhắn. Ngay khi tin nhắn của user được gửi lên khung chat MuseAI, bong bóng chat màu xanh của user xuất hiện trên DOM. Trong 12 giây đầu khi MuseAI đang suy nghĩ (`Thinking...`), độ dài trang đứng yên 2 chu kỳ (`stable_ticks >= 2`), khiến code chạy nhánh fallback `parse_museai_story_json(new_text)` và **bốc nhầm luôn khối JSON mẫu 1 cảnh nằm trong chính tin nhắn câu hỏi của user**!
+   - **Thu hoạch quá sớm khi MuseAI đang gõ dở (Premature Stream Read)**: Khi MuseAI bắt đầu gõ khối `<pre class="language-json">`, ngay khi mới gõ xong Cảnh 1 là chuỗi đã có `"scenes"` và `"video_prompt"`. Code cũ chỉ chờ cứng `2.5s` rồi đọc ngay nên hoặc bị lỗi JSON chưa đóng ngoặc, hoặc chưa đợi MuseAI gõ xong đủ 4 cảnh.
+2. **Lỗi thao tác trên Google Flow khi đưa từng cảnh vào**:
+   - Trên Google Flow, ô nhập prompt thật sự là `div.ProseMirror[role='textbox']`, còn thẻ `textarea` trên trang là `textarea.g-recaptcha-response` bị ẩn (`visible: false`). Lệnh `page.wait_for_selector("textarea", timeout=15000)` làm đứng chờ 15s vô ích ở mỗi cảnh.
+   - Selector nút gửi dùng `button[aria-label*='tạo' i]` bị khớp nhầm vào nút **`"Tạo bộ sưu tập"`** ở thanh bên trái thay vì nút gửi **`"Bắt đầu tạo"`** (`button[aria-label='Bắt đầu tạo']`).
+   - Khi tải qua nút Download hoặc kiểm tra URL video giữa các cảnh liên tiếp (Cảnh 1 -> Cảnh 2 -> Cảnh 3 -> Cảnh 4), nhánh nút Download chưa kiểm tra `self.seen_video_hashes` và URL chưa chuẩn hóa phần gốc trước dấu `?Expires=`, dễ dẫn đến nhận nhầm video của cảnh trước cho cảnh sau.
+
+## 2. Danh sách công việc (Todo Checklist)
+- [x] **Task 1: Viết Unit Tests tái hiện lỗi (Red State) trong `video_studio/tests/test_museai_3d.py`**
+  - [x] Kiểm tra `parse_museai_story_json` loại bỏ hoàn toàn mẫu placeholder (`"Tên câu chuyện 3D"`) và trích xuất đúng kịch bản 4 cảnh thật sự của MuseAI ngay cả khi chuỗi đầu vào chứa cả câu hỏi của user lẫn câu trả lời của MuseAI.
+  - [x] Kiểm tra `is_museai_script_complete` xác định đúng khi nào JSON của MuseAI đã gõ xong đủ `target_scenes` cảnh (ví dụ 4/4 cảnh).
+  - [x] Kiểm tra chuẩn hóa URL video Google Flow (`normalize_flow_video_url`) chống trùng lặp khi đổi `?Expires=`.
+- [x] **Task 2: Sửa triệt để bộ đọc kịch bản MuseAI & Bộ điều khiển Google Flow trong `video_studio/src/museai_3d_service.py` (Green State)**
+  - [x] Loại bỏ khối JSON mẫu gây nhiễu trong `build_museai_story_script_prompt` và thêm bộ lọc chống placeholder trong `parse_museai_story_json`.
+  - [x] Nâng cấp `generate_3d_script_via_museai`:
+    + Hỗ trợ tùy chọn đọc ngay kịch bản 3D hợp lệ đang có sẵn trên tab MuseAI nếu đã khớp đủ số cảnh (`read_latest_script_from_museai_tab`).
+    + Khi gửi lệnh mới: chỉ đọc từ thẻ `<pre>` của câu trả lời mới của MuseAI, theo dõi quá trình MuseAI gõ từng cảnh (`Đã viết X/4 phân cảnh...`), đợi đến khi `<pre>` ngừng tăng độ dài và đủ `target_scenes` cảnh mới chuyển sang Google Flow.
+  - [x] Nâng cấp `generate_scene_3d_video_on_google_flow`:
+    + Bỏ `wait_for_selector("textarea")` 15s; ưu tiên bắt ngay `div.ProseMirror[role='textbox']`.
+    + Bấm chính xác nút gửi `button[aria-label='Bắt đầu tạo']` / `button[aria-label='Start generation']` và xác nhận prompt đã được gửi đi.
+    + Đưa tuần tự từng cảnh (Cảnh 1/N ➔ Cảnh 2/N ➔ ... ➔ Cảnh N/N) vào Google Flow, kiểm tra `seen_video_hashes` và `normalize_flow_video_url` ở mọi nhánh tải video để đảm bảo mỗi cảnh nhận đúng video mới 100%.
+- [x] **Task 3: Nâng cấp Giao diện Web UI `video_studio/src/app_museai.py`**
+  - [x] Hiển thị trực tiếp bảng danh sách các phân cảnh đọc được từ MuseAI ngay trên giao diện trước và trong khi đưa từng cảnh vào Google Flow.
+  - [x] Thêm tùy chọn `"⚡ Đọc ngay kịch bản 3D đang có sẵn trên tab MuseAI (nếu đã đủ số cảnh)"` để người dùng có thể tận dụng ngay kịch bản 4 cảnh vừa sinh trên MuseAI hoặc yêu cầu viết kịch bản mới.
+- [x] **Task 4: Kiểm chứng Unit Test & Chạy thực nghiệm E2E trên Chrome CDP**
+  - [x] Chạy pytest xác nhận toàn bộ 8/8 unit & E2E tests trong `video_studio/tests/test_museai_3d.py` đạt Green (100% passed).
+  - [x] Kiểm tra đọc trực tiếp kịch bản 4 cảnh `"Hạt Giống Ánh Sáng Cuối Cùng"` từ tab MuseAI đang mở trên Chrome CDP cổng 9222: `OK: True Title: Hạt Giống Ánh Sáng Cuối Cùng Scenes: 4 [1, 2, 3, 4]`.
+
+---
+
+# Kế Hoạch Tích Hợp Luồng Tạo Video Hoạt Hình 3D MuseAI (muse.ai)
+
+## 1. Mục tiêu
+Tích hợp trọn vẹn luồng tạo Video Hoạt Hình 3D Cốt Truyện trên **MuseAI (`muse.ai`)** qua tab Chrome mở sẵn (CDP Port 9222) kết hợp AI Local (Ollama Few-Shot 3D Prompt Engine) theo đúng mã nguồn vừa tải về:
+- Đảm bảo 100% video hoạt hình 3D Pixar / Unreal Engine 5 CGI chất lượng cao, tuyệt đối cấm vẽ hình học 2D/stickman bằng code.
+- Khóa chặt nhân vật 3D (3D Character Bible Lock) xuyên suốt toàn bộ phân cảnh.
+- Tạo video tuần tự cho từng cảnh (Scene 1 -> Scene N), sau đó tự động ghép thành 1 video duy nhất.
+- Tích hợp trực tiếp vào giao diện Web UI (`video_studio/src/app.py`) và tạo script khởi động nhanh cho người dùng.
+
+---
+
+## 2. Danh sách các đầu việc (Todo Checklist)
+
+- [x] **Giai đoạn 1: Chuẩn bị tệp nguồn & Cấu hình MuseAI**
+  - [x] Di chuyển `museai_3d_service.py` từ Downloads vào `video_studio/src/museai_3d_service.py` (đồng thời tạo alias/export phù hợp).
+  - [x] Di chuyển `museai_3d_prompt_templates.md` từ Downloads vào `video_studio/docs/museai_3d_prompt_templates.md`.
+  - [x] Tạo file cấu hình `video_studio/museai_config.json` và cập nhật `.env.example`.
+  - [x] Tạo script khởi chạy nhanh `video_studio/scripts/Mo_Chrome_MuseAI.bat` để người dùng mở Chrome CDP chuẩn cổng 9222 vào `muse.ai`.
+
+- [x] **Giai đoạn 2: Tích hợp vào Web UI (`video_studio/src/app.py`)**
+  - [x] Thêm tab mới hoặc tùy chọn engine "🎬 MuseAI 3D Story (Pixar/UE5 Video CGI)" trong giao diện Streamlit.
+  - [x] Cho phép người dùng nhập đề tài, số lượng cảnh (1-10 cảnh), chọn tỷ lệ khung hình (9:16 Shorts / 16:9 Ngang), mô hình Ollama.
+  - [x] Hiển thị thông báo trạng thái kết nối Chrome CDP, tiến trình tạo video từng cảnh và nút phát video kết quả.
+
+- [x] **Giai đoạn 3: Viết Unit Test & Kiểm thử Tự động**
+  - [x] Viết test `video_studio/tests/test_museai_3d.py` kiểm tra:
+    - Bộ lọc cấm 2D hình học `FORBIDDEN_2D_GEOMETRIC_PATTERN` & `validate_and_enforce_true_3d_prompt`.
+    - Sinh prompt khởi tạo phiên & prompt từng cảnh theo chuẩn Pixar/UE5.
+    - Cấu trúc Prompt Script Few-Shot cho Ollama.
+  - [x] Chạy test suite xác nhận 100% tests Passed (5/5 tests MuseAI, 17/17 tests toàn hệ thống).
+
+- [x] **Giai đoạn 4: Khởi động thử nghiệm & Báo cáo hoàn tất**
+  - [x] Chạy thử nghiệm thành công quy trình biên kịch 3D & Character Bible Lock bằng Ollama `qwen2.5:14b`.
+  - [x] Cập nhật báo cáo và hướng dẫn chi tiết cho người dùng.
+
+
+---
+
+
 
 ## 1. Mục tiêu
 Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow.google.com`) từ repository `hongphuoc6104/tiktok-ytb` vào hệ thống hiện tại, cho phép:
@@ -604,4 +756,135 @@ Tích hợp quy trình sinh ảnh và tạo video dựa trên Google Flow (`flow
   - [x] Đo lường lại dung lượng thư mục sau dọn dẹp (tổng giải phóng ~2.04 GB).
   - [x] Kiểm chứng tính toàn vẹn của mã nguồn và test suite (13/13 tests passed).
 
+---
 
+## 6. Kế Hoạch Thay Thế & Tích Hợp Luồng Tạo Video & Tải Về Nâng Cấp (Video Studio v2)
+
+- [x] **Bước 1: Khảo sát và phân tích mã nguồn mới được cung cấp**
+  - [x] Phát hiện gói mã nguồn nâng cấp `youtube_video_studio_upgraded_v2.zip` tại thư mục Downloads.
+  - [x] Giải nén và so sánh cấu trúc file giữa `scratch/extracted_v2/video_studio` và `video_studio/`.
+  - [x] Phát hiện và sửa lỗi cú pháp `SyntaxError: unterminated f-string literal` trong `src/app_batch.py`.
+
+- [x] **Bước 2: Thay thế và đồng bộ mã nguồn vào `video_studio/`**
+  - [x] Sao chép các file module mới (`src/policy_engine.py`, `src/production_roles.py`, `src/publishing_package_service.py`, `src/video_qa_service.py`, `src/html_frame_animator.py`).
+  - [x] Thay thế các module luồng tạo video & tải về (`src/batch_producer.py`, `src/autonomous_factory.py`, `src/video_compiler.py`, `src/video_downloader.py`, `src/tts_service.py`, `src/story_contract_models.py`, `src/flow_browser_service.py`, `src/visual_beats.py`, `src/studio_editorial_service.py`, `src/studio_skill_registry.py`, `src/app_batch.py`, `src/config.py`, `src/__init__.py`).
+  - [x] Đồng bộ UI web mới (`studio_web_v3.html`, `run_web.bat`, `flow_config.json`, `requirements.txt`).
+  - [x] Đồng bộ skills và tests mới (`skills/html-canvas-video-animator/`, `tests/test_studio_upgrade_v2.py`).
+  - [x] Bảo toàn nguyên vẹn cấu hình môi trường `.env`, Chrome profile `flow_chrome_profile/` và assets thư viện.
+
+- [x] **Bước 3: Kiểm chứng toàn diện (Verification & Test Suite)**
+  - [x] Chạy bộ test mới `test_studio_upgrade_v2.py`: Đạt 9/9 test suites (100% passed in 180s bao gồm 11 roles, QA kiểm tra video corrupt/black/no audio, subtitle safe-zone, checkpoint resume, publish gate và real ffmpeg e2e render).
+  - [x] Chạy regression test suites của `video_studio/tests`: Đạt 23/23 tests passed (100%).
+  - [x] Xác nhận luồng tạo video, tải về và hậu kiểm QA hoạt động 100% không lỗi.
+
+- [x] **Bước 4: Cập nhật tài liệu & Sổ tay bài học**
+  - [x] Ghi nhận bài học về pipe deadlock, Windows file lock WinError 32 và Triple-tier TTS fallback vào `tasks/lessons.md`.
+  - [x] Cập nhật kết quả vào `tasks/todo.md`.
+
+---
+
+## 7. Khắc Phục Lỗi Script Chạy Hệ Thống & Khởi Động Web UI
+
+- [x] **Bước 1: Chẩn đoán nguyên nhân script không dùng được**
+  - [x] Phát hiện lỗi `ImportError: cannot import name 'STAGE_LABELS_VI' from 'src.autonomous_factory'` khi nạp Web UI Streamlit.
+  - [x] Phát hiện thiếu file thực thi `video_studio/run_web.bat`.
+  - [x] Phát hiện lỗi cú pháp ký tự `&` trong tiêu đề lệnh `view_booster/run.bat` (`'Shorts' is not recognized`).
+  - [x] Phát hiện toàn bộ tệp `.bat` bị định dạng xuống dòng Unix LF thay vì Windows CRLF.
+
+- [x] **Bước 2: Xử lý và sửa lỗi toàn diện**
+  - [x] Bổ sung từ điển đầy đủ `STAGE_LABELS_VI` vào `video_studio/src/autonomous_factory.py`.
+  - [x] Tạo mới file `video_studio/run_web.bat` hỗ trợ tự động mở Chrome CDP 9222 và Web UI port 8502.
+  - [x] Escape ký tự `^&` trong `view_booster/run.bat` và nâng cấp bộ phát hiện python trong các kịch bản chạy.
+  - [x] Chuyển đổi chuẩn hóa toàn bộ các file `.bat` trong dự án sang CRLF (`\r\n`).
+
+- [x] **Bước 3: Kiểm chứng thực tế**
+  - [x] Test import thành công `src.app` và `src.app_batch` không còn bất kỳ lỗi nào.
+  - [x] Test chạy `run.bat` gốc, `video_studio/run.bat` và `view_booster/run.bat` qua CMD: hoạt động trơn tru 100%.
+  - [x] Ghi nhận bài học 33 vào `tasks/lessons.md`.
+
+
+
+## 8. Hoạt hình timeline và kiểm tra Flow (2026-10-21)
+- [x] Cài ba skill HyperFrames animation/keyframes/creative trong dự án.
+- [x] Tích hợp bộ vẽ người có khớp, phong cảnh theo chủ đề và approach/action/resolve.
+- [x] Dùng chung dữ liệu frame cho HTML và Python; đổi Chrome renderer sang Playwright.
+- [x] Chặn bản biên tập mất narration và bỏ đường tắt nhận script sai schema.
+- [x] Sinh video ngang/dọc 144 frame/6 giây và Chrome 72 frame/3 giây.
+- [x] Kiểm chứng tạo/tải ảnh Flow thật thành công: output/animation_upgrade_preview/flow_live_check.png.
+
+
+---
+
+## 16. Khắc Phục Lỗi Cảnh 2/N Báo "Không Thành Công / Rất Tiếc, Không Tạo Được Video Này" Trên Google Flow (2026-10-23)
+
+- [x] **Tìm nguyên nhân gốc rễ trên Chrome CDP port 9222**:
+  - [x] Phát hiện sau khi Cảnh 1 click mở video để tải, Google Flow chuyển sang URL `/project/<uuid>/edit/<clip_id>` (chế độ `"Mô tả cách chỉnh sửa video này…"` dùng `Omni 1.1 Flash` thay vì `"Bạn muốn tạo gì?"` dùng `Veo`), và `_remember_flow_project_url` lưu đè URL `/edit/` vào `flow_config.json`.
+  - [x] Phát hiện card `"Không thành công"` của lần thử 1 còn lưu trên DOM khiến lần thử 2 bị ngắt sớm sau 16 giây.
+- [x] **Triển khai bản sửa lỗi triệt để trong [`video_studio/src/museai_3d_service.py`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py) và [`video_studio/src/flow_browser_service.py`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/flow_browser_service.py)**:
+  - [x] Cắt bỏ `/edit/` và `/tool/` trong `load_hybrid_config`, `_remember_flow_project_url`, `_remember_project_url` và khôi phục `video_studio/flow_config.json`.
+  - [x] Thêm `_exit_flow_edit_mode_if_needed()` tự động thoát màn hình `/edit/` về dự án chính ngay sau khi tải xong từng cảnh và trước khi bắt đầu cảnh mới.
+  - [x] Chặn `_find_google_flow_composer()` không bao giờ chọn ô nhập khi URL đang ở `/edit/`.
+  - [x] Đếm `pre_existing_failed_count` trước khi gửi lệnh để card lỗi cũ không làm ngắt nhầm lần thử lại.
+  - [x] Thêm `sanitize_prompt_for_flow_retry()` làm sạch từ khóa nhạy cảm (`9-year-old boy`, `child` -> `stylized Pixar 3D animated young explorer character`) khi thử lại.
+  - [x] Cân đối `max_words_per_shot=42` trong `_enrich_scenes_with_3d_prompts` để mỗi khung cảnh khớp tự nhiên với clip 10 giây của Google Flow (6–8 khung cảnh thay vì 15 khung quá vụn).
+- [x] **Kiểm chứng (Verification)**:
+  - [x] Đã điều hướng trực tiếp tab Google Flow trên Chrome port 9222 thoát khỏi `/edit/` về lại trang dự án chính.
+  - [x] Chạy bộ unit test & E2E test `pytest video_studio/tests/test_museai_3d.py -v`: **18/18 PASSED**.
+
+
+---
+
+## 17. Tự Động Tạo Dự Án / Phiên Mới Sạch Context Trên Google Flow Cho Mỗi Video (2026-10-23)
+
+- [x] **Triển khai `start_fresh_google_flow_project()` trong [`video_studio/src/museai_3d_service.py`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py#L1526-L1580)**:
+  - [x] Mỗi lần bắt đầu tạo một video/tập phim mới, tự động mở `https://flow.google.com/` và bấm **`Dự án mới` (`New project`)** để tạo không gian mới tinh, không bị tích tụ context hay video cũ.
+- [x] **Triển khai `_ensure_direct_video_composer_mode()` trong [`video_studio/src/museai_3d_service.py`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py#L1426-L1524)**:
+  - [x] Tự động bấm **`Bắt đầu phiên mới`** (`button[aria-label='Bắt đầu phiên mới']`) và **`Đóng`** bảng chat Tác nhân (Agent) bên phải để dùng thanh **Direct Video Composer** (mỗi cảnh gửi lệnh trực tiếp tới model Video, không cộng dồn lịch sử hội thoại).
+  - [x] Tự động mở **`Điều kiện kích hoạt cài đặt`** (`button[aria-label='Điều kiện kích hoạt cài đặt']`) và chuyển từ mặc định `🍌 Nano Banana 2.1 (Hình ảnh)` sang **`Video · 720p · 8 giây · 9:16 (hoặc 16:9) · x1`**.
+- [x] **Kiểm chứng thực tế & Unit/E2E Tests**:
+  - [x] Kiểm chứng trực tiếp trên Chrome CDP cổng 9222: Tạo dự án mới thành công và tự động chuyển thanh cài đặt sang `'Video · 720p · 8 giây crop_9_16 x1'`.
+  - [x] Chạy `pytest video_studio/tests/test_museai_3d.py -v`: **19/19 PASSED**.
+
+
+---
+
+## 18. Đóng Gói Skill `google-flow-3d-studio` & Kho Nhân Vật Cố Định 3D (`7-Point Character DNA Vault`) (2026-10-23)
+
+- [x] **Nghiên cứu kỹ thuật giữ nhân vật cố định (Character Consistency) chuẩn Google Flow / Veo**:
+  - [x] Áp dụng công thức **7-Point Character DNA Block** (`[Name & Stylized 3D Archetype]` + `[Face & Subsurface Skin Shader]` + `[Eye Color & Catchlights]` + `[Sculpted 3D Hair Clumps]` + `[Primary Wardrobe & Color Lock]` + `[Signature Accessories]` + `[Preservation Directive]`).
+  - [x] Loại bỏ từ khóa tuổi trẻ em nhạy cảm (`"9-year-old boy"`, `"child"`) ngay từ lần gửi đầu tiên để không bị bộ lọc an toàn của Veo từ chối.
+- [x] **Xây dựng module Kho Nhân Vật Cố Định 3D ([`video_studio/src/flow_character_vault.py`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/flow_character_vault.py))**:
+  - [x] Dựng sẵn 5 nhân vật 3D chuẩn Pixar/DreamWorks (`leo_explorer`, `milo_rusty`, `linh_magic`, `barnaby_bear`, `bibo_rabbit`).
+  - [x] Tự động lưu mọi nhân vật mới do MuseAI tạo vào `video_studio/temp/character_vault.json` và tích hợp bộ chọn **🎭 Kho Nhân Vật Cố Định 3D** lên giao diện [`video_studio/src/app_museai.py`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/app_museai.py#L148-L163).
+- [x] **Đóng gói Antigravity Skill & CLI Tool**:
+  - [x] Tạo Skill chuyên biệt [`.agents/skills/google-flow-3d-studio/SKILL.md`](file:///c:/Users/Admin/Desktop/youtube/.agents/skills/google-flow-3d-studio/SKILL.md).
+  - [x] Tạo công cụ CLI [`.agents/skills/google-flow-3d-studio/scripts/flow_doctor.py`](file:///c:/Users/Admin/Desktop/youtube/.agents/skills/google-flow-3d-studio/scripts/flow_doctor.py).
+  - [x] Kiểm thử `pytest video_studio/tests/test_museai_3d.py -v`: **20/20 PASSED**.
+
+
+---
+
+## 19. Khắc Phục Lỗi Đọc Lại Kịch Bản Cũ Trên Tab MuseAI Thay Vì Viết Cốt Truyện Mới Của Người Dùng (2026-10-23)
+
+- [x] **Tìm nguyên nhân trong log phiên 17:37:17**:
+  - [x] Do checkbox `reuse_existing_script` để mặc định `value=True` và trên tab `https://muse.ai/` vẫn đang mở cuộc trò chuyện cũ `"Hạt Giống Ánh Sáng Cuối Cùng"`, nên khi bấm chạy, hệ thống bốc ngay JSON cũ trên màn hình MuseAI mà không gửi cốt truyện mới của người dùng.
+- [x] **Triển khai sửa lỗi triệt để**:
+  - [x] Đổi mặc định `reuse_existing_script = False` và xóa text mẫu trong ô nhập `topic` ở [`video_studio/src/app_museai.py`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/app_museai.py#L89-L138).
+  - [x] Thêm hàm [`does_script_match_user_topic`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py#L765-L801) kiểm tra đối chiếu từ khóa `topic` với nội dung kịch bản.
+  - [x] Tự động bấm `button[aria-label='New side chat']` trên tab `https://muse.ai/` (đã test thực tế đưa `Pre count` từ `3` về `0`) trước khi gửi cốt truyện mới.
+  - [x] Kiểm thử `pytest video_studio/tests/test_museai_3d.py -v`: **21/21 PASSED**.
+
+
+---
+
+## 20. Khắc Phục Triệt Để Lỗi Cảnh 2/N Đứng Chờ 600s Dù Google Flow Đã Tạo Xong Video (2026-10-23)
+
+- [x] **Tìm nguyên nhân gốc rễ trên DOM của Google Flow**:
+  - [x] Phát hiện trên lưới Google Flow, video mới nhất luôn nằm ở **`index 0` (đầu danh sách bên trái)** dưới dạng `<img alt="Hình thu nhỏ của video đã tạo">` và chỉ biến thành `<video src="https://flow-content.google/video/...">` khi được **hover**.
+  - [x] Code cũ xếp `visible_triggers[-1]` (cảnh cũ nhất ở cuối danh sách) lên trước và có lệnh `break` ở vòng lặp đầu tiên nên không bao giờ hover vào `index 0` (Cảnh 2).
+- [x] **Triển khai hàm `_hover_newest_flow_video_thumbnails()` trong [`video_studio/src/museai_3d_service.py`](file:///c:/Users/Admin/Desktop/youtube/video_studio/src/museai_3d_service.py#L1737-L1781)**:
+  - [x] Ghi nhận `pre_existing_thumb_urls` trước khi gửi lệnh.
+  - [x] Tự động hover ưu tiên `index 0` (video mới nhất) và các thumbnail mới xuất hiện, **không click** để không nhảy vào `/edit/`.
+- [x] **Kiểm chứng thực tế & Unit Test**:
+  - [x] Đã test trực tiếp trên Chrome cổng 9222: ngay khi gọi `thumbs[0].hover()`, thẻ `<video src="https://flow-content.google/video/e55239f9-...">` của Cảnh 2 xuất hiện tức thì sau 1 giây!
+  - [x] Chạy `pytest video_studio/tests/test_museai_3d.py -v`: **22/22 PASSED**.

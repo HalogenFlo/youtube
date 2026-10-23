@@ -180,6 +180,7 @@ feature_mode = st.sidebar.selectbox(
     "🎯 Chọn tính năng chính",
     [
         "⚡ Xưởng Tự Động (Auto Batch Google Flow)",
+        "🚀 MuseAI 3D Story Engine (Pixar 3D CGI / Chrome CDP)",
         "🎬 Sản xuất Video Ngắn (Local SD / Wan 2.1)"
     ],
     key="feature_mode"
@@ -189,6 +190,18 @@ if feature_mode == "⚡ Xưởng Tự Động (Auto Batch Google Flow)":
     from src.app_batch import run_batch_ui
     run_batch_ui()
     st.stop()
+
+if feature_mode == "🚀 MuseAI 3D Story Engine (Pixar 3D CGI / Chrome CDP)":
+    import importlib
+    import src.tts_service as _tts_mod
+    import src.museai_3d_service as _muse_svc_mod
+    import src.app_museai as _app_museai_mod
+    importlib.reload(_tts_mod)
+    importlib.reload(_muse_svc_mod)
+    importlib.reload(_app_museai_mod)
+    _app_museai_mod.run_museai_ui()
+    st.stop()
+
 
 
 

@@ -11,7 +11,11 @@ import subprocess
 import threading
 from pathlib import Path
 from typing import Optional, Dict, Any, List, Tuple, Callable
-from playwright.sync_api import sync_playwright, Page, Frame, BrowserContext, Browser
+try:
+    from playwright.sync_api import sync_playwright, Page, Frame, BrowserContext, Browser
+except ImportError:
+    sync_playwright = None
+    Page = Frame = BrowserContext = Browser = Any
 
 if hasattr(sys.stdout, 'reconfigure'):
     try:
@@ -96,6 +100,32 @@ def is_valid_production_image(img_path_or_bytes: Any, min_color_variance: float 
     except Exception as exc:
         safe_log(f"[!] Lỗi khi kiểm tra chất lượng ảnh: {exc}")
         return False
+
+
+def submit_flow_prompt(page, input_box) -> Tuple[bool, str]:
+    """Only click the composer's submit control; verify the draft was consumed."""
+    selectors = [
+        "button[type='submit'][aria-label='Bắt đầu tạo']",
+        "button[type='submit'][aria-label='Start generation']",
+        "button[type='submit'].generate-icon-button",
+    ]
+    for selector in selectors:
+        buttons = page.locator(selector)
+        for index in range(buttons.count()):
+            button = buttons.nth(index)
+            if not button.is_visible() or not button.is_enabled():
+                continue
+            try:
+                button.click(timeout=5000)
+                for _ in range(20):
+                    draft = input_box.evaluate("e => typeof e.value === 'string' ? e.value : e.textContent")
+                    if not str(draft or '').strip():
+                        return True, "Prompt đã được gửi và ô nhập đã trống."
+                    page.wait_for_timeout(250)
+                return False, "Đã bấm gửi nhưng prompt vẫn còn trong ô nhập; chưa xác nhận gửi thành công."
+            except Exception as exc:
+                return False, f"Không gửi được prompt Flow: {exc}"
+    return False, "Không tìm thấy nút gửi trong ô soạn thảo Flow hoặc nút đang bị khóa."
 
 
 def upgrade_to_high_res_flow_url(url: str) -> str:
@@ -195,7 +225,7 @@ class FlowBrowserController:
         """Lưu project Flow vừa tạo/mở để các lần chạy sau đi thẳng vào đúng dự án."""
         if "/project/" not in url:
             return
-        project_url = url.split("/tool/", 1)[0].split("?", 1)[0].rstrip("/")
+        project_url = url.split("/tool/", 1)[0].split("/edit/", 1)[0].split("?", 1)[0].rstrip("/")
         self.cfg["project_url"] = project_url
         try:
             disk_cfg = load_flow_config()
@@ -207,7 +237,7 @@ class FlowBrowserController:
             safe_log(f"[WARNING] Không lưu được URL project Flow mới: {exc}")
 
     def _open_or_create_project(self) -> Tuple[bool, str]:
-        """Từ dashboard Flow, tự mở/tạo project để đạt trải nghiệm một nút."""
+        """Chỉ mở project đã lưu; không tự tạo project hoặc bộ sưu tập."""
         if not self.page:
             return False, "Không có trang Google Flow để mở project."
         if "/project/" in self.page.url:
@@ -216,28 +246,16 @@ class FlowBrowserController:
                 self._remember_project_url(self.page.url)
                 return True, "Project Google Flow đã sẵn sàng."
 
-        if "/404" in self.page.url:
-            self.page.goto("https://flow.google.com/", wait_until="domcontentloaded", timeout=30000)
-        try:
-            self.page.wait_for_timeout(2500)
-            labels = ["Dự án mới", "New project", "Create project"]
-            for label in labels:
-                candidate = self.page.get_by_text(label, exact=True)
-                for index in range(candidate.count()):
-                    item = candidate.nth(index)
-                    if item.is_visible():
-                        safe_log(f"[*] Đang tự tạo project Google Flow bằng nút '{label}'...")
-                        item.click(timeout=10000)
-                        self.page.wait_for_url("**/project/**", wait_until="domcontentloaded", timeout=45000)
-                        self.page.wait_for_timeout(5000)
-                        if "/404" in self.page.url or "/project/" not in self.page.url:
-                            return False, "Google Flow chuyển project vừa mở sang trang 404."
-                        self._remember_project_url(self.page.url)
-                        return True, "Đã tự tạo project Google Flow mới."
-        except Exception as exc:
-            safe_log(f"[WARNING] Chưa thể tự tạo project Google Flow: {exc}")
-
-        return False, "Không tìm thấy nút 'Dự án mới' trên dashboard Google Flow."
+        saved_url = str(self.cfg.get("project_url") or "")
+        if saved_url.startswith("https://flow.google.com/project/") and "/404" not in saved_url:
+            try:
+                self.page.goto(saved_url, wait_until="domcontentloaded", timeout=30000)
+                self.page.wait_for_timeout(4000)
+                if "/project/" in self.page.url and "/404" not in self.page.url:
+                    return True, "Đã mở lại project Flow đã lưu."
+            except Exception as exc:
+                return False, f"Không mở được project đã lưu: {exc}"
+        return False, "Hãy mở project Flow có sẵn. Tool không tự tạo project hoặc bộ sưu tập mới."
 
     def is_video_response(self, res) -> bool:
         """Kiểm tra một network response có phải là luồng video hợp lệ từ Flow hay không (hỗ trợ HTTP 200/206)."""
@@ -426,6 +444,7 @@ class FlowBrowserController:
         timeout_sec: Optional[int] = None,
         status_callback: Optional[Callable[[int, str], None]] = None,
         is_cancelled_callback: Optional[Callable[[], bool]] = None,
+        style_preset: str = "",
     ) -> Tuple[bool, str]:
         """
         Tự động đưa prompt lên Google Flow (Google Veo / Videos section),
@@ -544,53 +563,24 @@ class FlowBrowserController:
             except Exception:
                 pass
             ratio_hint = "vertical 9:16 portrait" if orientation == "vertical" else "horizontal 16:9 landscape"
+            if "stickman" in prompt.lower() or "stickman" in str(style_preset).lower():
+                char_guidance = f"\n{STICKMAN_CANONICAL_GUIDANCE}\n"
+            else:
+                char_guidance = (
+                    "\nAccurately illustrate the exact scene setting, characters, and actions described in the prompt. "
+                    "Rich environmental details, beautiful cinematic composition, natural motion.\n"
+                )
             full_prompt = (
-                "Generate exactly ONE 2D ANIMATION VIDEO CLIP, not a still image and strictly NO 3D. Strictly mute video, no audio generation, silent video only.\n"
-                f"Scene: {prompt.strip()}\n{STICKMAN_CANONICAL_GUIDANCE}\n"
-                f"Composition: {ratio_hint}. 2D hand-drawn motion, smooth 2D camera movement, flat cartoon aesthetics, no audio."
+                "Generate exactly ONE ANIMATION VIDEO CLIP, not a still image. Follow the requested visual style. Strictly mute video, no audio generation, silent video only.\n"
+                f"Scene: {prompt.strip()}{char_guidance}"
+                f"Composition: {ratio_hint}. Style: {style_preset}. Smooth camera movement, vibrant visual storytelling, no audio, no text."
             )
             input_box.fill(full_prompt)
             page.wait_for_timeout(500)
 
-            # 4. Tìm và bấm nút Generate / Tạo (hoặc ấn Enter)
-            btn_generate = None
-            btn_selectors = [
-                "button[aria-label='Start generation']",
-                "button[aria-label*='generate' i]",
-                "button[aria-label*='tạo' i]",
-                "button:has-text('Generate')",
-                "button:has-text('Tạo')",
-                "button[type='submit']",
-            ]
-            for b_sel in btn_selectors:
-                b_loc = page.locator(b_sel)
-                if b_loc.count() > 0 and b_loc.first.is_visible():
-                    btn_generate = b_loc.first
-                    break
-
-            clicked = False
-            if btn_generate:
-                try:
-                    btn_generate.click(force=True, timeout=5000)
-                    clicked = True
-                except Exception:
-                    pass
-            if not clicked:
-                try:
-                    input_box.press("Enter")
-                except Exception:
-                    pass
-
-            # Một số cấu hình Agent yêu cầu xác nhận trước khi tiêu credits.
-            page.wait_for_timeout(1500)
-            for confirm_name in ["Generate", "Confirm", "Continue", "Tạo", "Xác nhận"]:
-                confirm_button = page.get_by_role("button", name=confirm_name, exact=True)
-                try:
-                    if confirm_button.count() > 0 and confirm_button.first.is_visible():
-                        confirm_button.first.click()
-                        break
-                except Exception:
-                    pass
+            submitted, submit_message = submit_flow_prompt(page, input_box)
+            if not submitted:
+                return False, submit_message
 
             safe_log("[*] Đã bấm nút Tạo video trên Google Flow! Đang chờ AI render clip...")
 
@@ -673,7 +663,7 @@ class FlowBrowserController:
                     try:
                         triggers = page.locator(
                             "[aria-label*='Mở video' i], img[alt*='Hình thu nhỏ của video'], "
-                            "button[aria-label*='Play' i], button:has-text('play_circle'), div:has-text('play_circle')"
+                            "button[aria-label*='Play' i], button:has-text('play_circle')"
                         ).all()
                         for trigger in triggers[:2]:
                             if trigger.is_visible():
@@ -853,19 +843,14 @@ class FlowBrowserController:
             if tool_frame:
                 safe_log("[*] Phát hiện Google Flow Tool iframe (Nano Banana Pro). Đang điền prompt...")
                 try:
-                    # Nếu màn hình đang hiển thị kết quả phân cảnh trước (có nút add), bấm add để reset form
-                    for b_el in tool_frame.locator("button").all():
-                        if "add" in b_el.inner_text().lower():
-                            b_el.click()
-                            page.wait_for_timeout(800)
-                            break
-
                     existing_tool_imgs = {img.get_attribute("src") for img in tool_frame.locator("img").all() if img.get_attribute("src")}
                     ta = tool_frame.locator("textarea").first
                     ta.fill(prompt)
                     page.wait_for_timeout(300)
-                    gen_btn = tool_frame.locator("button").first
-                    gen_btn.click()
+                    gen_btn = tool_frame.get_by_role("button", name="TẠO ẢNH CINEMATIC", exact=True)
+                    if gen_btn.count() != 1 or not gen_btn.is_visible() or not gen_btn.is_enabled():
+                        return False, "Không tìm thấy duy nhất nút TẠO ẢNH CINEMATIC hợp lệ trong Tool."
+                    gen_btn.click(timeout=5000)
                     safe_log("[*] Đã bấm nút 'TẠO ẢNH CINEMATIC' trong Flow Tool. Đang chờ Nano Banana Pro hoàn tất...")
 
                     start_time = time.time()
@@ -937,34 +922,24 @@ class FlowBrowserController:
                 pass
 
             ratio_hint = "vertical 9:16 portrait" if orientation == "vertical" else "horizontal 16:9 landscape"
+            if "stickman" in prompt.lower() or "stickman" in str(style_preset).lower():
+                char_guidance = f"\n{STICKMAN_CANONICAL_GUIDANCE}\n"
+            else:
+                char_guidance = (
+                    "\nAccurately illustrate the exact scene setting, characters, and actions described in the prompt. "
+                    "Rich environmental details, beautiful cinematic composition.\n"
+                )
             full_prompt = (
                 "Generate exactly ONE single still image for this scene, DO NOT generate multiple variants or batches.\n"
-                f"Scene: {prompt.strip()}\n{STICKMAN_CANONICAL_GUIDANCE}\n"
+                f"Scene: {prompt.strip()}{char_guidance}"
                 f"Style: {style_preset}. Composition: {ratio_hint}. 4k resolution, rich colors, no text, no captions."
             )
             input_box.fill(full_prompt)
             page.wait_for_timeout(500)
 
-            # Bấm Generate
-            btn_selectors = [
-                "button[aria-label='Start generation']",
-                "button[aria-label*='generate' i]",
-                "button:has-text('Generate')",
-                "button:has-text('Tạo')",
-            ]
-            btn = None
-            for b_sel in btn_selectors:
-                b_loc = page.locator(b_sel)
-                if b_loc.count() > 0 and b_loc.first.is_visible():
-                    btn = b_loc.first
-                    break
-            if btn:
-                try:
-                    btn.click(force=True, timeout=5000)
-                except Exception:
-                    input_box.press("Enter")
-            else:
-                input_box.press("Enter")
+            submitted, submit_message = submit_flow_prompt(page, input_box)
+            if not submitted:
+                return False, submit_message
 
             safe_log("[*] Đã gửi lệnh sinh ảnh lên Google Flow. Đang chờ ảnh hoàn tất...")
             start_time = time.time()

@@ -1,4 +1,5 @@
 @echo off
+setlocal enabledelayedexpansion
 title Khoi chay Chrome cho Google Flow
 cd /d "%~dp0\.."
 echo ============================================================

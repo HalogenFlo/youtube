@@ -1,0 +1,10 @@
+{
+  "museai_url": "https://muse.ai/",
+  "cdp_port": 9222,
+  "chrome_user_data_dir": "video_studio/flow_chrome_profile",
+  "profile_directory": "Default",
+  "story_timeout_seconds": 180,
+  "storyboard_timeout_seconds": 120,
+  "scene_video_timeout_seconds": 480,
+  "merge_video_timeout_seconds": 360
+}

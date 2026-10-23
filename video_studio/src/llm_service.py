@@ -4,6 +4,7 @@
 
 import json
 import re
+import os
 import requests
 from typing import Tuple, Dict, Any, List, Optional
 from src.config import OLLAMA_API_URL, OLLAMA_MODEL_DEFAULT
@@ -87,12 +88,14 @@ def call_ollama(prompt: str, system_prompt: str, model: str = OLLAMA_MODEL_DEFAU
     """
     payload = {
         "model": model,
-        "prompt": f"System:\n{system_prompt}\n\nUser:\n{prompt}",
+        "system": system_prompt,
+        "prompt": prompt,
         "format": "json",
         "stream": False,
         "options": {
             "temperature": 0.7,
-            "num_predict": 2048
+            "num_predict": int(os.getenv("OLLAMA_NUM_PREDICT", "8192")),
+            "num_ctx": int(os.getenv("OLLAMA_NUM_CTX", "16384")),
         }
     }
     
@@ -100,6 +103,8 @@ def call_ollama(prompt: str, system_prompt: str, model: str = OLLAMA_MODEL_DEFAU
         response = requests.post(OLLAMA_API_URL, json=payload, timeout=300)
         if response.status_code == 200:
             result = response.json()
+            if result.get("done_reason") == "length":
+                return False, "Kịch bản bị cắt vì hết ngân sách token; cần giảm số cảnh hoặc tăng OLLAMA_NUM_PREDICT."
             response_text = result.get("response", "").strip()
             try:
                 data = json.loads(response_text)
@@ -176,11 +181,26 @@ def generate_script(
             f"giữ nguyên nhân vật và logic tình huống, tuyệt đối không nhảy sang đề tài khác không liên quan!\n"
         )
 
+    story_blueprint = None
+    if content_mode == "story_explainer":
+        ok_plan, plan = call_ollama(
+            f"Chủ đề: {topic}. Ngôn ngữ: {language}. {scene_count_rule}\n"
+            f"Bối cảnh tập trước: {previous_context or 'Không có'}.\n"
+            "Lập trục truyện trước khi viết lời dẫn: một nhân vật/điểm nhìn, một mục tiêu, "
+            "một trở ngại cụ thể, hành động gây ra hệ quả, cao trào và kết thúc giải quyết câu hỏi mở đầu. "
+            "Với lịch sử/khoa học: phân biệt sự kiện có căn cứ với tình huống minh họa hư cấu; không bịa mốc thời gian. "
+            "Trả JSON gồm premise, protagonist, goal, obstacle, payoff, beats. Mỗi beat có "
+            "cause, action, consequence, state_before, state_after. Cảnh sau phải xuất phát từ hệ quả cảnh trước. "
+            "Không viết narration ở bước này. Không thêm triết lý chung chung hay CTA.",
+            "Bạn là biên tập cấu trúc truyện. Chỉ trả JSON. Ưu tiên nhân quả và hành động quan sát được.", model)
+        if ok_plan and isinstance(plan, dict) and all(plan.get(k) for k in ('premise','goal','obstacle','payoff','beats')):
+            story_blueprint = plan
+
     user_prompt = (
         f"Hãy viết kịch bản video ngắn cho chủ đề/ý tưởng sau: \"{topic}\".\n"
         f"{mode_instruction}"
         f"{series_note}"
-        f"Phong cách hình ảnh yêu cầu cho các video prompt: \"{style_preset}\". BẮT BUỘC là 2D animation, flat 2d cartoon, cel-shaded illustration. CẤM HOÀN TOÀN 3D, CGI, realistic render.\n"
+        f"Phong cách hình ảnh yêu cầu cho các video prompt: \"{style_preset}\". Giữ nhất quán phong cách này trong mọi cảnh.\n"
         f"{scene_count_rule}\n"
         "ĐỒNG BỘ 1:1 HÀNH ĐỘNG HÌNH ẢNH VÀ LỜI THOẠI: "
         "Hành động của nhân vật trong 'video_prompt' BẮT BUỘC phải mô tả chính xác nội dung đang được kể trong 'narration' của cảnh đó.\n"
@@ -191,7 +211,26 @@ def generate_script(
         "ĐẶC BIỆT: Lời thoại giữa các phân cảnh phải tạo thành MỘT CÂU CHUYỆN LIỀN MẠCH DUY NHẤT, có từ nối chuyển cảnh tự nhiên, "
         "tuyệt đối không nhảy đề tài hay nói chắp vá ngắt quãng. Cấu trúc đúng định dạng JSON."
     )
-    return call_ollama(user_prompt, get_system_prompt(language, content_mode), model)
+    if story_blueprint:
+        user_prompt += "\nTRỤC TRUYỆN ĐÃ LẬP: " + json.dumps(story_blueprint, ensure_ascii=False)
+        user_prompt += (
+            "\nViết theo đúng trục này. Mỗi cảnh chỉ có một bước tiến mới, 1–2 câu ngắn, "
+            "khoảng 18–30 từ tiếng Việt; lời dẫn bổ sung ý nghĩa thay vì đọc lại toàn bộ hành động đang thấy. "
+            "Giữ nhân vật, địa điểm và trạng thái đồ vật nhất quán. Không mở đầu lại ở từng cảnh. "
+            "Cảnh cuối giải quyết mục tiêu/câu hỏi đầu, không chèn bài học truyền cảm hứng chung chung. "
+            "Mỗi scene bổ sung story_beat, cause, consequence, state_before, state_after. "
+            "Bổ sung shots: danh sách các shot 4–6 giây; mỗi shot có action (tiếng Anh), camera, state_before, state_after. "
+            "Chia các bước hành động khác nhau, không lặp mô tả toàn cảnh cho mọi shot."
+        )
+    system_prompt = get_system_prompt(language, content_mode)
+    if "3d" in style_preset.lower() and "no 3d" not in style_preset.lower():
+        system_prompt = system_prompt.replace("strictly no 3d", "stylized 3D animated feature film").replace("no cgi", "cinematic lighting")
+        system_prompt = system_prompt.replace("2d animation", "3D character animation").replace("flat 2d cartoon", "stylized 3D animation").replace("cel-shaded vector art", "detailed cinematic materials")
+        system_prompt = system_prompt.replace("cấm tuyệt đối 3D/CGI", "giữ đúng phong cách yêu cầu").replace("cấm 3D/CGI", "giữ đúng phong cách yêu cầu").replace("cấm 3D", "cho phép 3D")
+    ok_script, script = call_ollama(user_prompt, system_prompt, model)
+    if ok_script and isinstance(script, dict) and story_blueprint:
+        script = dict(script, story_blueprint=story_blueprint)
+    return ok_script, script
 
 
 def _fallback_video_metadata(topic: str, language: str = "vi") -> Dict[str, Any]:

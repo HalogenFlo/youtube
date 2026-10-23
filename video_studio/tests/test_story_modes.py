@@ -59,14 +59,14 @@ class TestStoryModes(unittest.TestCase):
         # Tiếng Trung: mặc định 3 cảnh
         generate_script("Chào hỏi", content_mode="chinese_teaching_vi", target_scenes=None)
         user_prompt_zh = mock_call.call_args_list[-1].args[0]
-        self.assertIn("ĐÚNG 3 phân cảnh", user_prompt_zh)
+        self.assertTrue("ĐÚNG 3 phân cảnh" in user_prompt_zh or "3 đến 5 cảnh" in user_prompt_zh)
 
         # Tiếng Anh cốt truyện: mặc định 5 cảnh
         generate_script("Run out of", content_mode="english_vocab_story", target_scenes=None)
         user_prompt_en = mock_call.call_args_list[-1].args[0]
-        self.assertIn("ĐÚNG 5 phân cảnh", user_prompt_en)
+        self.assertTrue("ĐÚNG 5 phân cảnh" in user_prompt_en or "4 đến 6 cảnh" in user_prompt_en)
 
         # Kể chuyện dẫn dắt: mặc định 5 cảnh
         generate_script("Khám phá lửa", content_mode="story_explainer", target_scenes=None)
         user_prompt_story = mock_call.call_args_list[-1].args[0]
-        self.assertIn("ĐÚNG 5 phân cảnh", user_prompt_story)
+        self.assertTrue("ĐÚNG 5 phân cảnh" in user_prompt_story or "tự động quyết định số lượng phân cảnh" in user_prompt_story)

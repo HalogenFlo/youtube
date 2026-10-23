@@ -1,6 +1,6 @@
 @echo off
 title Mo Chrome Google Flow (Tu dong hoa)
-cd /d "%~dp0"
+cd /d "%~dp0\.."
 
 set "CHROME_EXE=C:\Program Files\Google\Chrome\Application\chrome.exe"
 if not exist "%CHROME_EXE%" set "CHROME_EXE=C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
