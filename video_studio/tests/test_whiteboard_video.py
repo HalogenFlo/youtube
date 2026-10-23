@@ -89,7 +89,8 @@ def test_frame_starts_blank_and_ends_fully_drawn_with_hand_visible_midway():
 
 def test_drawn_pixels_grow_monotonically_over_time():
     items = layout_scene_items({"whiteboard_items": [{"type": "circle", "x": 0.5, "y": 0.5, "r": 0.3}]})
-    r = WhiteboardRenderer(items, duration=3.0, size=SIZE)
+    # Test the artwork mask independently of a photographic hand occluding the ink.
+    r = WhiteboardRenderer(items, duration=3.0, size=SIZE, show_hand=False)
     final = r.render_frame(3.0).convert("L")
     final_ink = {i for i, p in enumerate(final.getdata()) if p < 90}
 

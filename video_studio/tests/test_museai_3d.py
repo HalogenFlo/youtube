@@ -37,6 +37,19 @@ except ModuleNotFoundError:
     )
 
 
+@pytest.fixture(autouse=True)
+def isolate_live_museai_state(tmp_path, monkeypatch):
+    """Regression tests must not overwrite the user's Flow project or series ledger."""
+    monkeypatch.setattr(muse_svc, "TEMP_DIR", tmp_path)
+    monkeypatch.setattr(muse_svc, "FLOW_CONFIG_PATH", tmp_path / "flow_config.json")
+    from src import flow_character_vault
+    original_save = flow_character_vault.save_character_to_vault
+    def isolated_save(*args, **kwargs):
+        kwargs.setdefault("vault_path", tmp_path / "character_vault.json")
+        return original_save(*args, **kwargs)
+    monkeypatch.setattr(flow_character_vault, "save_character_to_vault", isolated_save)
+
+
 def test_clean_and_build_flow_3d_video_prompt_filters_2d_and_enforces_pixar():
     """Kiểm tra clean_and_build_flow_3d_video_prompt quét sạch từ khóa 2d/stickman và ép chuẩn Pixar 3D cho Google Flow."""
     dirty_prompt = (
@@ -372,7 +385,8 @@ def test_synthesize_museai_scenes_interactive_tts_and_visual_sync(tmp_path, monk
 
     called_multivoice = []
 
-    def fake_multivoice(segments, output_path):
+    def fake_multivoice(segments, output_path, **kwargs):
+        assert kwargs["strict_language"] is True
         called_multivoice.append((segments, output_path))
         Path(output_path).write_bytes(b"ID3" + b"A" * 4000)
         return True, output_path

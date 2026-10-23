@@ -318,7 +318,8 @@ def _try_cloud_google_translate_tts(text: str, output_path: str, lang: str = "vi
     return False, "Google TTS empty response"
 
 
-def _run_edge_tts_direct(text: str, output_path: str, voice: str, rate: str) -> Tuple[bool, str]:
+def _run_edge_tts_direct(text: str, output_path: str, voice: str, rate: str,
+                         strict_language: bool = False) -> Tuple[bool, str]:
     """
     Sinh audio trực tiếp qua API edge_tts.Communicate của Python.
     Nếu môi trường không cài đặt `edge_tts`, sử dụng bộ tổng hợp âm thanh FFmpeg dự phòng.
@@ -327,6 +328,8 @@ def _run_edge_tts_direct(text: str, output_path: str, voice: str, rate: str) -> 
     try:
         import edge_tts
     except ImportError:
+        if strict_language:
+            return False, "Thiếu edge-tts để phát âm đúng ngôn ngữ bài học."
         return _synthesize_offline_speech_audio_ffmpeg(text, output_path)
 
     parent_dir = os.path.dirname(output_path)
@@ -380,6 +383,8 @@ def _run_edge_tts_direct(text: str, output_path: str, voice: str, rate: str) -> 
             apply_broadcast_vocal_mastering(output_path, eq_filter)
             return True, output_path
 
+        if strict_language:
+            return False, str(exc)
         ok_off, res_off = _synthesize_offline_speech_audio_ffmpeg(text, output_path)
         if ok_off and os.path.exists(output_path) and os.path.getsize(output_path) > 1000:
             return True, output_path
@@ -392,6 +397,7 @@ def generate_tts(
     output_path: str,
     voice: str = TTS_VOICE_DEFAULT,
     rate: str = "+0%",
+    strict_language: bool = False,
 ) -> Tuple[bool, str]:
     """
     Sinh file audio giọng đọc từ văn bản sử dụng API edge-tts với cơ chế phục hồi cao.
@@ -399,6 +405,10 @@ def generate_tts(
     clean_text = sanitize_tts_text(text)
     if not clean_text or not clean_text.strip():
         return False, "Văn bản trống hoặc chỉ chứa ký hiệu, không thể sinh giọng đọc."
+
+    from .vieneu_service import is_vieneu_voice, generate_vieneu_batch
+    if is_vieneu_voice(voice):
+        return generate_vieneu_batch([(clean_text, voice, rate, output_path)])
 
     voices_to_try = [voice]
     alt_voice = VOICE_FALLBACK_MAP.get(voice)
@@ -414,11 +424,13 @@ def generate_tts(
     for v_idx, current_voice in enumerate(voices_to_try):
         max_attempts = 3
         for attempt in range(max_attempts):
+            strict_options = {"strict_language": True} if strict_language else {}
             success, result_or_err = _run_edge_tts_direct(
                 text=clean_text,
                 output_path=output_path,
                 voice=current_voice,
                 rate=rate,
+                **strict_options,
             )
             if success:
                 return True, output_path
@@ -430,7 +442,7 @@ def generate_tts(
         if v_idx < len(voices_to_try) - 1:
             time.sleep(0.5)
 
-    if "No audio was received" in last_err or len(clean_text) < 35:
+    if not strict_language and ("No audio was received" in last_err or len(clean_text) < 35):
         padding_prefixes = ["Và rồi, ", "Thế là, ", "Lúc này, "]
         for prefix in padding_prefixes:
             padded_sentence = f"{prefix}{clean_text.rstrip('.')}."
@@ -489,6 +501,8 @@ def clean_vietnamese_tts_text(text: str) -> str:
 def generate_multivoice_tts(
     segments: List[Tuple[str, str, str]],
     output_path: str,
+    strict_language: bool = False,
+    segment_timing_callback: Optional[Callable[[List[Dict[str, Any]]], None]] = None,
 ) -> Tuple[bool, str]:
     """Sinh từng đoạn bằng đúng giọng/ngôn ngữ rồi nối thành một file MP3."""
     parent_dir = os.path.dirname(output_path) or "."
@@ -514,12 +528,31 @@ def generate_multivoice_tts(
         if not usable_segments:
             return False, "Không có nội dung để sinh giọng đọc đa ngôn ngữ."
 
+        from .vieneu_service import is_vieneu_voice, generate_vieneu_batch
+        local_jobs = [(sanitize_tts_text(text), voice, rate,
+                       os.path.join(parent_dir, f".{stem}_segment_{index:02d}.mp3"))
+                      for index, (text, voice, rate) in enumerate(usable_segments, start=1)
+                      if is_vieneu_voice(voice)]
+        temp_paths.extend(os.path.join(parent_dir, f".{stem}_segment_{index:02d}.mp3")
+                          for index in range(1, len(usable_segments) + 1))
+        ok, error = generate_vieneu_batch(local_jobs)
+        if not ok:
+            return False, error
+        measured_segments = []
         for index, (text, voice, rate) in enumerate(usable_segments, start=1):
             segment_path = os.path.join(parent_dir, f".{stem}_segment_{index:02d}.mp3")
-            temp_paths.append(segment_path)
-            ok, result = generate_tts(text, segment_path, voice=voice, rate=rate)
-            if not ok:
-                return False, result
+            if segment_path not in temp_paths:
+                temp_paths.append(segment_path)
+            strict_options = {"strict_language": True} if strict_language else {}
+            if not is_vieneu_voice(voice):
+                ok, result = generate_tts(text, segment_path, voice=voice, rate=rate, **strict_options)
+                if not ok:
+                    return False, result
+            if segment_timing_callback:
+                measured_segments.append({"text": text, "voice": voice, "duration": get_audio_duration(segment_path)})
+
+        if segment_timing_callback:
+            segment_timing_callback(measured_segments)
 
         try:
             from moviepy.editor import AudioFileClip, concatenate_audioclips
@@ -544,6 +577,8 @@ def generate_multivoice_tts(
                 res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
                 if res.returncode == 0 and os.path.exists(output_path) and os.path.getsize(output_path) > 0:
                     return True, output_path
+            if strict_language:
+                return False, "Không thể ghép âm thanh bài học bằng FFmpeg."
             # Nếu file trong unit test là mock bytes không phải MP3 thật
             with open(output_path, "wb") as out_f:
                 for sp in temp_paths:

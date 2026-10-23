@@ -1,12 +1,12 @@
 # ==============================================================================
-# WHITEBOARD STICKMAN: video "bàn tay vẽ" (nhân vật que + sơ đồ/chữ hiện dần khi tay lướt qua)
+# WHITEBOARD: bàn tay thật cầm bút, nét viền được vẽ trước rồi tô màu minh họa.
 # ------------------------------------------------------------------------------
 # Thiết kế (học từ videomake_gpt / cs-board / stickman-video-director):
 #   - Vẽ bằng Pillow từng "item" (text / circle / box / arrow / stickman) thành 1 layer RGBA riêng
 #     (mask partition: mỗi item là 1 khối nội dung được "mở khóa" theo thời gian).
-#   - Mỗi item được lộ dần từ trái sang phải; sprite bàn tay cầm bút bám theo mép lộ.
+#   - Theo các nét liền trên ảnh; đầu bút ảnh tay thật bám đúng điểm đang được mở.
 #   - Frame được đẩy thẳng vào FFmpeg (rawvideo qua stdin) cùng audio TTS -> mp4. 0 credit Google Flow.
-#   - Phong cách tối giản: nét mực đen trên nền trắng + tối đa 3 màu nhấn (red / blue / green).
+#   - Minh họa 2D màu pastel trên nền trắng, hỗ trợ thêm sơ đồ và người que.
 # ==============================================================================
 from __future__ import annotations
 
@@ -14,11 +14,15 @@ import math
 import os
 import re
 import subprocess
-from typing import Any, Dict, List, Optional, Tuple
+import tempfile
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageChops, ImageDraw, ImageFont
 
-VALID_TYPES = {"text", "circle", "box", "arrow", "stickman"}
+from src.whiteboard_drawing import trace_outline, brush_plan, draw_progress
+from src.whiteboard_illustrations import ASSET_DIR, ILLUSTRATIONS, illustration_image, local_image_path
+
+VALID_TYPES = {"text", "circle", "box", "arrow", "stickman", "illustration", "image", "ai_image"}
 VALID_EMOTIONS = {"happy", "sad", "surprised", "angry", "neutral", "thinking"}
 ACCENT_COLORS = {
     "black": (20, 20, 20),
@@ -38,14 +42,16 @@ FONT_CANDIDATES = [
 
 def _clamp01(v: Any, default: float = 0.5) -> float:
     try:
-        return max(0.0, min(1.0, float(v)))
+        value = float(v)
+        return max(0.0, min(1.0, value)) if math.isfinite(value) else default
     except (TypeError, ValueError):
         return default
 
 
 def _num(v: Any, default: float, lo: float = 0.01, hi: float = 1.0) -> float:
     try:
-        return max(lo, min(hi, float(v)))
+        value = float(v)
+        return max(lo, min(hi, value)) if math.isfinite(value) else default
     except (TypeError, ValueError):
         return default
 
@@ -99,6 +105,23 @@ def _normalize_item(raw: Any) -> Optional[Dict[str, Any]]:
         item["emotion"] = emo if emo in VALID_EMOTIONS else "neutral"
         item["h"] = _num(raw.get("h"), 0.26, 0.08, 0.6)
         item["name"] = str(raw.get("name") or "").strip()
+    elif t == "ai_image":
+        item["prompt"] = str(raw.get("prompt") or "").strip()
+        item["w"] = _num(raw.get("w"), .55, .05, .92)
+        item["h"] = _num(raw.get("h"), .45, .05, .72)
+    elif t in {"illustration", "image"}:
+        item["asset"] = str(raw.get("asset") or "").strip()
+        if not item["asset"]:
+            return None
+        item["w"] = _num(raw.get("w"), .55, .05, .92)
+        item["h"] = _num(raw.get("h"), .45, .05, .72)
+        if t == "illustration" and item["asset"] not in ILLUSTRATIONS:
+            item["type"] = "ai_image"
+            item["prompt"] = str(raw.get("prompt") or raw.get("description")
+                                 or ("An educational illustration of " + item.pop("asset").replace("_", " "))).strip()
+        elif t == "image" and raw.get("ai_generated") and raw.get("generation_prompt"):
+            item["ai_generated"] = True
+            item["generation_prompt"] = str(raw["generation_prompt"])
     return item
 
 
@@ -113,7 +136,7 @@ def layout_scene_items(scene: Dict[str, Any]) -> List[Dict[str, Any]]:
     scene = scene if isinstance(scene, dict) else {}
     raw_items = scene.get("whiteboard_items")
     if isinstance(raw_items, list):
-        items = [it for it in (_normalize_item(r) for r in raw_items) if it]
+        items = [it for it in (_normalize_item(r) for r in raw_items[:40]) if it]
         if items:
             return items
 
@@ -180,18 +203,30 @@ def _draw_text_centered(
     color: Tuple[int, int, int],
     max_w_px: Optional[float] = None,
 ):
-    px = int(size_frac * cv.w * SS)
-    font = _load_font(px)
-    max_w = max_w_px if max_w_px else cv.w * SS * 0.92
-    while px > 10:
-        bbox = cv.d.textbbox((0, 0), text, font=font)
-        if bbox[2] - bbox[0] <= max_w:
-            break
-        px = int(px * 0.9)
+    px = max(10, int(size_frac * cv.w * SS))
+    max_w = min(max_w_px or cv.w * SS * 0.9, 2 * min(cx, cv.w * SS - cx) - cv.lw)
+    max_w = max(20, max_w)
+    # Wrap before shrinking: long Vietnamese labels remain readable on 1080p boards.
+    while True:
         font = _load_font(px)
-    bbox = cv.d.textbbox((0, 0), text, font=font)
+        lines = []
+        current = ""
+        for word in str(text).split():
+            candidate = f"{current} {word}".strip()
+            if current and cv.d.textlength(candidate, font=font) > max_w:
+                lines.append(current)
+                current = word
+            else:
+                current = candidate
+        lines.append(current)
+        wrapped = "\n".join(lines)
+        bbox = cv.d.multiline_textbbox((0, 0), wrapped, font=font, spacing=px // 5)
+        if px <= 10 or (bbox[2] <= max_w and bbox[3] - bbox[1] <= cv.h * SS * .16):
+            break
+        px = max(10, int(px * .9))
     tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    cv.d.text((cx - tw / 2 - bbox[0], cy - th / 2 - bbox[1]), text, font=font, fill=color)
+    cv.d.multiline_text((cx - tw / 2 - bbox[0], cy - th / 2 - bbox[1]), wrapped,
+                        font=font, fill=color, spacing=px // 5, align="center")
 
 
 def _draw_face(cv: _Canvas, cx: float, cy: float, r: float, emotion: str):
@@ -266,6 +301,8 @@ def _draw_arrow(cv: _Canvas, item: Dict[str, Any]):
 
 
 def _draw_item_layer(item: Dict[str, Any], size: Tuple[int, int]) -> Image.Image:
+    if item["type"] == "ai_image":
+        raise ValueError("Cần tạo minh họa AI trước khi dựng tay vẽ.")
     cv = _Canvas(size)
     color = ACCENT_COLORS[item["color"]]
     t = item["type"]
@@ -288,37 +325,39 @@ def _draw_item_layer(item: Dict[str, Any], size: Tuple[int, int]) -> Image.Image
         _draw_arrow(cv, item)
     elif t == "stickman":
         _draw_stickman(cv, item)
+    elif t in {"illustration", "image"}:
+        if t == "illustration":
+            image = illustration_image(item["asset"])
+        else:
+            with Image.open(local_image_path(item["asset"])) as source:
+                image = source.convert("RGBA")
+        content_bounds = image.getchannel("A").getbbox()
+        if content_bounds:
+            image = image.crop(content_bounds)
+        # Contain within the requested box; never distort a person or a local drawing.
+        max_w, max_h = item["w"] * cv.w * SS, item["h"] * cv.h * SS
+        ratio = min(max_w / image.width, max_h / image.height)
+        image = image.resize((max(1, round(image.width * ratio)), max(1, round(image.height * ratio))), Image.Resampling.LANCZOS)
+        cx, cy = cv.px(item["x"], item["y"])
+        cv.img.alpha_composite(image, (round(cx - image.width / 2), round(cy - image.height / 2)))
     return cv.finish()
 
 
 def _make_hand_sprite(width: int) -> Tuple[Image.Image, Tuple[int, int]]:
-    """Sprite bàn tay cầm bút vẽ bằng Pillow. Trả về (ảnh RGBA, vị trí mũi bút trong sprite)."""
-    s = 4
-    w = int(width * s)
-    h = int(width * 1.3 * s)
-    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    skin, outline = (247, 200, 166, 255), (40, 30, 30, 255)
-    lw = max(3, w // 60)
-    # cánh tay đi xuống góc phải
-    d.polygon([(w * 0.55, h * 0.45), (w * 0.82, h * 0.40), (w * 1.0, h * 1.0), (w * 0.62, h * 1.0)], fill=skin, outline=outline)
-    # bàn tay (nắm)
-    d.rounded_rectangle([w * 0.38, h * 0.22, w * 0.82, h * 0.58], radius=w * 0.12, fill=skin, outline=outline, width=lw)
-    # bút thân đen chếch trái-trên, đầu bút ở góc trái-trên
-    tip = (w * 0.10, h * 0.06)
-    d.line([tip, (w * 0.50, h * 0.40)], fill=(25, 25, 25, 255), width=int(w * 0.07))
-    d.ellipse([tip[0] - w * 0.03, tip[1] - w * 0.03, tip[0] + w * 0.03, tip[1] + w * 0.03], fill=(25, 25, 25, 255))
-    # ngón cái đè lên bút
-    d.rounded_rectangle([w * 0.30, h * 0.26, w * 0.56, h * 0.36], radius=w * 0.05, fill=skin, outline=outline, width=lw)
-    img = img.resize((w // s, h // s), Image.LANCZOS)
-    return img, (int(tip[0] / s), int(tip[1] / s))
+    """Photographic transparent hand; anchor is the calibrated physical marker nib."""
+    with Image.open(ASSET_DIR / "hand_photo_v1.png") as source:
+        sprite = source.convert("RGBA")
+        # Nib coordinates are measured on the 1024 x 1536 production sprite.
+        ratio = width / sprite.width
+        sprite = sprite.resize((width, round(sprite.height * ratio)), Image.Resampling.LANCZOS)
+    return sprite, (round(347 * ratio), round(94 * ratio))
 
 
 # ------------------------------------------------------------------------------
 # RENDERER
 # ------------------------------------------------------------------------------
 class WhiteboardRenderer:
-    def __init__(self, items: List[Dict[str, Any]], duration: float, size: Tuple[int, int] = (1080, 1920)):
+    def __init__(self, items: List[Dict[str, Any]], duration: float, size: Tuple[int, int] = (1080, 1920), show_hand: bool = True):
         self.items = items
         self.duration = max(0.5, float(duration))
         self.size = size
@@ -328,32 +367,55 @@ class WhiteboardRenderer:
         for layer in self.layers:
             bb = layer.getchannel("A").getbbox()
             self.bboxes.append(bb if bb else (0, 0, 1, 1))
-        self._done: Dict[int, Image.Image] = {0: Image.new("RGB", size, (255, 255, 255))}
-        self.hand, self.hand_tip = _make_hand_sprite(max(40, int(size[0] * 0.24)))
+        self.crops = [layer.crop(bb) for layer, bb in zip(self.layers, self.bboxes)]
+        self.outlines_and_paths = [trace_outline(crop) for crop in self.crops]
+        self.fill_paths = [brush_plan(crop.size, max(12, round(min(size) * .055))) for crop in self.crops]
+        self._done_count = 0
+        self._done_frame = Image.new("RGB", size, (255, 255, 255))
+        self.show_hand = show_hand
+        self.hand, self.hand_tip = _make_hand_sprite(max(60, int(min(size) * .62)))
 
     def _done_image(self, k: int) -> Image.Image:
         """Ảnh nền đã vẽ xong k item đầu (cache tích lũy)."""
-        if k in self._done:
-            return self._done[k]
-        prev = self._done_image(k - 1).copy()
-        prev.paste(self.layers[k - 1], (0, 0), self.layers[k - 1])
-        self._done[k] = prev
-        return prev
+        if k < self._done_count:
+            self._done_count = 0
+            self._done_frame = Image.new("RGB", self.size, (255, 255, 255))
+        for idx in range(self._done_count, k):
+            self._done_frame.paste(self.layers[idx], (0, 0), self.layers[idx])
+        self._done_count = k
+        return self._done_frame
 
     def _extend_arm(self, frame: Image.Image, hx: int, hy: int) -> None:
-        """Kéo dài cánh tay từ đáy sprite xuống mép khung hình cho tự nhiên."""
+        """Continue the photographed forearm to the frame edge using its own texture."""
         hw, hh = self.hand.size
         bottom = hy + hh
         if bottom >= frame.size[1]:
             return
-        d = ImageDraw.Draw(frame)
-        skin, edge = (247, 200, 166), (40, 30, 30)
-        l_top, r_top = hx + hw * 0.62, hx + hw * 1.0
-        shift = (frame.size[1] - bottom) * 0.12
-        l_bot, r_bot = l_top + shift, r_top + shift
-        d.polygon([(l_top, bottom - 1), (r_top, bottom - 1), (r_bot, frame.size[1]), (l_bot, frame.size[1])], fill=skin)
-        d.line([(l_top, bottom - 1), (l_bot, frame.size[1])], fill=edge, width=1)
-        d.line([(r_top, bottom - 1), (r_bot, frame.size[1])], fill=edge, width=1)
+        strip = self.hand.crop((0, max(0, hh - 24), hw, hh))
+        strip = strip.resize((hw, frame.height - bottom + 1), Image.Resampling.BICUBIC)
+        frame.paste(strip, (hx, bottom - 1), strip)
+
+    def _drawing_image(self, index: int, progress: float) -> Tuple[Image.Image, Tuple[float, float]]:
+        crop = self.crops[index]
+        outline, path = self.outlines_and_paths[index]
+        is_color = self.items[index]["type"] in {"illustration", "image"}
+        if not is_color:
+            mask, tip = draw_progress(path, progress, crop.size)
+            result = crop.copy()
+            result.putalpha(ImageChops.multiply(crop.getchannel("A"), mask))
+            return result, tip
+        if progress < .62:
+            mask, tip = draw_progress(path, progress / .62, crop.size)
+            result = outline.copy()
+            result.putalpha(ImageChops.multiply(outline.getchannel("A"), mask))
+            return result, tip
+        # Once the contour is drawn, sweep a broad marker along rows to add color.
+        result = outline.copy()
+        mask, tip = draw_progress(self.fill_paths[index], (progress - .62) / .38, crop.size)
+        colored = crop.copy()
+        colored.putalpha(ImageChops.multiply(crop.getchannel("A"), mask))
+        result.alpha_composite(colored)
+        return result, tip
 
     def render_frame(self, t: float) -> Image.Image:
         completed = sum(1 for _, t1 in self.schedule if t >= t1)
@@ -362,19 +424,14 @@ class WhiteboardRenderer:
             t0, t1 = self.schedule[completed]
             if t >= t0:
                 p = (t - t0) / (t1 - t0)
-                p = p * p * (3 - 2 * p)  # ease in-out
                 x0, y0, x1, y1 = self.bboxes[completed]
-                wipe_x = x0 + int((x1 - x0) * p) + 1
-                layer = self.layers[completed]
-                region = layer.crop((x0, y0, wipe_x, y1))
+                region, tip = self._drawing_image(completed, p)
                 frame.paste(region, (x0, y0), region)
-                # tay "viết" lượn lên xuống trong khoảng cao của item
-                wobble = 0.5 + 0.45 * math.sin(p * math.pi * 6)
-                tip_y = y0 + int((y1 - y0) * wobble)
-                hx = wipe_x - self.hand_tip[0]
-                hy = tip_y - self.hand_tip[1]
-                frame.paste(self.hand, (hx, hy), self.hand)
-                self._extend_arm(frame, hx, hy)
+                if self.show_hand:
+                    hx = round(x0 + tip[0] - self.hand_tip[0])
+                    hy = round(y0 + tip[1] - self.hand_tip[1])
+                    self._extend_arm(frame, hx, hy)
+                    frame.paste(self.hand, (hx, hy), self.hand)
         return frame
 
 
@@ -388,9 +445,16 @@ def render_whiteboard_scene_video(
     audio_path: Optional[str] = None,
     size: Tuple[int, int] = (1080, 1920),
     fps: int = 24,
+    is_cancelled_callback: Optional[Callable[[], bool]] = None,
 ) -> Tuple[bool, str]:
     """Render 1 cảnh whiteboard ra mp4 (pipe frame RGB vào FFmpeg, ghép audio nếu có)."""
+    proc = None
     try:
+        duration = float(duration)
+        if not math.isfinite(duration) or duration <= 0 or fps <= 0 or any(v <= 0 or v % 2 for v in size):
+            return False, "Thời lượng/FPS phải dương và kích thước khung hình phải là số chẵn."
+        if audio_path and not os.path.isfile(audio_path):
+            return False, f"Không tìm thấy âm thanh: {audio_path}"
         items = layout_scene_items(scene)
         renderer = WhiteboardRenderer(items, duration, size)
         os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
@@ -400,19 +464,64 @@ def render_whiteboard_scene_video(
             cmd += ["-i", audio_path, "-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-t", f"{duration:.3f}"]
         else:
             cmd += ["-an", "-t", f"{duration:.3f}"]
-        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", output_path]
-        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        total_frames = max(1, int(round(duration * fps)))
-        try:
-            for i in range(total_frames):
-                proc.stdin.write(renderer.render_frame(i / fps).tobytes())
-            proc.stdin.close()
-        except BrokenPipeError:
-            pass
-        err = proc.stderr.read().decode("utf-8", errors="replace")
-        proc.wait()
+        cmd += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart", output_path]
+        # A temporary error log avoids a full stderr pipe blocking a long render.
+        with tempfile.TemporaryFile() as error_log:
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=error_log)
+            total_frames = max(1, int(math.ceil(duration * fps)))
+            try:
+                for i in range(total_frames):
+                    if is_cancelled_callback and is_cancelled_callback():
+                        return False, "Đã bỏ qua theo yêu cầu người dùng"
+                    proc.stdin.write(renderer.render_frame(i / fps).tobytes())
+                proc.stdin.close()
+            except BrokenPipeError:
+                pass
+            proc.wait(timeout=max(30, duration * 2))
+            error_log.seek(0)
+            err = error_log.read().decode("utf-8", errors="replace")
         if proc.returncode != 0 or not os.path.exists(output_path) or os.path.getsize(output_path) < 500:
             return False, f"FFmpeg lỗi render whiteboard: {err[-400:]}"
         return True, output_path
     except Exception as exc:
         return False, f"Lỗi render whiteboard: {type(exc).__name__}: {exc}"
+    finally:
+        if proc is not None:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait()
+            if proc.stdin and not proc.stdin.closed:
+                try:
+                    proc.stdin.close()
+                except OSError:
+                    pass
+
+
+def render_whiteboard_story_scenes(scenes: List[Dict[str, Any]], work_dir: str,
+                                   orientation: str = "vertical", with_audio: bool = True,
+                                   on_scene_status_callback=None, progress_callback=None,
+                                   is_cancelled_callback=None) -> Tuple[bool, str]:
+    """Render all boards using measured TTS durations; audio is muxed by the compiler."""
+    size = (1080, 1920) if orientation == "vertical" else (1920, 1080)
+    for idx, scene in enumerate(scenes, 1):
+        if is_cancelled_callback and is_cancelled_callback():
+            return False, "Đã bỏ qua theo yêu cầu người dùng"
+        if with_audio and not (scene.get("audio_path") and os.path.isfile(scene["audio_path"])):
+            return False, f"Cảnh {idx} chưa có âm thanh TTS."
+        duration = float(scene.get("audio_duration") or max(3., len(str(scene.get("narration") or "").split()) / 3.))
+        scene["audio_duration"] = duration
+        output = os.path.join(work_dir, f"whiteboard_{idx:03d}.mp4")
+        if on_scene_status_callback:
+            on_scene_status_callback(idx, len(scenes), "rendering", None)
+        if progress_callback:
+            progress_callback(25 + (idx - 1) / len(scenes) * 55, f"Đang vẽ nét viền và tô màu: cảnh {idx}/{len(scenes)}")
+        ok, error = render_whiteboard_scene_video(scene, output, duration, size=size,
+                                                  is_cancelled_callback=is_cancelled_callback)
+        if not ok:
+            if on_scene_status_callback:
+                on_scene_status_callback(idx, len(scenes), "failed", None)
+            return False, error
+        scene.update(video_path=output, use_video_ai=True, media_type="whiteboard")
+        if on_scene_status_callback:
+            on_scene_status_callback(idx, len(scenes), "completed", output)
+    return True, "Đã vẽ xong các cảnh whiteboard."

@@ -36,6 +36,12 @@ Hoặc bạn có thể truy cập trực tiếp vào từng thư mục dự án 
 
 ## Chạy xưởng tự động
 
+### MuseAI: người que và bàn tay vẽ
+
+Trong **MuseAI Studio (3D / Người que bàn tay vẽ)**, chọn **Whiteboard minh họa màu / Người que + Bàn tay thật cầm bút**. MuseAI viết kịch bản và bố cục; khi cần hình mới, Google Flow tạo minh họa 2D theo từng cảnh. Máy dựng ảnh bàn tay thật đi theo nét viền rồi tô màu, xuất MP4 1080p có lời đọc và phụ đề. Ảnh AI được lưu để dùng lại. Vẫn hỗ trợ người que và sơ đồ. Series nhiều tập có ôn bài trước và giới thiệu bài sau; viết tiếp sẽ giữ số tập và nội dung đã hẹn. Xem [hướng dẫn chi tiết](video_studio/docs/museai_whiteboard.md).
+
+Để làm bài tiếng Anh, chọn **Dạy tiếng Anh: giảng Việt + phát âm Anh** ở mục ngôn ngữ. Lời giải thích/nghĩa được đọc bằng giọng Việt; từ/câu mẫu bằng giọng Anh. **AI tự tạo minh họa mới khi cần** được bật mặc định, không giới hạn trong 10 hình mẫu. Kho ảnh bổ sung nằm tại `video_studio/assets/whiteboard/`; ảnh AI được lưu trong thư mục con `ai/`.
+
 1. Chạy `run.bat`. Chrome sẽ mở với cổng điều khiển Google Flow và giao diện mở tại `http://localhost:8502`.
 2. Đăng nhập Google Flow nếu được yêu cầu và giữ cửa sổ Chrome đó hoạt động.
 3. Trong **Kho ý tưởng**, nhập chủ đề, số video, giọng đọc và khung hình.

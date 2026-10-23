@@ -254,6 +254,10 @@ def build_museai_story_script_prompt(
     locked_character_anchor: str = "",
     locked_environment_anchor: str = "",
     story_style: str = "cinematic_storytelling",
+    visual_mode: str = "video_3d",
+    previous_episode_learning: str = "",
+    required_episode_topic: str = "",
+    whiteboard_ai_enabled: bool = True,
 ) -> str:
     """
     Prompt gửi vào tab Chrome MuseAI (https://muse.ai/) để kêu MuseAI viết kịch bản
@@ -263,10 +267,23 @@ def build_museai_story_script_prompt(
     đảm bảo MỖI TẬP đều có đủ Mở đầu (Opening) -> Cao trào (Climax) -> Kết thúc (Ending/Cliffhanger).
     """
     aspect = "9:16 vertical portrait" if orientation == "vertical" else "16:9 widescreen landscape"
-    lang_label = "Vietnamese (Tiếng Việt)" if language == "vi" else "English"
+    lang_label = ("Vietnamese explanations with separate English pronunciation segments" if language == "vi_en"
+                  else "Vietnamese (Tiếng Việt)" if language == "vi" else "English")
     ep_num = max(1, int(episode_num or 1))
     tot_eps = max(1, int(total_episodes or 1))
     style_norm = str(story_style or "cinematic_storytelling").strip().lower()
+    from src.museai_story_modes import whiteboard_script_prompt, learning_series_instructions
+    if visual_mode == "whiteboard":
+        return whiteboard_script_prompt(topic, target_scenes, language, orientation, ep_num, tot_eps,
+                                        previous_episodes_summary, locked_character_anchor,
+                                        previous_episode_learning, required_episode_topic, story_style,
+                                        ai_enabled=whiteboard_ai_enabled)
+    learning_instructions = learning_series_instructions(ep_num, tot_eps, previous_episode_learning,
+                                                        required_episode_topic)
+    learning_instructions += '\nReturn publishing={"hashtags": [3 or 4 concise hashtags directly relevant to this episode]}. Avoid unrelated trends or claims of guaranteed views; the application adds the channel hashtag.\n'
+    if language == "vi_en":
+        from src.english_teaching import english_lesson_instructions
+        learning_instructions += english_lesson_instructions()
 
     if target_scenes and int(target_scenes) >= 2:
         n_scenes = int(target_scenes)
@@ -352,7 +369,7 @@ CRITICAL MEMORY RESET: Do NOT search your saved memory or reuse old characters/s
 
 {topic_line}
 Target Format: {scene_count_str} ({aspect}), natural voiceover storytelling & authentic character dialogue in {lang_label}.
-{style_guidance}{continuity_block}
+{style_guidance}{continuity_block}{learning_instructions}
 MANDATORY RULES:
 1. {scene_rule_header}:
    - You MUST output ALL scenes in the `scenes` array (`scene_num` from 1 to {n_scenes}). Never stop at 1 scene.
@@ -377,6 +394,8 @@ Reply with ONLY a single valid JSON code block containing a JSON object with the
 - "story_title": (string, title of the 3D story/episode in {lang_label})
 - "character_anchor": (string, detailed English 3D Pixar character description locked across all scenes and episodes)
 - "environment_anchor": (string, detailed English 3D world and lighting description)
+- "episode_learning_summary": (string, a short specific summary of what viewers learn in the body)
+- "next_episode_topic": (string, the concrete next lesson for a non-final series episode; otherwise empty)
 - "scenes": (array of objects from scene_num 1 to {n_scenes}, where each object has keys: "scene_num", "scene_role", "dialogue_lines" [array of objects with "speaker" ("narrator" | "character_1" | "character_2"), "character_name", "text"], "narration", "camera_directive", "video_prompt")"""
 
 
@@ -387,12 +406,34 @@ ROLE_VOICE_MAP_VI = {
     "character_female": "vi-VN-HoaiMyNeural|char_female_bright",
 }
 
+LINE_EMOTIONS = {"happy", "excited", "surprised", "angry", "sad", "thinking", "neutral"}
+
 ROLE_VOICE_MAP_EN = {
     "narrator": "en-US-EmmaNeural",
     "character_1": "en-US-GuyNeural",
     "character_2": "en-GB-RyanNeural",
     "character_female": "en-US-JennyNeural",
 }
+
+
+# Nhiều giọng Edge cho từng giới: cùng tên nhân vật luôn ra cùng một giọng, tên khác nhau thường ra giọng khác nhau.
+CHARACTER_VOICE_POOL_VI = {
+    "character_1": ["char_boy_bright", "char_hero_deep", "char_comic"],
+    "character_female": ["char_female_bright", "char_girl_cute", "char_mother_warm"],
+}
+CHARACTER_BASE_VOICE_VI = {
+    "character_1": "vi-VN-NamMinhNeural",
+    "character_female": "vi-VN-HoaiMyNeural",
+}
+
+
+def _pick_character_voice(role: str, character_name: str, vmap: Dict[str, str], language: str) -> str:
+    name = str(character_name or "").strip().lower()
+    if language != "vi" or not name:
+        return vmap[role]
+    pool = CHARACTER_VOICE_POOL_VI[role]
+    preset = pool[sum(ord(c) for c in name) % len(pool)]
+    return f"{CHARACTER_BASE_VOICE_VI[role]}|{preset}"
 
 
 def _resolve_speaker_role_and_voice(
@@ -419,10 +460,10 @@ def _resolve_speaker_role_and_voice(
 
     if any(k in ctx for k in ("female", "girl", "fairy", "cô bé", "tinh linh", "nữ", "mẹ", "bà", "character_female")):
         label = cname if cname and cname.lower() not in ("character_female",) else "Nhân vật nữ"
-        return "character_female", label, vmap["character_female"]
+        return "character_female", label, _pick_character_voice("character_female", cname, vmap, language)
 
     label = cname if cname and cname.lower() not in ("character_1", "char_1", "character", "protagonist") else "Nhân vật chính"
-    return "character_1", label, vmap["character_1"]
+    return "character_1", label, _pick_character_voice("character_1", cname, vmap, language)
 
 
 def _generate_contextual_character_interaction(
@@ -593,6 +634,17 @@ def build_scene_dialogue_segments(
     if not isinstance(scene_data, dict):
         scene_data = {"scene_num": 1, "narration": str(scene_data or "")}
 
+    if language == "vi_en" or scene_data.get("content_mode") == "english_teaching_vi":
+        from src.english_teaching import build_english_lesson_segments
+        segments = build_english_lesson_segments(scene_data, ROLE_VOICE_MAP_VI["narrator"])
+        scene_data["content_mode"] = "english_teaching_vi"
+        scene_data["speech_segments"] = segments
+        scene_data["dialogue_lines"] = segments
+        scene_data["narration"] = " ".join(seg["text"] for seg in segments)
+        scene_data["dialogue_display"] = "<br>".join(
+            f"{'🇻🇳 Giảng bài' if seg['language'] == 'vi' else '🇬🇧 Phát âm'}: {seg['text']}" for seg in segments)
+        return segments
+
     scene_num = int(scene_data.get("scene_num") or 1)
     scene_role = str(scene_data.get("scene_role") or f"Scene {scene_num}")
     raw_lines = scene_data.get("dialogue_lines")
@@ -618,15 +670,19 @@ def build_scene_dialogue_segments(
             if sp_role != "narrator" and is_third_person_stage_direction(txt, character_name=raw_cname or sp_label):
                 sp_role, sp_label, v_spec = _resolve_speaker_role_and_voice("narrator", language=language)
 
-            segments.append(
-                {
-                    "speaker": sp_role,
-                    "character_name": sp_label,
-                    "text": txt,
-                    "voice_spec": v_spec,
-                    "rate": "+0%",
-                }
-            )
+            line_emotion = str(item.get("emotion") or "").strip().lower()
+            seg_item = {
+                "speaker": sp_role,
+                "character_name": sp_label,
+                "text": txt,
+                "voice_spec": v_spec,
+                "rate": "+0%",
+            }
+            if line_emotion in LINE_EMOTIONS:
+                seg_item["emotion"] = line_emotion
+                if str(v_spec).startswith("vi-") and "|" in str(v_spec):
+                    seg_item["voice_spec"] = f"{v_spec}|{line_emotion}"
+            segments.append(seg_item)
 
     # 2. Nếu chưa có `dialogue_lines`, bóc tách từ `narration` (hỗ trợ tách câu thoại trong ngoặc '...' / "..." / “...”)
     if not segments:
@@ -867,6 +923,8 @@ def expand_scenes_to_match_story_beats(
                 display_parts.append(f"{icon} *\"{item['text']}\"*")
 
             sub_sc["dialogue_lines"] = grp
+            if sub_sc.get("content_mode") == "english_teaching_vi":
+                sub_sc["speech_segments"] = grp
             sub_sc["narration"] = sub_narr
             sub_sc["dialogue_display"] = "<br>".join(display_parts)
             sub_sc["scene_role"] = f"{base_role} - Nhịp {sub_idx}/{len(shot_groups)}"
@@ -962,7 +1020,7 @@ def does_script_match_user_topic(story_data: Optional[Dict[str, Any]], topic: st
 
 
 
-def parse_museai_story_json(raw_text: str) -> Optional[Dict[str, Any]]:
+def parse_museai_story_json(raw_text: str, visual_mode: str = "") -> Optional[Dict[str, Any]]:
     """
     Trích xuất kịch bản JSON do MuseAI vừa viết trên tab Chrome.
     Tự động bỏ qua các đoạn mẫu placeholder trong câu hỏi của user và ưu tiên khối JSON mới nhất ở cuối trang.
@@ -1000,13 +1058,18 @@ def parse_museai_story_json(raw_text: str) -> Optional[Dict[str, Any]]:
                         narr = str(sc.get("narration") or "").strip()
                         vp = str(sc.get("video_prompt") or sc.get("raw_video_prompt") or "").strip()
                         d_lines = sc.get("dialogue_lines")
-                        if not narr and not vp and not (isinstance(d_lines, list) and len(d_lines) > 0):
+                        speech_lines = sc.get("speech_segments")
+                        if (not narr and not vp and not (isinstance(d_lines, list) and len(d_lines) > 0)
+                                and not (isinstance(speech_lines, list) and len(speech_lines) > 0)):
                             continue
                         c = dict(sc)
+                        if data.get("content_mode") == "english_teaching_vi":
+                            c["content_mode"] = "english_teaching_vi"
                         c["scene_num"] = int(c.get("scene_num") or idx)
                         c["narration"] = narr
                         c["raw_video_prompt"] = vp
-                        build_scene_dialogue_segments(c, language="vi", total_scenes=total_raw)
+                        build_scene_dialogue_segments(c, language="vi", total_scenes=total_raw,
+                                                      allow_synthetic_filler=(visual_mode or data.get("visual_mode")) != "whiteboard")
                         norm_scenes.append(c)
                 if norm_scenes:
                     data["scenes"] = norm_scenes
@@ -1285,7 +1348,7 @@ class MuseAIFlowHybridController:
                     .filter(t => t.includes('"scenes"') && t.includes('"video_prompt"'))"""
             )
             for block_text in reversed(pre_blocks or []):
-                parsed = parse_museai_story_json(block_text)
+                parsed = parse_museai_story_json(block_text, visual_mode=visual_mode)
                 if parsed and len(parsed.get("scenes", [])) >= max(1, min_scenes):
                     safe_log(
                         f"[✓] [MUSEAI] Đã đọc trực tiếp kịch bản '{parsed.get('story_title')}' "
@@ -1314,6 +1377,9 @@ class MuseAIFlowHybridController:
         locked_environment_anchor: str = "",
         status_callback: Optional[Callable[[int, str], None]] = None,
         is_cancelled_callback: Optional[Callable[[], bool], None] = None,
+        previous_episode_learning: str = "",
+        required_episode_topic: str = "",
+        whiteboard_ai_enabled: bool = True,
     ) -> Tuple[bool, Dict[str, Any]]:
         """
         Mở/nhảy vào tab MuseAI trên Chrome, gửi prompt yêu cầu MuseAI viết kịch bản cốt truyện 3D
@@ -1401,6 +1467,10 @@ class MuseAIFlowHybridController:
                 locked_character_anchor=locked_character_anchor,
                 locked_environment_anchor=locked_environment_anchor,
                 story_style=story_style,
+                visual_mode=visual_mode,
+                previous_episode_learning=previous_episode_learning,
+                required_episode_topic=required_episode_topic,
+                whiteboard_ai_enabled=whiteboard_ai_enabled,
             )
 
             safe_log(
@@ -1524,7 +1594,7 @@ class MuseAIFlowHybridController:
                             except Exception:
                                 pass
 
-                        parsed = parse_museai_story_json(latest_pre)
+                        parsed = parse_museai_story_json(latest_pre, visual_mode=visual_mode)
                         if is_museai_script_complete(parsed, target_scenes=expected_scenes, stable_ticks=pre_stable_ticks):
                             safe_log(
                                 f"[✓] [MUSEAI] Đã nhận kịch bản 3D '{parsed.get('story_title')}' "
@@ -1551,7 +1621,7 @@ class MuseAIFlowHybridController:
                         last_body_len = len(new_text)
 
                     if body_stable_ticks >= 2 and elapsed > 18.0:
-                        parsed_body = parse_museai_story_json(new_text)
+                        parsed_body = parse_museai_story_json(new_text, visual_mode=visual_mode)
                         if is_museai_script_complete(parsed_body, target_scenes=expected_scenes, stable_ticks=body_stable_ticks):
                             safe_log(
                                 f"[✓] [MUSEAI] Đã trích xuất kịch bản 3D đầy đủ {len(parsed_body['scenes'])} phân cảnh từ MuseAI!"
@@ -1578,6 +1648,19 @@ class MuseAIFlowHybridController:
         - `hybrid_3d`: Mở đầu (`Opening Hook`) và Cao trào (`Climax`) dùng Video 3D Veo (`media_type="video"`),
           các nhịp dẫn dắt (`Rising Action` / `Resolution`) dùng Hình 3D liên tục (`media_type="image"`).
         """
+        if visual_mode == "whiteboard":
+            from src.whiteboard_video import layout_scene_items
+            prepared = []
+            for idx, sc in enumerate(story_data.get("scenes") or [], 1):
+                if not isinstance(sc, dict):
+                    continue
+                scene = dict(sc, scene_num=idx, media_type="whiteboard", use_video_ai=True)
+                if story_data.get("content_mode") == "english_teaching_vi":
+                    scene["content_mode"] = "english_teaching_vi"
+                build_scene_dialogue_segments(scene, allow_synthetic_filler=False)
+                scene["whiteboard_items"] = layout_scene_items(scene)
+                prepared.append(scene)
+            return dict(story_data, scenes=prepared, visual_mode="whiteboard")
         try:
             from src.flow_character_vault import build_7_point_character_dna
         except ModuleNotFoundError:
@@ -2508,7 +2591,21 @@ class MuseAIFlowHybridController:
                 except Exception:
                     pass
 
-    def generate_scene_3d_image_on_google_flow(
+    def generate_scene_3d_image_on_google_flow(self, *args, **kwargs) -> Tuple[bool, str]:
+        return self._generate_image_on_google_flow(*args, **kwargs)
+
+    def generate_whiteboard_illustration_on_google_flow(
+        self, prompt: str, output_path: str, scene_num: int = 1, total_scenes: int = 1,
+        orientation: str = "horizontal", attempt_num: int = 1, status_callback=None,
+        is_cancelled_callback=None,
+    ) -> Tuple[bool, str]:
+        return self._generate_image_on_google_flow(
+            scene_num=scene_num, total_scenes=total_scenes, scene_data={"image_prompt": prompt},
+            output_path=output_path, orientation=orientation, attempt_num=attempt_num,
+            status_callback=status_callback, is_cancelled_callback=is_cancelled_callback,
+            image_style="whiteboard")
+
+    def _generate_image_on_google_flow(
         self,
         scene_num: int,
         total_scenes: int,
@@ -2521,6 +2618,7 @@ class MuseAIFlowHybridController:
         attempt_num: int = 1,
         status_callback: Optional[Callable[[int, str], None]] = None,
         is_cancelled_callback: Optional[Callable[[], bool]] = None,
+        image_style: str = "3d",
     ) -> Tuple[bool, str]:
         """
         Đưa prompt Hình ảnh 3D của Cảnh `scene_num` (từ kịch bản MuseAI) sang tab Google Flow (chế độ `🍌 Nano Banana 2.1` - 0 tín dụng),
@@ -2542,7 +2640,9 @@ class MuseAIFlowHybridController:
             cam_dir = str(scene_data.get("camera_directive") or "35mm cinema lens, shallow depth of field").strip()
 
             full_3d_img_prompt = str(scene_data.get("image_prompt") or "").strip()
-            if not full_3d_img_prompt or "Generate a single masterpiece 3D CGI" not in full_3d_img_prompt:
+            if image_style == "whiteboard" and not full_3d_img_prompt:
+                return False, "Thiếu mô tả minh họa whiteboard."
+            if image_style != "whiteboard" and (not full_3d_img_prompt or "Generate a single masterpiece 3D CGI" not in full_3d_img_prompt):
                 full_3d_img_prompt = clean_and_build_flow_3d_image_prompt(
                     scene_prompt=raw_prompt,
                     character_anchor=character_anchor,
@@ -2552,11 +2652,12 @@ class MuseAIFlowHybridController:
                     scene_data=scene_data,
                 )
 
-            if int(attempt_num or 1) >= 2:
+            if image_style != "whiteboard" and int(attempt_num or 1) >= 2:
                 full_3d_img_prompt = sanitize_prompt_for_flow_retry(full_3d_img_prompt)
 
+            media_label = "minh họa whiteboard 2D" if image_style == "whiteboard" else "hình 3D"
             narration_preview = str(scene_data.get("narration") or "")[:90]
-            safe_log(f"\n[GOOGLE FLOW IMAGE 3D - CẢNH {scene_num}/{total_scenes}] Đang tạo hình 3D Nano Banana (0 tín dụng)...")
+            safe_log(f"\n[GOOGLE FLOW IMAGE - CẢNH {scene_num}/{total_scenes}] Đang tạo {media_label}...")
             safe_log(f"  + Lời dẫn MuseAI : {narration_preview}...")
 
             try:
@@ -2607,13 +2708,13 @@ class MuseAIFlowHybridController:
                         page.keyboard.insert_text(full_3d_img_prompt)
                         page.wait_for_timeout(250)
                     except Exception as exc:
-                        return False, f"Không thể điền prompt Hình 3D Cảnh {scene_num} vào Google Flow: {exc}"
+                        return False, f"Không thể điền prompt {media_label} Cảnh {scene_num} vào Google Flow: {exc}"
 
                 sub_ok, sub_msg = self._submit_google_flow_composer(page, input_box)
                 if not sub_ok:
                     return False, sub_msg
 
-                safe_log(f"[*] Đã gửi Hình 3D Cảnh {scene_num}/{total_scenes} lên Google Flow! Đang đợi Nano Banana 2.1 render (~4-8s)...")
+                safe_log(f"[*] Đã gửi {media_label} Cảnh {scene_num}/{total_scenes} lên Google Flow, đang đợi tạo ảnh...")
                 start_time = time.time()
 
                 while time.time() - start_time < effective_timeout:
@@ -2629,7 +2730,7 @@ class MuseAIFlowHybridController:
                         try:
                             status_callback(
                                 int(elapsed),
-                                f"[*] [Hình 3D {scene_num}/{total_scenes}] Đang chờ Google Flow Nano Banana render ({int(elapsed)}s)...",
+                                f"[*] [{media_label} {scene_num}/{total_scenes}] Đang chờ Google Flow tạo ảnh ({int(elapsed)}s)...",
                             )
                         except Exception:
                             pass
@@ -2674,14 +2775,14 @@ class MuseAIFlowHybridController:
                         self.seen_video_urls.add(cand_img_url)
                         self.seen_video_urls.add(norm_c)
                         safe_log(
-                            f"[✓] [Hình 3D {scene_num}/{total_scenes}] Đã lưu hình 3D từ Google Flow Nano Banana "
+                            f"[✓] [{media_label} {scene_num}/{total_scenes}] Đã lưu ảnh từ Google Flow "
                             f"({len(img_bytes)} bytes): {output_path}"
                         )
                         return True, output_path
 
-                return False, f"Hết thời gian chờ ({effective_timeout}s) hình 3D Cảnh {scene_num} từ Google Flow."
+                return False, f"Hết thời gian chờ ({effective_timeout}s) {media_label} Cảnh {scene_num} từ Google Flow."
             except Exception as exc:
-                return False, f"Lỗi khi tạo hình 3D Cảnh {scene_num} trên Google Flow: {exc}"
+                return False, f"Lỗi khi tạo {media_label} Cảnh {scene_num} trên Google Flow: {exc}"
 
 
 # ==============================================================================
@@ -2692,6 +2793,7 @@ def synthesize_museai_scenes_interactive_tts(
     scenes: List[Dict[str, Any]],
     work_dir: str,
     language: str = "vi",
+    vietnamese_voice: str = "",
 ) -> Tuple[bool, str]:
     """
     Sinh file âm thanh lồng tiếng đa giọng đọc (`scene_001.mp3 ... scene_00N.mp3`) cho từng phân cảnh:
@@ -2705,10 +2807,21 @@ def synthesize_museai_scenes_interactive_tts(
     os.makedirs(work_dir, exist_ok=True)
     try:
         from src.tts_service import generate_multivoice_tts, generate_tts, get_audio_duration
+        from src.voice_casting import VoiceCaster, apply_vieneu_casting
     except ModuleNotFoundError:
         from video_studio.src.tts_service import generate_multivoice_tts, generate_tts, get_audio_duration
+        from video_studio.src.voice_casting import VoiceCaster, apply_vieneu_casting
 
     tot_scenes = max(2, len(scenes))
+    voice_caster: Optional[VoiceCaster] = None
+    cast_file = Path(work_dir) / "voice_casting.json"
+    saved_cast = next((sc["voice_casting"] for sc in scenes if isinstance(sc, dict) and isinstance(sc.get("voice_casting"), dict)), {})
+    if cast_file.is_file():
+        try:
+            data = json.loads(cast_file.read_text(encoding="utf-8"))
+            saved_cast = dict(data if isinstance(data, dict) else {}, **saved_cast)
+        except (OSError, ValueError):
+            return False, "Không đọc được bảng giọng nhân vật đã lưu. Hãy kiểm tra voice_casting.json trước khi dựng tiếp."
     for idx, sc in enumerate(scenes, start=1):
         if not isinstance(sc, dict):
             continue
@@ -2716,9 +2829,30 @@ def synthesize_museai_scenes_interactive_tts(
         audio_file = os.path.join(work_dir, f"scene_{sc_num:03d}.mp3")
         meta_file = os.path.join(work_dir, f"scene_{sc_num:03d}_tts.meta.json")
 
-        dialogue_segs = build_scene_dialogue_segments(sc, language=language, total_scenes=tot_scenes)
+        try:
+            dialogue_segs = build_scene_dialogue_segments(
+                sc, language=language, total_scenes=tot_scenes,
+                allow_synthetic_filler=sc.get("media_type") != "whiteboard" and not sc.get("series_bridge"))
+        except ValueError as exc:
+            return False, f"Cảnh {sc_num}: {exc}"
         if not dialogue_segs:
             continue
+
+        selected_vi_voice = vietnamese_voice or sc.get("vietnamese_voice", "")
+        if selected_vi_voice.startswith("vieneu-v3:"):
+            # Giọng dẫn chuyện = giọng đã chọn; mỗi nhân vật 1 giọng VieNeu riêng + tốc độ theo cảm xúc câu thoại
+            if voice_caster is None:
+                voice_caster = VoiceCaster(selected_vi_voice, saved_cast)
+            dialogue_segs = apply_vieneu_casting(dialogue_segs, voice_caster)
+            sc["dialogue_lines"] = dialogue_segs
+            sc["vietnamese_voice"] = selected_vi_voice
+        elif selected_vi_voice:
+            dialogue_segs = [dict(seg, voice_spec=selected_vi_voice)
+                             if seg.get("language") == "vi" or
+                             (language == "vi" and str(seg.get("voice_spec", "")).startswith("vi-"))
+                             else dict(seg) for seg in dialogue_segs]
+            sc["dialogue_lines"] = dialogue_segs
+            sc["vietnamese_voice"] = selected_vi_voice
 
         multivoice_tuples: List[Tuple[str, str, str]] = [
             (seg["text"], seg["voice_spec"], seg.get("rate", "+0%"))
@@ -2726,15 +2860,23 @@ def synthesize_museai_scenes_interactive_tts(
             if seg.get("text")
         ]
         combined_text = sc.get("narration", "")
-        voices_signature = "|".join(f"{v}:{t}" for (t, v, _) in multivoice_tuples)
+        # Invalidate old caches that could contain the legacy test-tone fallback.
+        voices_signature = "real-speech-v2|" + "|".join(f"{v}:{rate}:{t}" for (t, v, rate) in multivoice_tuples)
+        bilingual = sc.get("content_mode") == "english_teaching_vi"
+        if bilingual:
+            voices_signature = "bilingual-segment-timing-v1|" + voices_signature
+        measured_segments = []
 
         # Kiểm tra cache: chỉ dùng lại nếu cả lời thoại lẫn phân vai giọng đọc không đổi
-        cache_valid = os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000
+        cache_valid = (os.path.exists(audio_file) and os.path.getsize(audio_file) > 1000
+                       and os.path.exists(meta_file))
         if cache_valid and os.path.exists(meta_file):
             try:
                 saved_meta = json.loads(Path(meta_file).read_text(encoding="utf-8"))
                 if saved_meta.get("voices_signature") != voices_signature:
                     cache_valid = False
+                elif bilingual:
+                    sc["tts_segment_timings"] = saved_meta.get("tts_segment_timings") or []
             except Exception:
                 cache_valid = False
 
@@ -2743,17 +2885,32 @@ def synthesize_museai_scenes_interactive_tts(
                 f"[*] [TTS ĐA GIỌNG Cảnh {sc_num}/{len(scenes)}] "
                 f"Đang lồng tiếng kết hợp Dẫn chuyện + Nhân vật ({len(multivoice_tuples)} lượt thoại)..."
             )
-            ok, err_or_path = generate_multivoice_tts(multivoice_tuples, audio_file)
+            strict_options = {"strict_language": True}
+            if bilingual:
+                strict_options["segment_timing_callback"] = measured_segments.extend
+            ok, err_or_path = generate_multivoice_tts(multivoice_tuples, audio_file, **strict_options)
             if not ok or not os.path.exists(audio_file):
+                if selected_vi_voice.startswith("vieneu-v3:"):
+                    return False, f"Lỗi VieNeu Cảnh {sc_num}: {err_or_path}. Không tự đổi sang giọng khác."
+                if sc.get("content_mode") == "english_teaching_vi":
+                    return False, f"Lỗi giọng đọc Việt–Anh Cảnh {sc_num}: {err_or_path}. Không chuyển sang đọc cả bài bằng một ngôn ngữ."
                 # Fallback an toàn nếu ghép multivoice gặp sự cố
                 fallback_voice = ROLE_VOICE_MAP_VI["narrator"] if language == "vi" else ROLE_VOICE_MAP_EN["narrator"]
-                ok, err_or_path = generate_tts(combined_text, audio_file, voice=fallback_voice)
+                ok, err_or_path = generate_tts(combined_text, audio_file, voice=fallback_voice, strict_language=True)
                 if not ok or not os.path.exists(audio_file):
                     return False, f"Lỗi sinh lồng tiếng Cảnh {sc_num}: {err_or_path}"
 
         dur = get_audio_duration(audio_file)
         sc["audio_path"] = audio_file
         sc["audio_duration"] = dur
+        if measured_segments:
+            total = sum(float(s["duration"]) for s in measured_segments)
+            cursor = 0.
+            sc["tts_segment_timings"] = []
+            for segment in measured_segments:
+                length = float(segment["duration"]) / total * dur if total > 0 else 0.
+                sc["tts_segment_timings"].append(dict(segment, start=cursor, end=cursor + length))
+                cursor += length
         try:
             Path(meta_file).write_text(
                 json.dumps(
@@ -2762,6 +2919,7 @@ def synthesize_museai_scenes_interactive_tts(
                         "voices_signature": voices_signature,
                         "dialogue_lines": dialogue_segs,
                         "duration": dur,
+                        "tts_segment_timings": sc.get("tts_segment_timings") or [],
                     },
                     ensure_ascii=False,
                     indent=2,
@@ -2771,6 +2929,15 @@ def synthesize_museai_scenes_interactive_tts(
         except Exception:
             pass
 
+    if voice_caster is not None:
+        assignments = voice_caster.assignments()
+        try:
+            cast_file.write_text(json.dumps(assignments, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError as exc:
+            return False, f"Không lưu được bảng giọng nhân vật: {exc}"
+        for sc in scenes:
+            if isinstance(sc, dict):
+                sc["voice_casting"] = dict(assignments)
     return True, f"Đã hoàn thành lồng tiếng đa giọng (Dẫn chuyện + Nhân vật) cho {len(scenes)} phân cảnh."
 
 
@@ -2781,6 +2948,7 @@ def merge_flow_3d_scenes_into_final_movie(
     language: str = "vi",
     orientation: str = "vertical",
     with_tts_and_subtitles: bool = True,
+    tts_already_ready: bool = False,
 ) -> Tuple[bool, str]:
     """
     Ghép toàn bộ các file video 3D (`scene_01.mp4 ... scene_0N.mp4`) đã sinh từ Google Flow
@@ -2789,6 +2957,8 @@ def merge_flow_3d_scenes_into_final_movie(
       đồng bộ thời lượng video/audio và burn phụ đề đáy khớp 100% từng câu thoại.
     - Nếu chạy độc lập hoặc không bật TTS, tự động ghép nối trực tiếp bằng FFmpeg lossless.
     """
+    # Every voiced production must fail explicitly if speech or subtitles fail.
+    strict_completion = bool(with_tts_and_subtitles)
     if with_tts_and_subtitles:
         try:
             try:
@@ -2800,12 +2970,15 @@ def merge_flow_3d_scenes_into_final_movie(
             import shutil
 
             safe_log("[*] [BƯỚC 3 - TTS ĐA GIỌNG] Đang tạo lồng tiếng kết hợp Dẫn chuyện & Tương tác nhân vật cho từng cảnh...")
-            tts_ok, tts_err = synthesize_museai_scenes_interactive_tts(
+            tts_ok, tts_err = (True, "TTS đã sẵn sàng") if tts_already_ready else synthesize_museai_scenes_interactive_tts(
                 scenes=scenes,
                 work_dir=work_dir,
                 language=language,
             )
             if tts_ok:
+                if not scenes or any(not sc.get("audio_path") or not os.path.isfile(str(sc["audio_path"]))
+                                     or os.path.getsize(str(sc["audio_path"])) <= 0 for sc in scenes):
+                    return False, "Thiếu file lồng tiếng của phân cảnh. Video chưa được hoàn thành."
                 for sc in scenes:
                     has_vid = bool(sc.get("video_path") and os.path.exists(str(sc.get("video_path"))))
                     sc["use_video_ai"] = has_vid
@@ -2843,10 +3016,16 @@ def merge_flow_3d_scenes_into_final_movie(
                     os.makedirs(os.path.dirname(os.path.abspath(final_output_path)), exist_ok=True)
                     shutil.copy2(compiled_list[0], final_output_path)
                     return True, final_output_path
+                if strict_completion:
+                    return False, f"Không thể ghép video với lồng tiếng và phụ đề: {comp_err}"
                 safe_log(f"[!] Compiler phụ đề báo lỗi ({comp_err}), chuyển sang ghép nối FFmpeg trực tiếp...")
             else:
+                if strict_completion:
+                    return False, f"Không thể tạo giọng đọc bài học: {tts_err}"
                 safe_log(f"[!] TTS báo lỗi ({tts_err}), chuyển sang ghép nối FFmpeg trực tiếp...")
         except Exception as exc:
+            if strict_completion:
+                return False, f"Không thể hoàn thiện video có lồng tiếng: {exc}"
             safe_log(f"[!] Không dùng bộ compiler phụ đề ({exc}), chuyển sang ghép FFmpeg trực tiếp...")
 
     # Ghép trực tiếp các video 3D bằng FFmpeg
@@ -2907,7 +3086,7 @@ def summarize_episode_for_continuity(story_data: Dict[str, Any], episode_num: in
     để truyền vào tập tiếp theo, giúp duy trì mạch truyện dài xuyên suốt nhiều tập.
     """
     title = str(story_data.get("story_title") or f"Tập {episode_num}").strip()
-    scenes = story_data.get("scenes") or []
+    scenes = [sc for sc in story_data.get("scenes") or [] if not sc.get("series_bridge")]
     if not scenes:
         return f"Tập {episode_num} ({title}): Đã hoàn thành chặng hành trình thứ {episode_num}."
 
@@ -2944,6 +3123,11 @@ def run_museai_script_to_google_flow_3d_pipeline(
     on_script_ready_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     on_scene_status_callback: Optional[Callable[[int, int, str, Optional[str]], None]] = None,
     is_cancelled_callback: Optional[Callable[[], bool]] = None,
+    previous_episode_learning: str = "",
+    required_episode_topic: str = "",
+    whiteboard_ai_enabled: bool = True,
+    vietnamese_voice: str = "",
+    initial_voice_casting: Optional[Dict[str, str]] = None,
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     Luồng tự động hóa kết hợp MuseAI + Google Flow (hỗ trợ cả 3 chế độ: `video_3d`, `image_3d`, `hybrid_3d`):
@@ -2970,17 +3154,22 @@ def run_museai_script_to_google_flow_3d_pipeline(
     mode_norm = str(visual_mode or "video_3d").strip().lower()
 
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    session_dir = Path(work_dir) if work_dir else (TEMP_DIR / f"muse_flow_3d_{timestamp}{ep_suffix}")
+    session_prefix = "muse_whiteboard" if mode_norm == "whiteboard" else "muse_flow_3d"
+    session_dir = Path(work_dir) if work_dir else (TEMP_DIR / f"{session_prefix}_{timestamp}{ep_suffix}")
     session_dir.mkdir(parents=True, exist_ok=True)
 
     meta: Dict[str, Any] = {
         "topic": topic,
+        "language": language,
         "episode_num": ep_num,
         "total_episodes": tot_eps,
         "visual_mode": mode_norm,
         "story_style": story_style,
+        "whiteboard_ai_enabled": bool(whiteboard_ai_enabled),
+        "vietnamese_voice": vietnamese_voice,
         "script_engine": "museai_browser_agent",
-        "video_engine": "google_flow_nano_banana_3d" if mode_norm == "image_3d" else "google_flow_veo_3d",
+        "video_engine": ("local_whiteboard_pillow_ffmpeg" if mode_norm == "whiteboard" else
+                         "google_flow_nano_banana_3d" if mode_norm == "image_3d" else "google_flow_veo_3d"),
         "timestamp": timestamp,
         "session_dir": str(session_dir),
     }
@@ -2989,9 +3178,9 @@ def run_museai_script_to_google_flow_3d_pipeline(
 
     # 1. TAB MUSEAI: VIẾT HOẶC ĐỌC KỊCH BẢN CỐT TRUYỆN 3D ĐỦ 3 HỒI (MỞ ĐẦU - CAO TRÀO - KẾT THÚC)
     if reuse_existing_script and ep_num == 1:
-        notify(5, f"{ep_label}Đang kiểm tra và đọc kịch bản 3D trên tab MuseAI...")
+        notify(5, f"{ep_label}Đang kiểm tra và đọc kịch bản trên tab MuseAI...")
     else:
-        notify(5, f"{ep_label}Đang mở tab MuseAI trên Chrome để viết kịch bản cốt truyện 3D (Mở đầu - Cao trào - Kết thúc)...")
+        notify(5, f"{ep_label}Đang mở MuseAI để viết kịch bản {'người que và sơ đồ' if mode_norm == 'whiteboard' else 'hoạt hình 3D'}...")
 
     ok_script, story_data = controller.generate_3d_script_via_museai(
         topic=topic,
@@ -3009,11 +3198,49 @@ def run_museai_script_to_google_flow_3d_pipeline(
         locked_environment_anchor=locked_environment_anchor,
         status_callback=lambda sec, m: notify(10, f"{ep_label}{m}"),
         is_cancelled_callback=is_cancelled_callback,
+        previous_episode_learning=previous_episode_learning,
+        required_episode_topic=required_episode_topic,
+        whiteboard_ai_enabled=whiteboard_ai_enabled,
     )
     if not ok_script:
         err = story_data.get("error", "Lỗi khi lấy kịch bản từ MuseAI.")
         notify(5, f"❌ {ep_label}{err}")
         return False, err, meta
+
+    if language == "vi_en":
+        if mode_norm == "whiteboard":
+            from src.english_teaching import prepare_whiteboard_lesson
+            try:
+                story_data = prepare_whiteboard_lesson(story_data)
+            except ValueError as exc:
+                return False, str(exc), meta
+        story_data["content_mode"] = "english_teaching_vi"
+        try:
+            for scene in story_data.get("scenes") or []:
+                build_scene_dialogue_segments(scene, language="vi_en", allow_synthetic_filler=False)
+        except ValueError as exc:
+            return False, str(exc), meta
+
+    if tot_eps > 1 or previous_episode_learning:
+        from src.museai_story_modes import add_learning_bridges
+        try:
+            story_data = add_learning_bridges(story_data, ep_num, tot_eps, language,
+                                              previous_episode_learning or previous_episodes_summary)
+        except ValueError as exc:
+            return False, str(exc), meta
+        # New bridge scenes need visual prompts too, without re-splitting existing shots.
+        if mode_norm != "whiteboard":
+            prepared_scenes = []
+            for scene in story_data["scenes"]:
+                if scene.get("series_bridge"):
+                    bridge_story = dict(story_data, scenes=[scene])
+                    prepared_scenes.extend(controller._enrich_scenes_with_3d_prompts(
+                        bridge_story, orientation, visual_mode=mode_norm)["scenes"])
+                else:
+                    prepared_scenes.append(scene)
+            story_data["scenes"] = [dict(sc, scene_num=i) for i, sc in enumerate(prepared_scenes, 1)]
+    if mode_norm == "whiteboard":
+        story_data = controller._enrich_scenes_with_3d_prompts(story_data, orientation, visual_mode="whiteboard")
 
     if locked_character_anchor and locked_character_anchor.strip():
         story_data["character_anchor"] = locked_character_anchor.strip()
@@ -3021,12 +3248,19 @@ def run_museai_script_to_google_flow_3d_pipeline(
         story_data["environment_anchor"] = locked_environment_anchor.strip()
 
     scenes = story_data.get("scenes", [])
+    if initial_voice_casting:
+        for scene in scenes:
+            scene["voice_casting"] = dict(initial_voice_casting)
+    if vietnamese_voice:
+        for scene in scenes:
+            scene["vietnamese_voice"] = vietnamese_voice
+        story_data["vietnamese_voice"] = vietnamese_voice
     total_scenes = len(scenes)
     char_anchor = story_data.get("character_anchor", "")
     env_anchor = story_data.get("environment_anchor", "")
     story_title = story_data.get("story_title", topic[:40] if topic else "MuseAI_Flow_3D_Movie")
 
-    if char_anchor:
+    if char_anchor and mode_norm != "whiteboard":
         try:
             try:
                 from src.flow_character_vault import save_character_to_vault
@@ -3040,7 +3274,7 @@ def run_museai_script_to_google_flow_3d_pipeline(
         except Exception:
             pass
 
-    script_file = session_dir / "museai_3d_script.json"
+    script_file = session_dir / ("museai_whiteboard_script.json" if mode_norm == "whiteboard" else "museai_3d_script.json")
     script_file.write_text(json.dumps(story_data, ensure_ascii=False, indent=2), encoding="utf-8")
     meta["story_data"] = story_data
     meta["story"] = story_data
@@ -3051,6 +3285,65 @@ def run_museai_script_to_google_flow_3d_pipeline(
             on_script_ready_callback(story_data)
         except Exception:
             pass
+
+    if mode_norm == "whiteboard":
+        from src.whiteboard_video import render_whiteboard_story_scenes
+        from src.whiteboard_ai_assets import resolve_whiteboard_ai_assets
+        if is_cancelled_callback and is_cancelled_callback():
+            return False, "Đã bỏ qua theo yêu cầu người dùng", meta
+        flow_image_state = {"started": False}
+
+        def generate_missing_illustration(**request):
+            if not flow_image_state["started"]:
+                notify(20, f"{ep_label}Đang mở Google Flow để AI tạo minh họa còn thiếu...")
+                ok_project, project_msg = controller.start_fresh_google_flow_project(orientation=orientation)
+                if not ok_project:
+                    return False, project_msg
+                flow_image_state["started"] = True
+            return controller.generate_whiteboard_illustration_on_google_flow(
+                **request, orientation=orientation,
+                status_callback=lambda seconds, message: notify(25, f"{ep_label}{message}"),
+                is_cancelled_callback=is_cancelled_callback)
+
+        assets_ok, prepared_scenes, asset_report = resolve_whiteboard_ai_assets(
+            scenes, generate_missing_illustration, character_anchor=char_anchor,
+            enabled=whiteboard_ai_enabled, progress_callback=notify,
+            is_cancelled_callback=is_cancelled_callback)
+        meta["whiteboard_ai_assets"] = asset_report
+        if not assets_ok:
+            return False, asset_report.get("error", "Không tạo được minh họa AI."), meta
+        scenes = prepared_scenes
+        story_data["scenes"] = scenes
+        script_file.write_text(json.dumps(story_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        if with_tts_and_subtitles:
+            notify(38, f"{ep_label}Đang tạo lời đọc để căn thời lượng nét vẽ...")
+            ok_tts, error = synthesize_museai_scenes_interactive_tts(scenes, str(session_dir), language)
+            if not ok_tts:
+                return False, error, meta
+        ok_render, error = render_whiteboard_story_scenes(
+            scenes, str(session_dir), orientation, with_audio=with_tts_and_subtitles,
+            on_scene_status_callback=on_scene_status_callback,
+            progress_callback=lambda pct, msg: notify(40 + max(0, pct - 25) * .7, msg),
+            is_cancelled_callback=is_cancelled_callback)
+        if not ok_render:
+            return False, error, meta
+        if is_cancelled_callback and is_cancelled_callback():
+            return False, "Đã bỏ qua theo yêu cầu người dùng", meta
+        os.makedirs(output_dir, exist_ok=True)
+        final_output_path = str(Path(output_dir) / f"museai_whiteboard_{timestamp}{ep_suffix}.mp4")
+        notify(85, f"{ep_label}Đang ghép whiteboard, lời đọc và phụ đề...")
+        ok_merge, error = merge_flow_3d_scenes_into_final_movie(
+            scenes, str(session_dir), final_output_path, language, orientation,
+            with_tts_and_subtitles=with_tts_and_subtitles, tts_already_ready=True)
+        if not ok_merge:
+            return False, error, meta
+        meta.update(final_video_path=final_output_path,
+                    scene_video_paths=[sc["video_path"] for sc in scenes],
+                    episode_summary=summarize_episode_for_continuity(story_data, ep_num))
+        Path(final_output_path).with_suffix(".json").write_text(
+            json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+        notify(100, f"{ep_label}Hoàn thành video người que bàn tay vẽ: {final_output_path}")
+        return True, final_output_path, meta
 
     notify(
         20,
@@ -3207,7 +3500,13 @@ def run_museai_script_to_google_flow_3d_pipeline(
     meta["final_video_path"] = final_output_path
     meta["episode_summary"] = summarize_episode_for_continuity(story_data, episode_num=ep_num)
     meta_json = os.path.splitext(final_output_path)[0] + ".json"
+    meta["language"] = language
     Path(meta_json).write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    try:
+        from src.video_library import ensure_metadata_for_new_video
+    except ModuleNotFoundError:
+        from video_studio.src.video_library import ensure_metadata_for_new_video
+    ensure_metadata_for_new_video(final_output_path)  # tự tạo title/hashtag/mô tả đăng bài cho Thư viện video
 
     notify(100, f"🎉 {ep_label}Hoàn thành tập phim 3D: {final_output_path}")
     return True, final_output_path, meta
@@ -3234,6 +3533,12 @@ def run_museai_multi_episode_series_pipeline(
     on_scene_status_callback: Optional[Callable[[int, int, str, Optional[str]], None]] = None,
     on_episode_done_callback: Optional[Callable[[int, int, str, Dict[str, Any]], None]] = None,
     is_cancelled_callback: Optional[Callable[[], bool]] = None,
+    initial_episode_learning: str = "",
+    initial_next_episode_topic: str = "",
+    start_episode_num: int = 1,
+    whiteboard_ai_enabled: bool = True,
+    vietnamese_voice: str = "",
+    initial_voice_casting: Optional[Dict[str, str]] = None,
 ) -> Tuple[bool, List[str], Dict[str, Any]]:
     """
     Điều phối sản xuất cốt truyện dài qua nhiều tập (Ít tập: 2-3 tập / Nhiều tập: 4-10+ tập):
@@ -3251,16 +3556,22 @@ def run_museai_multi_episode_series_pipeline(
     accumulated_summaries: List[str] = [initial_previous_summary.strip()] if initial_previous_summary.strip() else []
     locked_char = initial_character_anchor.strip()
     locked_env = initial_environment_anchor.strip()
+    voice_casting = dict(initial_voice_casting or {})
+    previous_learning = initial_episode_learning.strip() or initial_previous_summary.strip()
+    promised_topic = initial_next_episode_topic.strip()
+    start_ep = max(1, int(start_episode_num))
+    final_ep = start_ep + tot_eps - 1
 
-    for ep in range(1, tot_eps + 1):
+    for run_index, ep in enumerate(range(start_ep, final_ep + 1), 1):
         if is_cancelled_callback and is_cancelled_callback():
-            break
+            return False, episode_video_paths, {"error": "Đã bỏ qua theo yêu cầu người dùng",
+                                               "completed_episodes": episodes_meta}
 
         ep_work_dir = str(base_work / f"episode_{ep:02d}")
         prev_sum_str = " | ".join(accumulated_summaries)
 
-        def _ep_progress(pct: float, msg: str, _ep=ep):
-            overall_pct = ((_ep - 1) / tot_eps) * 100.0 + (pct / tot_eps)
+        def _ep_progress(pct: float, msg: str, _index=run_index):
+            overall_pct = ((_index - 1) / tot_eps) * 100.0 + (pct / tot_eps)
             if progress_callback:
                 try:
                     progress_callback(overall_pct, msg)
@@ -3280,7 +3591,7 @@ def run_museai_multi_episode_series_pipeline(
             work_dir=ep_work_dir,
             output_dir=output_dir,
             episode_num=ep,
-            total_episodes=tot_eps,
+            total_episodes=final_ep,
             previous_episodes_summary=prev_sum_str,
             locked_character_anchor=locked_char,
             locked_environment_anchor=locked_env,
@@ -3288,6 +3599,11 @@ def run_museai_multi_episode_series_pipeline(
             on_script_ready_callback=on_script_ready_callback,
             on_scene_status_callback=on_scene_status_callback,
             is_cancelled_callback=is_cancelled_callback,
+            previous_episode_learning=previous_learning,
+            required_episode_topic=promised_topic,
+            whiteboard_ai_enabled=whiteboard_ai_enabled,
+            vietnamese_voice=vietnamese_voice,
+            initial_voice_casting=voice_casting,
         )
         if not ok_ep:
             return False, episode_video_paths, {
@@ -3300,6 +3616,8 @@ def run_museai_multi_episode_series_pipeline(
         episodes_meta.append(ep_meta)
 
         story_obj = ep_meta.get("story") or ep_meta.get("story_data") or {}
+        voice_casting = next((dict(sc["voice_casting"]) for sc in story_obj.get("scenes", [])
+                              if isinstance(sc, dict) and isinstance(sc.get("voice_casting"), dict)), voice_casting)
         if not locked_char and story_obj.get("character_anchor"):
             locked_char = str(story_obj["character_anchor"]).strip()
         if not locked_env and story_obj.get("environment_anchor"):
@@ -3307,14 +3625,22 @@ def run_museai_multi_episode_series_pipeline(
 
         ep_summary = ep_meta.get("episode_summary") or summarize_episode_for_continuity(story_obj, episode_num=ep)
         accumulated_summaries.append(ep_summary)
+        previous_learning = str(story_obj.get("episode_learning_summary") or ep_summary).strip()
+        promised_topic = str(story_obj.get("next_episode_topic") or "").strip()
 
         # Lưu sổ cái bộ nhớ Series để có thể viết tiếp tập mới bất cứ lúc nào
         try:
-            ledger_path = TEMP_DIR / "series_memory_ledger.json"
+            ledger_name = "series_memory_ledger_whiteboard.json" if visual_mode == "whiteboard" else "series_memory_ledger.json"
+            ledger_path = TEMP_DIR / ledger_name
             ledger_data = {
                 "topic": topic,
                 "last_episode_num": ep,
-                "total_episodes": tot_eps,
+                "total_episodes": final_ep,
+                "visual_mode": visual_mode,
+                "voice_casting": voice_casting,
+                "vietnamese_voice": vietnamese_voice,
+                "last_episode_learning": previous_learning,
+                "next_episode_topic": promised_topic,
                 "locked_character_anchor": locked_char,
                 "locked_environment_anchor": locked_env,
                 "previous_episodes_summary": " | ".join(accumulated_summaries),
@@ -3322,12 +3648,14 @@ def run_museai_multi_episode_series_pipeline(
                 "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             }
             ledger_path.write_text(json.dumps(ledger_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            (base_work / "series_memory_ledger.json").write_text(
+                json.dumps(ledger_data, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
             pass
 
         if on_episode_done_callback:
             try:
-                on_episode_done_callback(ep, tot_eps, ep_video_or_err, ep_meta)
+                on_episode_done_callback(ep, final_ep, ep_video_or_err, ep_meta)
             except Exception:
                 pass
 
@@ -3338,6 +3666,7 @@ def run_museai_multi_episode_series_pipeline(
         "locked_environment_anchor": locked_env,
         "previous_episodes_summary": " | ".join(accumulated_summaries),
         "episodes": episodes_meta,
+        "voice_casting": voice_casting,
         "episode_video_paths": episode_video_paths,
     }
 

@@ -292,6 +292,22 @@ def build_exact_tts_timestamps(scenes: List[Any]) -> List[Dict[str, Any]]:
             narration_words = str(scene).split()
             duration = 5.0
 
+        timings = scene.get("tts_segment_timings") if isinstance(scene, dict) else None
+        if (isinstance(timings, list) and timings
+                and " ".join(str(s.get("text") or "") for s in timings).split() == narration_words):
+            scene_cues = []
+            for segment in timings:
+                start = float(segment.get("start", 0.))
+                length = max(.01, float(segment.get("end", start)) - start)
+                local = build_exact_tts_timestamps([{"narration": segment["text"], "audio_duration": length}])
+                scene_cues.extend(dict(cue, start=round(cue["start"] + offset + start, 3),
+                                       end=round(cue["end"] + offset + start, 3)) for cue in local)
+            words_out.extend(scene_cues)
+            scene["subtitle_cues"] = scene_cues
+            scene["timeline_range"] = [round(offset, 3), round(offset + duration, 3)]
+            offset += duration
+            continue
+
         if narration_words:
             usable_duration = duration * 0.96
             # Tính trọng số từng từ theo số ký tự + điểm dừng dấu câu

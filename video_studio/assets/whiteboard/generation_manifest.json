@@ -1,0 +1,24 @@
+{
+  "description": "Generated whiteboard assets; production renderer uses these project-local files.",
+  "mode": "built-in image_gen",
+  "assets": [
+    {
+      "file": "hand_photo_v1.png",
+      "marker_tip_px": [
+        347,
+        94
+      ],
+      "source_size": [
+        1024,
+        1536
+      ],
+      "prompt": "Use case: photorealistic-natural. Asset type: transparent RGBA animation sprite for a whiteboard drawing video. Generate a realistic photographic adult RIGHT HAND holding an unbranded light gray felt-tip marker in a natural writing grip, seen from directly overhead exactly like a real hand writing on a whiteboard. Medium warm tan skin, natural fingers and knuckles, realistic skin pores. Marker nib is a small sharp dark point near the upper left of the hand, oriented toward the upper left; marker body slopes down-right into the writing grip. Back of hand visible; wrist and a LONG forearm run diagonally down-left and continue cleanly out of the bottom edge. Composition portrait 2:3, entirely transparent empty canvas around the subject, hand occupies upper two thirds, forearm reaches bottom edge, pen tip at approximately x=45%, y=12% of the full image. Hand and marker fully visible except forearm intentionally exits bottom. Very soft neutral studio lighting, crisp edges, faint natural shading on skin, NO cast shadow on any surface. Real camera photograph, not cartoon, not drawing, not 3D render. No whiteboard background, no writing, no logos, no watermark, no caption, no jewelry, no extra hand. True transparent alpha background. This must be usable as a moving overlay.",
+      "refinement": "Preserve the hand and marker, remove surrounding diffuse shadow, keep transparent alpha."
+    },
+    {
+      "file": "study_desk_v1.png",
+      "prompt": "Use case: illustration-story. Asset type: reusable transparent PNG illustration for a colored whiteboard explainer video. Style: clean 2D flat vector editorial drawing, thin warm charcoal outlines, very light pastel fills, smooth curves, plentiful white/transparent negative space, exactly like educational whiteboard stock illustrations. Subject: a young adult man in a bright teal blue T-shirt, short dark auburn hair, sitting at a light warm wooden desk, using a desktop computer seen in 3/4 side view. A small leafy teal indoor plant in a pale pot beside the monitor. Chair subtly shown. Above/behind monitor float two small simplified browser windows containing abstract blue rectangles and a pale orange play button, no lettering. Compact single coherent vignette, centered, entire figure and desk within frame, no cropped body or objects. Palette teal blue, light sky blue, peach, warm cream, muted sage. Professional grown-up educational illustration. Plain transparent background with actual alpha, no solid white rectangle or backdrop, no shadows outside the illustration, no gradients or glow. No hand drawing this, no writing hand, no words, no text, no logos, no watermark, no photorealism, no 3D. Each colored area has a subtle fine line boundary so it can be progressively traced by a marker."
+    }
+  ],
+  "usage": "Photographic hand traces outlines then fills pastel illustrations. No AI generation API is called at render time."
+}

@@ -39,4 +39,9 @@ debug_*.png
 video_studio/temp/
 video_studio/output/
 .agents/
+video_studio/runtimes/
+video_studio/models/
 
+video_studio/library_config.json
+video_studio/models/
+video_studio/runtimes/

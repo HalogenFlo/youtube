@@ -1,3 +1,58 @@
+# MuseAI: Người que bàn tay vẽ và nối bài giữa các tập — 23/10/2026
+
+## AI tạo minh họa mới theo cảnh, không giới hạn trong kho mẫu
+
+- [x] MuseAI được yêu cầu mô tả hình `ai_image` khi kho chưa thể hiện đúng nội dung bài; hình ngoài danh mục được chuyển sang yêu cầu AI thay vì bỏ qua.
+- [x] Nối Google Flow tạo ảnh 2D whiteboard, tách khỏi bộ ép ảnh 3D; chỉ mở Flow khi ảnh chưa được lưu.
+- [x] Lưu ảnh PNG và prompt theo nội dung/tạo hình nhân vật; tái sử dụng giữa cảnh/tập và khi dựng lại kịch bản đã lưu.
+- [x] Xử lý nền trắng nối với mép ảnh, giữ vùng trắng khép kín, căn khung theo phần ảnh thật rồi vẽ viền/tô màu bằng tay thật.
+- [x] Có thử lại, kiểm tra ảnh trống/hỏng và hủy; không thay bằng hình stock không liên quan khi AI lỗi.
+- [x] Bật mặc định **AI tự tạo minh họa mới khi cần (Google Flow)** trong UI, truyền lựa chọn qua cả phim lẻ và series.
+- [x] Kiểm thử 98 bài luồng/render/TTS/AI và 1 bài giao diện đạt (99 tổng cộng).
+- [x] Thử thật Google Flow: tạo giỏ hai quả táo/chuối và cảnh hành khách hỏi quầy sân bay; xuất video Việt–Anh 1080p khoảng 18 giây: `video_studio/output/english_ai_illustrations_preview.mp4`.
+- [x] Chạy lại bản mẫu: `generated=0`, `cache_hits=2`; không gọi tạo ảnh lại.
+
+## Cập nhật theo hai ảnh tham chiếu: tay thật và whiteboard minh họa màu
+
+- [x] Thay tay hình học bằng ảnh tay thật cầm bút dạ xám, có nền trong suốt và điểm neo đúng đầu bút.
+- [x] Bỏ hiệu ứng mở hình chữ nhật; tay đi theo nét viền, rồi tô màu theo đường quét.
+- [x] Bổ sung minh họa người ngồi máy tính được tạo bằng imagegen và 9 biểu tượng màu bằng Pillow; hỗ trợ thêm PNG/WebP riêng trong kho ảnh.
+- [x] Cập nhật yêu cầu MuseAI và lựa chọn trên giao diện sang minh họa màu; giữ phần tử người que cho kịch bản cần dùng.
+- [x] Dựng/xem mẫu mới `video_studio/output/whiteboard_color_real_hand_1080p.mp4`: 16 giây, 1080p, không lời.
+- [x] 67 kiểm tra luồng/render/nối tập và 1 kiểm tra giao diện riêng đã đạt (68 tổng cộng).
+
+## Luồng ban đầu
+
+## Cập nhật bài tiếng Anh: lời giảng Việt, phát âm Anh
+
+- [x] Thêm lựa chọn ngôn ngữ **Dạy tiếng Anh: giảng Việt + phát âm Anh** trong MuseAI.
+- [x] MuseAI trả `speech_segments` có nhãn `vi`/`en`; mỗi đoạn dùng giọng đúng ngôn ngữ, không thêm lời thoại mẫu.
+- [x] Không dùng âm báo thử nghiệm hay thêm tiền tố tiếng Việt vào câu phát âm tiếng Anh khi TTS lỗi.
+- [x] Đo thời lượng thật từng đoạn Việt/Anh; phụ đề chuyển ngôn ngữ theo đúng ranh giới âm thanh.
+- [x] Giữ nhãn ngôn ngữ khi tách cảnh và khi ôn bài/hẹn bài tiếp theo; lỗi đọc song ngữ không chuyển cả bài sang một giọng.
+- [x] MuseAI nhận danh sách ảnh PNG/WebP bổ sung trong kho, loại ảnh tay khỏi nội dung minh họa; giao diện hiển thị số hình có sẵn.
+- [x] 86 kiểm tra luồng/render/TTS/phụ đề và 1 kiểm tra giao diện đã đạt (87 tổng cộng).
+- [x] Dựng thật mẫu hai cảnh, 1080p, có âm thanh Việt–Anh và phụ đề, dài khoảng 15 giây: `video_studio/output/english_lesson_vi_en_preview.mp4`.
+
+Mẫu dùng kịch bản cố định để kiểm tra giọng và bộ dựng; chưa yêu cầu tài khoản MuseAI viết một bài song ngữ thật trong lượt này. Kho minh họa vẫn gồm 10 loại và ảnh bổ sung, chưa tự sinh mọi hình mới ngoài kho.
+
+## Các hạng mục ban đầu
+
+- [x] Rà soát MuseAI UI, prompt/parser, TTS, compiler, bộ vẽ whiteboard và bộ nhớ series hiện có.
+- [x] Nối kiểu `whiteboard` vào MuseAI Studio; dùng storyboard do MuseAI viết, dựng trên máy, không gọi Flow.
+- [x] Giữ người que 2D, sơ đồ/chữ có dấu, hiệu ứng tay vẽ và thời lượng dựa trên audio; xuất 1080p.
+- [x] Thêm lời ôn tập trước và giới thiệu tập sau vào cảnh thực có lồng tiếng/phụ đề; truyền bài học đã hẹn sang prompt tập sau.
+- [x] Viết tiếp đúng số tập; lưu riêng bộ nhớ series người que và 3D; báo hủy đúng trạng thái.
+- [x] Chặn xuất thành công khi TTS/phụ đề whiteboard lỗi; tránh thêm lời thoại mẫu ngoài kịch bản.
+- [x] Sửa lỗi bộ xuất MoviePy bị bọc lặp khi reload UI; cô lập cấu hình/tài nguyên thật khỏi các test MuseAI.
+- [x] Kiểm tra: 52 bài kiểm tra luồng/render/series/phụ đề đạt; 1 bài thao tác giao diện Streamlit đạt riêng (53 tổng cộng).
+- [x] Dựng và xem mẫu không lời `video_studio/output/whiteboard_preview_1080p.mp4` (1920×1080, 24 FPS, 12 giây).
+- [x] Bổ sung [hướng dẫn và nguồn tham khảo](../video_studio/docs/museai_whiteboard.md).
+
+Giới hạn kiểm chứng: đầu vào MuseAI và dịch vụ giọng đọc thật được thay thế trong test tích hợp; MP4, audio, phụ đề và thời lượng được dựng/đo thật bằng FFmpeg. Chưa chạy một series thật qua tài khoản MuseAI trong lượt này.
+
+---
+
 # Kế Hoạch Nâng Cấp Cơ Chế Cốt Truyện Dài Nhiều Tập (Ít Tập / Nhiều Tập) & Duy Trì Mạch Truyện (Mở Đầu - Cao Trào - Kết Thúc Mỗi Tập)
 
 ## 1. Mục tiêu & Thiết kế Kiến trúc
@@ -897,3 +952,10 @@ Muc tieu: option tao video kieu whiteboard: nhan vat que + so do/chu duoc 'ban t
 - [ ] 4. Pipeline: visual_mode='whiteboard' bo qua Google Flow (0 credit): TTS truoc -> render local -> ghep
 - [ ] 5. UI app_museai: lua chon Whiteboard
 - [ ] 6. Test (unit + e2e render that), cap nhat docs/so do
+
+## Giong VieNeu theo vai + Thu vien video (2026-10-24)
+- [ ] A. voice_casting.py: moi nhan vat 1 giong VieNeu khac nhau (khong trung narrator), cam xuc -> toc do; noi vao synthesize_museai_scenes_interactive_tts
+- [ ] B. UI: nut Nghe thu giong (VieNeu/Edge)
+- [ ] C. video_library.py: scan output, sidecar .publish.json (title<=100, hashtag hop chinh sach, mo ta co header co dinh lien he mua pipeline/Gemini Pro/MuseAI, nhan AI YouTube+TikTok), xoa video an toan
+- [ ] D. app_library.py: tab 'Thu vien video' (xem video, sua title/desc/hashtag, copy, xoa co xac nhan, sua header chung) + tu dong tao metadata khi pipeline xong
+- [ ] E. Test unit + e2e that (VieNeu nghe thu, library render), cap nhat docs

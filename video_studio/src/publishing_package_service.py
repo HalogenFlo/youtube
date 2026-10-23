@@ -44,7 +44,7 @@ PLATFORM_FIELD_LIMITS: Dict[str, Any] = {
 
 BANNED_TRENDING_HASHTAGS = {
     "#fyp", "#foryou", "#foryoupage", "#viral", "#trending",
-    "#xuhuong", "#xuhuongtiktok", "#fypシ", "#shorts",
+    "#xuhuong", "#xuhuongtiktok", "#fypシ",
 }
 
 

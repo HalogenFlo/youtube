@@ -45,12 +45,13 @@ def _safe_delete_file(filepath: str, max_retries: int = 4, delay: float = 0.25) 
 # Vá lỗi Moviepy decorator use_clip_fps_by_default làm mất fps trên Python 3.12 (chỉ khi moviepy được cài đặt)
 try:
     import moviepy.video.VideoClip as _mpy_vc
-    _orig_ffmpeg_write = _mpy_vc.ffmpeg_write_video
+    _orig_ffmpeg_write = getattr(_mpy_vc.ffmpeg_write_video, "_studio_original", _mpy_vc.ffmpeg_write_video)
 
     def _safe_ffmpeg_write_video(clip, filename, fps, codec="libx264", **kw):
         actual_fps = fps or getattr(clip, "fps", None) or 30
         return _orig_ffmpeg_write(clip, filename, actual_fps, codec=codec, **kw)
 
+    _safe_ffmpeg_write_video._studio_original = _orig_ffmpeg_write
     _mpy_vc.ffmpeg_write_video = _safe_ffmpeg_write_video
 except Exception:
     pass
